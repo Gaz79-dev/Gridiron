@@ -113,27 +113,42 @@ async def create_event_embed(bot: commands.Bot, event_id: int, db: Database) -> 
     column_1_roles = ["Commander", "Infantry"]
     column_2_roles = ["Armour", "Pathfinders", "Artillery", "Recon"]
 
-    # Function to generate the text block for a primary role
+    # --- START OF FIX ---
+    # This function is updated to correctly handle roles that do not have subclasses.
     def build_role_block(primary_role, signups):
+        """Builds the text block for a primary role and its members."""
         if not signups:
             return None
-        
+
+        block_lines = [f"__**{primary_role}**__ ({len(signups)})"]
+
+        # If the primary role (e.g., Commander) has no defined subclasses,
+        # just list the members directly.
+        if primary_role not in SUBCLASSES:
+            player_names = [signup['display_name'] for signup in signups]
+            block_lines.extend(player_names)
+            return "\n".join(block_lines)
+
+        # Otherwise, use the existing logic to group members by their subclass.
         subclass_groups = defaultdict(list)
         for signup in signups:
+            # A player's subclass is either what they selected, or "Unassigned" if they didn't.
             subclass_key = signup['subclass'] or "Unassigned"
             subclass_groups[subclass_key].append(signup['display_name'])
             
-        block_lines = [f"__**{primary_role}**__ ({len(signups)})"]
+        # Iterate through the official subclasses for this role to maintain order.
         for subclass in (SUBCLASSES.get(primary_role, []) + ["Unassigned"]):
             if players := subclass_groups.get(subclass):
                 block_lines.append(f"__**{subclass}**__ ({len(players)})")
                 block_lines.extend(players)
-                block_lines.append("") # Spacer line
+                block_lines.append("") # Spacer line for readability between subclasses
         
         if len(block_lines) > 1: # If any players were added
             if block_lines[-1] == "": block_lines.pop() # Remove last spacer
             return "\n".join(block_lines)
+            
         return None
+    # --- END OF FIX ---
 
     # Build the columns
     col1_text = []
