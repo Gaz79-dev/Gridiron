@@ -244,23 +244,38 @@ document.addEventListener('DOMContentLoaded', () => {
     
     sendBtn.addEventListener('click', async () => {
         const selectedChannelId = channelDropdown.value;
-        if (!selectedChannelId || currentSquads.length === 0) {
-            alert('Please select a channel and build squads first.');
+        const eventId = eventDropdown.value;
+        
+        if (!selectedChannelId || currentSquads.length === 0 || !eventId) {
+            alert('Please select an event and channel, and build squads first.');
             return;
         }
+        
         sendBtn.textContent = 'Sending...';
         sendBtn.disabled = true;
+        
         try {
+            const url = `/api/events/send-embed?event_id=${eventId}`;
             const mentionAttendees = document.getElementById('mention-attendees-checkbox').checked;
-            const response = await fetch(`/api/events/send-embed`, {
+
+            const response = await fetch(url, {
                 method: 'POST',
                 headers: { ...headers, 'Content-Type': 'application/json' },
-                body: JSON.stringify({ channel_id: selectedChannelId, squads: currentSquads, mention_accepted: mentionAttendees })
+                body: JSON.stringify({
+                    channel_id: selectedChannelId,
+                    squads: currentSquads,
+                    mention_accepted: mentionAttendees
+                })
             });
-            if (await handleApiError(response)) throw new Error(`Server responded with status: ${response.status}`);
+            
+            if (await handleApiError(response)) {
+                throw new Error(`Server responded with status: ${response.status}`);
+            }
+            
             alert('Squad embed sent successfully!');
-            await releaseLock(eventDropdown.value);
+            await releaseLock(eventId);
             setLockedState(true, 'Squads sent. This event is now read-only.');
+
         } catch (error) {
             console.error("Error in sendBtn listener:", error.message);
         } finally {
@@ -308,6 +323,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     promoteModalCancelBtn.addEventListener('click', () => promoteModal.classList.add('hidden'));
     
+    // --- START OF CHANGE ---
     promoteForm.addEventListener('submit', async (e) => {
         e.preventDefault();
         const eventId = eventDropdown.value;
@@ -338,6 +354,7 @@ document.addEventListener('DOMContentLoaded', () => {
             console.error(err);
         }
     });
+    // --- END OF CHANGE ---
 
     modalCancelBtn.addEventListener('click', () => editModal.classList.add('hidden'));
     taskModalCancelBtn.addEventListener('click', () => assignTaskModal.classList.add('hidden'));
