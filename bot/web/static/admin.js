@@ -24,6 +24,12 @@ document.addEventListener('DOMContentLoaded', () => {
     const addDefinitionBtn = document.getElementById('add-definition-btn');
     const definitionsContainer = document.getElementById('template-definitions-container');
     const templateList = document.getElementById('template-list');
+    const templateFormTitle = document.getElementById('template-form-title');
+    const saveTemplateBtn = document.getElementById('save-template-btn');
+    const cancelEditBtn = document.getElementById('cancel-edit-btn');
+    const editingTemplateIdInput = document.getElementById('editing-template-id');
+    let allTemplates = []; // Cache for editing
+
     const RSVP_POOLS = ["Commander", "Infantry", "Armour", "Recon", "Pathfinders", "Artillery", "Unassigned"];
     const SQUAD_TYPES = ["Command", "Infantry", "Armour", "Recon", "Artillery", "Reserves"];
 
@@ -39,40 +45,55 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // --- Squad Template Functions ---
-    const addDefinitionRow = () => {
+    const addDefinitionRow = (definition = null) => {
         const rowId = `def-row-${Date.now()}`;
         const div = document.createElement('div');
         div.className = 'grid grid-cols-1 md:grid-cols-7 gap-2 items-center border-t border-gray-600 pt-3';
         div.id = rowId;
 
         div.innerHTML = `
-            <input type="text" placeholder="Squad Name (e.g., Attack)" class="md:col-span-2 bg-gray-600 border-gray-500 rounded-md p-2" data-field="squad_name" required>
-            <input type="number" value="1" min="0" class="bg-gray-600 border-gray-500 rounded-md p-2" data-field="default_count" required>
-            <select class="bg-gray-600 border-gray-500 rounded-md p-2" data-field="source_rsvp_pool">${RSVP_POOLS.map(p => `<option value="${p}">${p}</option>`).join('')}</select>
-            <select class="bg-gray-600 border-gray-500 rounded-md p-2" data-field="squad_type">${SQUAD_TYPES.map(t => `<option value="${t}">${t}</option>`).join('')}</select>
+            <input type="text" placeholder="Squad Name (e.g., Attack)" class="md:col-span-2 bg-gray-600 border-gray-500 rounded-md p-2" data-field="squad_name" value="${definition?.squad_name || ''}" required>
+            <input type="number" value="${definition?.default_count || 1}" min="0" class="bg-gray-600 border-gray-500 rounded-md p-2" data-field="default_count" required>
+            <select class="bg-gray-600 border-gray-500 rounded-md p-2" data-field="source_rsvp_pool">${RSVP_POOLS.map(p => `<option value="${p}" ${definition?.source_rsvp_pool === p ? 'selected' : ''}>${p}</option>`).join('')}</select>
+            <select class="bg-gray-600 border-gray-500 rounded-md p-2" data-field="squad_type">${SQUAD_TYPES.map(t => `<option value="${t}" ${definition?.squad_type === t ? 'selected' : ''}>${t}</option>`).join('')}</select>
             <select class="md:col-span-1 bg-gray-600 border-gray-500 rounded-md p-2" data-field="naming_convention">
-                <option value="none">None</option>
-                <option value="alpha">Alpha (A, B)</option>
-                <option value="numeric">Numeric (1.1, 1.2)</option>
+                <option value="none" ${definition?.naming_convention === 'none' ? 'selected' : ''}>None</option>
+                <option value="alpha" ${definition?.naming_convention === 'alpha' ? 'selected' : ''}>Alpha (A, B)</option>
+                <option value="numeric" ${definition?.naming_convention === 'numeric' ? 'selected' : ''}>Numeric (1.1, 1.2)</option>
             </select>
             <button type="button" class="text-red-500 hover:text-red-700 font-bold justify-self-center" onclick="document.getElementById('${rowId}').remove()">X</button>
         `;
         definitionsContainer.appendChild(div);
     };
 
+    const resetTemplateForm = () => {
+        templateFormTitle.textContent = 'Create New Template';
+        saveTemplateBtn.textContent = 'Save Template';
+        cancelEditBtn.classList.add('hidden');
+        createTemplateForm.reset();
+        editingTemplateIdInput.value = '';
+        definitionsContainer.querySelectorAll('.grid').forEach(row => {
+            if (row.querySelector('input')) row.remove();
+        });
+        addDefinitionRow();
+    };
+
     const loadTemplates = async () => {
         try {
             const response = await fetch('/api/templates', { headers });
             if (!response.ok) throw new Error('Failed to load templates');
-            const templates = await response.json();
+            allTemplates = await response.json();
             
             templateList.innerHTML = '';
-            templates.forEach(template => {
+            allTemplates.forEach(template => {
                 const div = document.createElement('div');
                 div.className = 'bg-gray-700 p-3 rounded-md flex justify-between items-center';
                 div.innerHTML = `
                     <span class="font-semibold">${template.template_name}</span>
-                    <button data-template-id="${template.template_id}" class="delete-template-btn text-red-500 hover:text-red-700">Delete</button>
+                    <div>
+                        <button data-template-id="${template.template_id}" class="edit-template-btn text-blue-400 hover:text-blue-600 mr-4">Edit</button>
+                        <button data-template-id="${template.template_id}" class="delete-template-btn text-red-500 hover:text-red-700">Delete</button>
+                    </div>
                 `;
                 templateList.appendChild(div);
             });
@@ -81,7 +102,8 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     };
     
-    addDefinitionBtn.addEventListener('click', addDefinitionRow);
+    addDefinitionBtn.addEventListener('click', () => addDefinitionRow());
+    cancelEditBtn.addEventListener('click', resetTemplateForm);
 
     createTemplateForm.addEventListener('submit', async (e) => {
         e.preventDefault();
@@ -104,21 +126,21 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
+        const editingId = editingTemplateIdInput.value;
+        const method = editingId ? 'PUT' : 'POST';
+        const url = editingId ? `/api/templates/${editingId}` : '/api/templates';
+
         try {
-            const response = await fetch('/api/templates', {
-                method: 'POST',
+            const response = await fetch(url, {
+                method: method,
                 headers: headers,
                 body: JSON.stringify({ template_name: templateName, definitions: definitions })
             });
             if (!response.ok) throw new Error((await response.json()).detail || 'Failed to save template');
             
-            createTemplateForm.reset();
-            definitionsContainer.querySelectorAll('.grid').forEach(row => {
-                if (row.querySelector('input')) row.remove();
-            });
-            addDefinitionRow();
+            resetTemplateForm();
             await loadTemplates();
-            alert('Template saved successfully!');
+            alert(`Template ${editingId ? 'updated' : 'saved'} successfully!`);
 
         } catch (error) {
             alert(`Error: ${error.message}`);
@@ -126,8 +148,9 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     templateList.addEventListener('click', async (e) => {
-        if (e.target.classList.contains('delete-template-btn')) {
-            const templateId = e.target.dataset.templateId;
+        const target = e.target;
+        if (target.classList.contains('delete-template-btn')) {
+            const templateId = target.dataset.templateId;
             if (confirm('Are you sure you want to delete this template?')) {
                 try {
                     const response = await fetch(`/api/templates/${templateId}`, { method: 'DELETE', headers });
@@ -137,6 +160,22 @@ document.addEventListener('DOMContentLoaded', () => {
                     alert('Error deleting template.');
                 }
             }
+        } else if (target.classList.contains('edit-template-btn')) {
+            const templateId = target.dataset.templateId;
+            const template = allTemplates.find(t => t.template_id == templateId);
+            if (!template) return;
+
+            templateFormTitle.textContent = `Editing: ${template.template_name}`;
+            saveTemplateBtn.textContent = 'Update Template';
+            cancelEditBtn.classList.remove('hidden');
+            editingTemplateIdInput.value = template.template_id;
+            document.getElementById('template-name').value = template.template_name;
+            
+            definitionsContainer.querySelectorAll('.grid').forEach(row => {
+                if (row.querySelector('input')) row.remove();
+            });
+
+            template.definitions.forEach(def => addDefinitionRow(def));
         }
     });
 
@@ -337,7 +376,7 @@ document.addEventListener('DOMContentLoaded', () => {
         <div class="px-2">Player Pool</div>
         <div class="px-2">Squad Rules</div>
         <div class="px-2">Naming</div>
-        <div class="px-2">Action</div>
+        <div class="px-2 text-center">Action</div>
     `;
     definitionsContainer.appendChild(headerRow);
 
