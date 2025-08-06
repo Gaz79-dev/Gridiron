@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 # Use absolute imports from the 'bot' package root
 from bot.utils.database import Database
 # --- FIX: Separated the 'auth' import from the 'routers' import ---
-from bot.api.routers import events, users, squads, stats
+from bot.api.routers import events, users, squads, stats, templates # --- NEW: Import templates
 from bot.api import auth
 
 # Load environment variables
@@ -47,9 +47,7 @@ app.mount("/static", StaticFiles(directory=str(BASE_DIR / "web/static")), name="
 templates = Jinja2Templates(directory=str(templates_dir))
 
 origins = [
-    # Allow your main domain
     "https://squadbuilder.rdg-clan.co.uk",
-    # You can also add localhost for local development if needed
     "http://localhost",
     "http://localhost:8000",
 ]
@@ -68,6 +66,7 @@ app.include_router(users.router)
 app.include_router(events.router)
 app.include_router(squads.router)
 app.include_router(stats.router)
+app.include_router(templates.router) # --- NEW: Include templates router
 
 # --- Web Page Routes ---
 @app.get("/login", tags=["HTML"], summary="Serves the login page")
@@ -88,10 +87,8 @@ async def stats_page(request: Request):
 
 @app.get("/stats/player/{user_id}", tags=["HTML"], summary="Serves the player detail page")
 async def player_detail_page(request: Request, user_id: int):
-    # We can pass the user_id to the template if needed, but JS will handle fetching
     return templates.TemplateResponse("player_detail.html", {"request": request, "user_id": user_id})
 
 @app.get("/events", tags=["HTML"], summary="Serves the event management page")
 async def events_page(request: Request):
     return templates.TemplateResponse("events.html", {"request": request})
-    
