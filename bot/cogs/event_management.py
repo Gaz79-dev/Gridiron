@@ -44,21 +44,40 @@ CURATED_TIMEZONES = {
         "Canada/Atlantic", "US/Alaska", "US/Hawaii"
     ],
     "UK / Europe": [
-        "Europe/London", "Europe/Paris", "Europe/Berlin", 
+        "Europe/London", "Europe/Paris", "Europe/Berlin",
         "Europe/Helsinki", "Europe/Moscow"
     ],
     "Other": ["UTC"]
 }
 
+# --- START OF CHANGE: New helper function ---
+def has_required_role(member: discord.Member) -> bool:
+    """Checks if a member has one of the roles specified in .env."""
+    # Load the configured role IDs from the .env file.
+    allowed_role_ids = set()
+    for i in range(1, 6): # Checks for ALLOWED_ROLE_ID_1 through 5
+        role_id_str = os.getenv(f"ALLOWED_ROLE_ID_{i}")
+        if role_id_str and role_id_str.isdigit():
+            allowed_role_ids.add(int(role_id_str))
+
+    # If no roles are configured in the .env file, deny by default for safety.
+    if not allowed_role_ids:
+        return False
+
+    # Check if the user has any of the allowed roles.
+    user_role_ids = {role.id for role in member.roles}
+    return not user_role_ids.isdisjoint(allowed_role_ids)
+# --- END OF CHANGE ---
+
 async def create_event_embed(bot: commands.Bot, event_id: int, db: Database) -> discord.Embed:
     event = await db.get_event_by_id(event_id)
     if not event: return discord.Embed(title="Error", description="Event not found.", color=discord.Color.red())
-    
+
     guild = bot.get_guild(event['guild_id'])
     if not guild: return discord.Embed(title="Error", description="Could not find the server for this event.", color=discord.Color.red())
-    
+
     signups = await db.get_signups_for_event(event_id)
-    
+
     specialty_roles = {
         "arty": os.getenv("ROLE_ID_ARTY"), "armour": os.getenv("ROLE_ID_ARMOUR"),
         "attack": os.getenv("ROLE_ID_ATTACK"), "defence": os.getenv("ROLE_ID_DEFENCE"),
@@ -72,7 +91,7 @@ async def create_event_embed(bot: commands.Bot, event_id: int, db: Database) -> 
             role = guild.get_role(role_id)
             if role:
                 role_mentions.append(role.mention)
-        
+
         if role_mentions:
             roles_text = ", ".join(role_mentions)
             restriction_notice = (
@@ -86,26 +105,26 @@ async def create_event_embed(bot: commands.Bot, event_id: int, db: Database) -> 
     if event['end_time']: time_str += f"\n**Ends:** {discord.utils.format_dt(event['end_time'], style='F')}"
     if event['timezone']: time_str += f"\nTimezone: {event['timezone']}"
     embed.add_field(name="Time", value=time_str, inline=False)
-    
+
     accepted_signups = defaultdict(list)
     tentative_users = []
     declined_users = []
-    
+
     for signup in signups:
         member = guild.get_member(signup['user_id'])
         if not member: continue
-        
+
         if signup['rsvp_status'] == RsvpStatus.ACCEPTED:
             role_key = signup['role_name'] or "Unassigned"
             accepted_signups[role_key].append({
                 "display_name": f"**{member.display_name}**",
                 "subclass": signup['subclass_name']
             })
-        elif signup['rsvp_status'] == RsvpStatus.TENTATIVE: 
+        elif signup['rsvp_status'] == RsvpStatus.TENTATIVE:
             tentative_users.append(member.display_name)
-        elif signup['rsvp_status'] == RsvpStatus.DECLINED: 
+        elif signup['rsvp_status'] == RsvpStatus.DECLINED:
             declined_users.append(member.display_name)
-            
+
     total_accepted = sum(len(v) for v in accepted_signups.values())
     embed.add_field(name=f"Accepted ({total_accepted})", value="\u200b", inline=False)
 
@@ -113,8 +132,6 @@ async def create_event_embed(bot: commands.Bot, event_id: int, db: Database) -> 
     column_1_roles = ["Commander", "Infantry"]
     column_2_roles = ["Armour", "Pathfinders", "Artillery", "Recon"]
 
-    # --- START OF FIX ---
-    # This function is updated to correctly handle roles that do not have subclasses.
     def build_role_block(primary_role, signups):
         """Builds the text block for a primary role and its members."""
         if not signups:
@@ -135,38 +152,37 @@ async def create_event_embed(bot: commands.Bot, event_id: int, db: Database) -> 
             # A player's subclass is either what they selected, or "Unassigned" if they didn't.
             subclass_key = signup['subclass'] or "Unassigned"
             subclass_groups[subclass_key].append(signup['display_name'])
-            
+
         # Iterate through the official subclasses for this role to maintain order.
         for subclass in (SUBCLASSES.get(primary_role, []) + ["Unassigned"]):
             if players := subclass_groups.get(subclass):
                 block_lines.append(f"__**{subclass}**__ ({len(players)})")
                 block_lines.extend(players)
                 block_lines.append("") # Spacer line for readability between subclasses
-        
+
         if len(block_lines) > 1: # If any players were added
             if block_lines[-1] == "": block_lines.pop() # Remove last spacer
             return "\n".join(block_lines)
-            
+
         return None
-    # --- END OF FIX ---
 
     # Build the columns
     col1_text = []
     for role in column_1_roles:
         if block := build_role_block(role, accepted_signups.get(role)):
             col1_text.append(block)
-    
+
     col2_text = []
     for role in column_2_roles:
         if block := build_role_block(role, accepted_signups.get(role)):
             col2_text.append(block)
-    
+
     # Add columns to embed if they have content
     if col1_text:
         embed.add_field(name="\u200b", value="\n\n".join(col1_text), inline=True)
     if col2_text:
         embed.add_field(name="\u200b", value="\n\n".join(col2_text), inline=True)
-    
+
     # Add a spacer field if one column is populated and the other isn't, to maintain layout
     if (col1_text and not col2_text) or (col2_text and not col1_text):
         embed.add_field(name="\u200b", value="\u200b", inline=True)
@@ -178,18 +194,18 @@ async def create_event_embed(bot: commands.Bot, event_id: int, db: Database) -> 
             value="\n".join([p['display_name'] for p in unassigned_signups]),
             inline=False
         )
-    if tentative_users: 
+    if tentative_users:
         embed.add_field(name=f"__**Tentative**__ ({len(tentative_users)})", value=", ".join(tentative_users), inline=False)
-    if declined_users: 
+    if declined_users:
         embed.add_field(name=f"__**Declined**__ ({len(declined_users)})", value=", ".join(declined_users), inline=False)
-    
+
     creator_name = "Unknown User"
     if creator_id := event.get('creator_id'):
         try:
             creator = guild.get_member(creator_id) or await guild.fetch_member(creator_id)
             creator_name = creator.display_name if creator else (await bot.fetch_user(creator_id)).name
         except discord.NotFound: pass
-        
+
     embed.set_footer(text=f"Event ID: {event_id} | Created by: {creator_name}")
     return embed
 
@@ -202,7 +218,7 @@ class RoleSelect(ui.Select):
             options.append(discord.SelectOption(label="No roles available for you", value="unassigned"))
 
         super().__init__(placeholder="1. Choose your primary role...", options=options)
-    
+
     async def callback(self, i: discord.Interaction):
         selected_role = self.values[0]
         if selected_role == "unassigned":
@@ -211,10 +227,10 @@ class RoleSelect(ui.Select):
             asyncio.create_task(self.view.update_original_embed())
             self.view.stop()
             return
-            
+
         self.view.role = selected_role
         subclass_select = self.view.subclass_select
-        
+
         all_subclasses = SUBCLASSES.get(self.view.role, [])
         if not all_subclasses:
             await self.db.update_signup_role(self.event_id, i.user.id, self.view.role, None)
@@ -231,11 +247,11 @@ class RoleSelect(ui.Select):
         guild = self.view.bot.get_guild(event['guild_id'])
         if not guild:
             return await i.response.edit_message(content="Error: Bot is not in the event's server.", view=None)
-        
+
         member = guild.get_member(i.user.id) or await guild.fetch_member(i.user.id)
         if not member:
             return await i.response.edit_message(content="Error: Could not find you in the event's server.", view=None)
-        
+
         user_role_ids = {r.id for r in member.roles}
 
         restricted_roles_config = {
@@ -243,13 +259,13 @@ class RoleSelect(ui.Select):
             "Tank Commander": os.getenv("ROLE_ID_TANK_COMMANDER"),
         }
         restricted_roles_config = {k: int(v) for k, v in restricted_roles_config.items() if v and v.isdigit()}
-        
+
         available_subclasses = []
         for subclass in all_subclasses:
             if subclass not in RESTRICTED_ROLES:
                 available_subclasses.append(subclass)
                 continue
-            
+
             required_role_id = restricted_roles_config.get(subclass)
             if not required_role_id or required_role_id in user_role_ids:
                 available_subclasses.append(subclass)
@@ -268,7 +284,7 @@ class SubclassSelect(ui.Select):
     def __init__(self, db: Database, event_id: int):
         self.db, self.event_id = db, event_id
         super().__init__(placeholder="Select a primary role first...", disabled=True, options=[discord.SelectOption(label="placeholder")])
-    
+
     async def callback(self, i: discord.Interaction):
         subclass = self.values[0]
         await self.db.update_signup_role(self.event_id, i.user.id, self.view.role, subclass)
@@ -291,7 +307,7 @@ class RoleSelectionView(ui.View):
             await self.update_original_embed()
             try: await self.user.send("Your role selection timed out. You are 'Unassigned'.")
             except discord.Forbidden: pass
-            
+
     async def update_original_embed(self):
         if not (event := await self.db.get_event_by_id(self.event_id)): return
         try:
@@ -339,17 +355,17 @@ class PersistentEventView(ui.View):
     def __init__(self, db: Database):
         super().__init__(timeout=None)
         self.db = db
-        
+
     async def update_embed(self, i: discord.Interaction, event_id: int):
         try: await i.message.edit(embed=await create_event_embed(i.client, event_id, self.db))
         except Exception as e: print(f"Error updating embed: {e}")
-        
+
     @ui.button(label="Accept", style=discord.ButtonStyle.success, custom_id="persistent_view:accept")
     async def accept(self, i: discord.Interaction, button: ui.Button):
         await i.response.defer(ephemeral=True)
         event = await self.db.get_event_by_message_id(i.message.id)
         if not event: return await i.followup.send("Event not found.", ephemeral=True)
-        
+
         restricted_roles_config = {
             "Commander": os.getenv("ROLE_ID_COMMANDER"), "Officer": os.getenv("ROLE_ID_OFFICER"),
             "Recon": os.getenv("ROLE_ID_RECON"), "Tank Commander": os.getenv("ROLE_ID_TANK_COMMANDER"),
@@ -364,13 +380,13 @@ class PersistentEventView(ui.View):
             if role not in RESTRICTED_ROLES:
                 available_roles.append(role)
                 continue
-            
+
             required_role_id = restricted_roles_config.get(role)
             if not required_role_id or required_role_id in user_role_ids:
                 available_roles.append(role)
 
         await self.db.set_rsvp(event['event_id'], i.user.id, RsvpStatus.ACCEPTED)
-        
+
         try:
             if not available_roles:
                 await self.db.update_signup_role(event['event_id'], i.user.id, "Unassigned", None)
@@ -382,7 +398,7 @@ class PersistentEventView(ui.View):
         except discord.Forbidden:
             await self.db.update_signup_role(event['event_id'], i.user.id, "Unassigned", None)
             await i.followup.send("Accepted, but I couldn't DM you. Role set to 'Unassigned'.", ephemeral=True)
-            
+
         await self.update_embed(i, event['event_id'])
 
     @ui.button(label="Tentative", style=discord.ButtonStyle.secondary, custom_id="persistent_view:tentative")
@@ -401,7 +417,7 @@ class PersistentEventView(ui.View):
                 await i.followup.send("An error occurred while processing your RSVP. Please try again.", ephemeral=True)
             except:
                 pass
-            
+
     @ui.button(label="Decline", style=discord.ButtonStyle.danger, custom_id="persistent_view:decline")
     async def decline(self, i: discord.Interaction, button: ui.Button):
         await i.response.defer(ephemeral=True)
@@ -418,39 +434,54 @@ class PersistentEventView(ui.View):
                 await i.followup.send("An error occurred while processing your RSVP. Please try again.", ephemeral=True)
             except:
                 pass
-    
+
+    # --- START OF CHANGE: Updated button permissions ---
     @ui.button(label="Edit", style=discord.ButtonStyle.primary, custom_id="persistent_view:edit_event", row=2)
     async def edit_event_button(self, interaction: discord.Interaction, button: ui.Button):
-        if not interaction.user.guild_permissions.administrator:
-            return await interaction.response.send_message("You must be an administrator to edit events.", ephemeral=True)
+        # The administrator check is replaced with the role-based check.
+        if not has_required_role(interaction.user):
+            return await interaction.response.send_message(
+                "You do not have the required role to edit events.", ephemeral=True
+            )
 
         event_cog = interaction.client.get_cog('EventManagement')
         if not event_cog:
-            return await interaction.response.send_message("An error occurred. The event management module may be offline.", ephemeral=True)
-            
+            return await interaction.response.send_message(
+                "An error occurred. The event management module may be offline.", ephemeral=True
+            )
+
         event = await self.db.get_event_by_message_id(interaction.message.id)
         if not event:
-            return await interaction.response.send_message("This event could not be found in the database.", ephemeral=True)
+            return await interaction.response.send_message(
+                "This event could not be found in the database.", ephemeral=True
+            )
 
         await interaction.response.send_message("I've sent you a DM to start the editing process.", ephemeral=True)
         await event_cog.start_conversation(interaction, mode='edit', event_id=event['event_id'])
 
     @ui.button(label="Delete", style=discord.ButtonStyle.danger, custom_id="persistent_view:delete_event", row=2)
     async def delete_event_button(self, interaction: discord.Interaction, button: ui.Button):
-        if not interaction.user.guild_permissions.administrator:
-            return await interaction.response.send_message("You must be an administrator to delete events.", ephemeral=True)
+        # The administrator check is replaced with the role-based check.
+        if not has_required_role(interaction.user):
+            return await interaction.response.send_message(
+                "You do not have the required role to delete events.", ephemeral=True
+            )
 
         event_cog = interaction.client.get_cog('EventManagement')
         if not event_cog:
-            return await interaction.response.send_message("An error occurred. The event management module may be offline.", ephemeral=True)
-            
+            return await interaction.response.send_message(
+                "An error occurred. The event management module may be offline.", ephemeral=True
+            )
+
         event = await self.db.get_event_by_message_id(interaction.message.id)
         if not event:
-            return await interaction.response.send_message("This event could not be found in the database.", ephemeral=True)
-        
+            return await interaction.response.send_message(
+                "This event could not be found in the database.", ephemeral=True
+            )
+
         await interaction.response.send_message("I've sent you a DM to confirm the deletion.", ephemeral=True)
         await event_cog.start_delete_conversation(interaction, event['event_id'])
-
+    # --- END OF CHANGE ---
 
 class ReminderConfirmationView(ui.View):
     def __init__(self):
@@ -473,13 +504,13 @@ class ConfirmationView(ui.View):
     def __init__(self):
         super().__init__(timeout=120)
         self.value = None
-        
+
     @ui.button(label="Yes", style=discord.ButtonStyle.green)
     async def confirm(self, i: discord.Interaction, button: ui.Button):
         await i.response.defer()
         self.value = True
         self.stop()
-    
+
     @ui.button(label="No/Skip", style=discord.ButtonStyle.red)
     async def reject(self, i: discord.Interaction, button: ui.Button):
         await i.response.defer()
@@ -505,10 +536,10 @@ class ReminderConversation:
             if not await self.ask_for_confirmation():
                 await self.user.send("Reminder cancelled.")
                 return
-            
+
             message_content = await self.ask_for_message()
             if not message_content:
-                return 
+                return
 
             await self.send_reminders(message_content)
 
@@ -531,7 +562,7 @@ class ReminderConversation:
         if view.value is None:
             await msg.edit(content="Confirmation timed out.", view=None)
             return False
-        
+
         await msg.delete()
         return view.value
 
@@ -549,7 +580,7 @@ class ReminderConversation:
 
     async def send_reminders(self, message_content: str):
         await self.user.send(f"Sending reminders to {len(self.member_ids)} members... This may take a moment.")
-        
+
         success_count = 0
         fail_count = 0
 
@@ -561,7 +592,7 @@ class ReminderConversation:
                 await asyncio.sleep(0.5)
             except (discord.Forbidden, discord.HTTPException, discord.NotFound):
                 fail_count += 1
-        
+
         await self.user.send(
             f"Reminder process complete!\n"
             f"✅ Successfully sent to {success_count} member(s).\n"
@@ -581,8 +612,8 @@ class Conversation:
     async def _wait_for_message(self):
         """Waits for a message from the user in a DM channel."""
         return await self.bot.wait_for(
-            'message', 
-            check=lambda m: m.author == self.user and isinstance(m.channel, discord.DMChannel), 
+            'message',
+            check=lambda m: m.author == self.user and isinstance(m.channel, discord.DMChannel),
             timeout=300.0
         )
 
@@ -600,7 +631,7 @@ class Conversation:
                 (None, self.ask_restrict_roles, 'restrict_to_role_ids'),
                 (None, self.ask_is_recurring, 'is_recurring'),
             ]
-            
+
             for prompt, processor, data_key in steps:
                 if self.is_finished: break
                 if not await processor(prompt, data_key):
@@ -618,9 +649,9 @@ class Conversation:
         if not (event_data := await self.db.get_event_by_id(self.event_id)):
             await self.user.send("Could not find the event to edit.")
             return await self.cancel()
-        
+
         self.data = dict(event_data)
-        
+
         edit_options = {
             "1": ("Title", 'title', self.process_text),
             "2": ("Start Time", 'event_time', self.process_start_time),
@@ -629,7 +660,7 @@ class Conversation:
             "5": ("Mention Roles", 'mention_role_ids', self.ask_mention_roles),
             "6": ("Restrict Roles", 'restrict_to_role_ids', self.ask_restrict_roles),
         }
-        
+
         is_child_event = self.data.get('parent_event_id') is not None
         if not is_child_event:
             edit_options["7"] = ("Timezone", 'timezone', self.process_timezone)
@@ -642,7 +673,7 @@ class Conversation:
                     "Select a field to edit by replying with its number. Type `finish` to save or `cancel` to exit.",
                     embed=summary_embed
                 )
-                
+
                 msg = await self._wait_for_message()
                 choice = msg.content.lower()
 
@@ -672,11 +703,11 @@ class Conversation:
         """Creates an embed summarizing the current state of the event data."""
         embed = discord.Embed(title="Event Editor", description="Current event details:", color=discord.Color.orange())
         guild = self.interaction.guild
-        
+
         for num, (name, key, _) in edit_options.items():
             value = self.data.get(key)
             display_value = "Not set"
-            
+
             if value is not None:
                 if key in ['event_time', 'end_time'] and isinstance(value, datetime.datetime):
                     try:
@@ -684,7 +715,7 @@ class Conversation:
                         target_tz = pytz.timezone(target_tz_str)
                     except pytz.UnknownTimeZoneError:
                         target_tz = pytz.utc
-                    
+
                     local_time = value.astimezone(target_tz)
                     display_value = local_time.strftime('%d-%m-%Y %H:%M')
                 elif key in ['mention_role_ids', 'restrict_to_role_ids']:
@@ -698,7 +729,7 @@ class Conversation:
                     display_value = str(value)
 
             embed.add_field(name=f"`{num}`. {name}", value=f"```{display_value or 'Not Set'}```", inline=False)
-            
+
         return embed
 
     async def process_text(self, prompt, data_key):
@@ -714,7 +745,7 @@ class Conversation:
 
     async def process_timezone(self, prompt, data_key):
         flat_tz_list = [tz for region in CURATED_TIMEZONES.values() for tz in region]
-        
+
         description_lines = []
         count = 1
         for region, timezones in CURATED_TIMEZONES.items():
@@ -722,14 +753,14 @@ class Conversation:
             for tz in timezones:
                 description_lines.append(f"`{count}` {tz}")
                 count += 1
-        
+
         embed = discord.Embed(title="Please Select a Timezone", description="\n".join(description_lines), color=discord.Color.blue())
         await self.user.send("Please reply with the number for your desired timezone.", embed=embed)
-        
+
         try:
             msg = await self._wait_for_message()
             if msg.content.lower() == 'cancel': return False
-            
+
             choice = int(msg.content)
             if 1 <= choice <= len(flat_tz_list):
                 self.data[data_key] = flat_tz_list[choice - 1]
@@ -792,7 +823,7 @@ class Conversation:
         self.data['is_recurring'] = view.value
         if view.value:
             return await self.process_recurrence_rule(None, 'recurrence_rule')
-        
+
         self.data['recurrence_rule'], self.data['recreation_hours'] = None, None
         return True
 
@@ -838,19 +869,19 @@ class Conversation:
 
         if view.value:
             guild_roles = sorted([r for r in self.interaction.guild.roles if r.name != "@everyone" and not r.managed], key=lambda r: r.position, reverse=True)
-            
+
             description_lines = [f"`{i+1}` {role.name}" for i, role in enumerate(guild_roles)]
-            
+
             embed = discord.Embed(title="Please Select Role(s)", description="\n".join(description_lines), color=discord.Color.blue())
             await self.user.send("Please reply with the number(s) for your desired roles, separated by commas (e.g., `1, 5, 12`).", embed=embed)
 
             try:
                 msg = await self._wait_for_message()
                 if msg.content.lower() == 'cancel': return False
-                
+
                 selected_indices = [int(i.strip()) - 1 for i in msg.content.split(',')]
                 selected_role_ids = [guild_roles[i].id for i in selected_indices if 0 <= i < len(guild_roles)]
-                
+
                 self.data[data_key] = selected_role_ids
                 if not selected_role_ids:
                      await self.user.send("No valid roles selected.")
@@ -867,7 +898,7 @@ class Conversation:
 
     async def ask_mention_roles(self, p, dk): return await self._ask_roles(p, dk, "Mention roles in the announcement?")
     async def ask_restrict_roles(self, p, dk): return await self._ask_roles(p, dk, "Restrict sign-ups to specific roles?")
-        
+
     async def finish(self):
         """Saves the event data to the database and updates the message."""
         if self.is_finished: return
@@ -877,9 +908,9 @@ class Conversation:
         try:
             if self.event_id:
                 await self.db.update_event(self.event_id, self.data)
-                
+
                 update_embed = await create_event_embed(self.bot, self.event_id, self.db)
-                
+
                 notify_view = ConfirmationView()
                 msg = await self.user.send("Would you like to notify attendees of the changes?", view=notify_view)
                 await notify_view.wait()
@@ -902,7 +933,7 @@ class Conversation:
                     # This handles the "Skip" button or a timeout
                     else:
                         await self.user.send("Notification step skipped.")
-                    
+
                     await select_msg.delete()
                 else:
                     await self.user.send("Okay, no notifications will be sent.")
@@ -913,7 +944,7 @@ class Conversation:
                     if self.data.get('is_recurring') and not self.data.get('parent_event_id'):
                         latest_child = await self.db.get_latest_child_event(self.event_id)
                         event_for_message = latest_child if latest_child else self.data
-                    
+
                     if 'channel_id' in event_for_message and event_for_message.get('message_id'):
                         channel = self.bot.get_channel(event_for_message['channel_id']) or await self.bot.fetch_channel(event_for_message['channel_id'])
                         message = await channel.fetch_message(event_for_message['message_id'])
@@ -928,7 +959,7 @@ class Conversation:
                 except (discord.NotFound, discord.Forbidden, KeyError) as e:
                     print(f"Error updating main embed: {e}")
                     await self.user.send("⚠️ Event data was updated, but I couldn't find or edit the original event message.")
-                
+
                 # Update the thread
                 if self.data.get('thread_id'):
                     try:
@@ -1045,7 +1076,7 @@ class EventManagement(commands.Cog):
             else:
                 await interaction.response.send_message("You must be an administrator to delete events.", ephemeral=True)
             return
-        
+
         event = await self.db.get_event_by_id(event_id)
         if not event or event['guild_id'] != interaction.guild_id:
             if interaction.response.is_done():
@@ -1072,24 +1103,24 @@ class EventManagement(commands.Cog):
     async def restore(self, interaction: discord.Interaction, event_id: int):
         if not interaction.user.guild_permissions.administrator:
             return await interaction.response.send_message("You must be an administrator to restore events.", ephemeral=True)
-        
+
         await interaction.response.defer(ephemeral=True)
-        
+
         event = await self.db.get_event_by_id(event_id, include_deleted=True)
         if not event or event['guild_id'] != interaction.guild_id:
             return await interaction.followup.send("Event not found.", ephemeral=True)
-        
+
         if not event.get('deleted_at'):
             return await interaction.followup.send("This event is already active.", ephemeral=True)
 
         await self.db.restore_event(event_id)
-        
+
         try:
             channel = self.bot.get_channel(event['channel_id']) or await self.bot.fetch_channel(event['channel_id'])
             embed = await create_event_embed(self.bot, event_id, self.db)
             view = PersistentEventView(self.db)
             content = " ".join([f"<@&{rid}>" for rid in event.get('mention_role_ids', [])])
-            
+
             new_message = await channel.send(content=content, embed=embed, view=view)
             await self.db.update_event_message_id(event_id, new_message.id)
             await interaction.followup.send(f"Event '{event['title']}' has been restored and re-posted.")
@@ -1105,7 +1136,7 @@ class EventManagement(commands.Cog):
     @app_commands.default_permissions(administrator=True)
     async def remind(self, interaction: discord.Interaction, event_id: int, role: str):
         await interaction.response.send_message("Preparing your reminder, please check your DMs...", ephemeral=True)
-        
+
         if interaction.user.id in self.active_conversations:
             return await interaction.followup.send("You are already in an active conversation with me. Please finish or cancel it first.", ephemeral=True)
 
@@ -1122,7 +1153,7 @@ class EventManagement(commands.Cog):
             return await interaction.followup.send("Event not found in this server.", ephemeral=True)
 
         rsvpd_user_ids = await self.db.get_all_rsvpd_user_ids_for_event(event_id)
-        
+
         member_ids_to_remind = []
         for member in target_role.members:
             if not member.bot and member.id not in rsvpd_user_ids:
@@ -1133,7 +1164,7 @@ class EventManagement(commands.Cog):
                 f"No members of the '{target_role.name}' role need a reminder for this event. They have all RSVP'd.",
                 ephemeral=True
             )
-        
+
         conv = ReminderConversation(self, interaction, target_role, member_ids_to_remind)
         self.active_conversations[interaction.user.id] = conv
         asyncio.create_task(conv.start())
@@ -1146,14 +1177,14 @@ class EventManagement(commands.Cog):
             else:
                 await interaction.response.send_message("You are already in an active conversation with me. Please finish or cancel it first.", ephemeral=True)
             return
-        
+
         if not interaction.response.is_done():
             await interaction.response.send_message("I've sent you a DM to start the process!", ephemeral=True)
-        
+
         try:
             conv = Conversation(self, interaction, self.db, event_id)
             self.active_conversations[interaction.user.id] = conv
-            
+
             if mode == 'create':
                 asyncio.create_task(conv.start_creation())
             elif mode == 'edit':
@@ -1171,7 +1202,7 @@ class EventManagement(commands.Cog):
             else:
                 await interaction.response.send_message("You are already in an active conversation with me. Please finish or cancel it first.", ephemeral=True)
             return
-        
+
         try:
             conv = DeleteConversation(self, interaction, self.db, event_id)
             self.active_conversations[interaction.user.id] = conv
@@ -1190,7 +1221,7 @@ class DeleteConversation:
         self.db = db
         self.event_id = event_id
         self.is_finished = False
-    
+
     async def start(self):
         """Guides the user through deleting an event."""
         try:
@@ -1199,25 +1230,25 @@ class DeleteConversation:
             if not event:
                 await self.user.send("This event could not be found in the database. It may have already been deleted.")
                 return self.finish()
-    
+
             # 2. Confirm deletion
             confirm_view = DeleteConfirmationView()
             msg = await self.user.send(f"Are you sure you want to delete the event **{event['title']}**? This action cannot be undone via the bot.", view=confirm_view)
             await confirm_view.wait()
-    
+
             if confirm_view.value is not True:
                 await msg.edit(content="Deletion cancelled.", view=None)
                 return self.finish()
-            
+
             await msg.edit(content="Deletion confirmed. Preparing to delete assets...", view=None)
-    
+
             # 3. Ask about notifying attendees
             notify_view = ConfirmationView()
             notify_msg = await self.user.send("Would you like to notify accepted attendees via DM that the event has been cancelled?", view=notify_view)
             await notify_view.wait()
             should_notify = notify_view.value
             await notify_msg.edit(content="Okay, proceeding with deletion...", view=None)
-    
+
             # 4. Perform deletion of Discord assets
             if event.get('message_id'):
                 try:
@@ -1227,7 +1258,7 @@ class DeleteConversation:
                     await self.user.send("✅ Event message in channel deleted.")
                 except Exception as e:
                     await self.user.send(f"⚠️ Could not delete the event message in the channel: {e}")
-    
+
             if event.get('thread_id'):
                 try:
                     thread = self.bot.get_channel(event['thread_id']) or await self.bot.fetch_channel(event['thread_id'])
@@ -1235,12 +1266,12 @@ class DeleteConversation:
                     await self.user.send("✅ Event discussion thread deleted.")
                 except Exception as e:
                     await self.user.send(f"⚠️ Could not delete the event thread: {e}")
-            
+
             # 5. Notify users if requested
             if should_notify:
                 signups = await self.db.get_signups_for_event(self.event_id)
                 accepted_ids = [s['user_id'] for s in signups if s['rsvp_status'] == RsvpStatus.ACCEPTED]
-                
+
                 if accepted_ids:
                     await self.user.send(f"Now sending cancellation notices to {len(accepted_ids)} attendees...")
                     success_count = 0
@@ -1254,11 +1285,11 @@ class DeleteConversation:
                     await self.user.send(f"✅ Successfully notified {success_count}/{len(accepted_ids)} attendees.")
                 else:
                     await self.user.send("No accepted attendees to notify.")
-    
+
             # 6. Soft-delete the event in the database
             await self.db.soft_delete_event(self.event_id)
             await self.user.send("✅ Event has been marked as deleted in the database.")
-    
+
         except asyncio.TimeoutError:
             await self.user.send("Your session has timed out. Deletion cancelled.")
         except Exception as e:
@@ -1267,7 +1298,7 @@ class DeleteConversation:
             await self.user.send("An unexpected error occurred. Please check the bot's logs.")
         finally:
             self.finish()
-    
+
     def finish(self):
         """Cleans up the active conversation."""
         self.is_finished = True
