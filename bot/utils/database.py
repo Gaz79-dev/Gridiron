@@ -1,4 +1,3 @@
-
 import asyncpg
 import os
 import datetime
@@ -114,9 +113,108 @@ class Database:
                         created_at TIMESTAMP WITH TIME ZONE DEFAULT (NOW() AT TIME ZONE 'utc')
                     );
                 """)
+                # --- NEW: Squad Template Tables ---
+                await connection.execute("""
+                    CREATE TABLE IF NOT EXISTS squad_templates (
+                        template_id SERIAL PRIMARY KEY,
+                        guild_id BIGINT NOT NULL,
+                        template_name VARCHAR(100) NOT NULL UNIQUE
+                    );
+                """)
+                await connection.execute("""
+                    CREATE TABLE IF NOT EXISTS squad_template_definitions (
+                        definition_id SERIAL PRIMARY KEY,
+                        template_id INT NOT NULL REFERENCES squad_templates(template_id) ON DELETE CASCADE,
+                        squad_name VARCHAR(100) NOT NULL,
+                        default_count INT NOT NULL DEFAULT 1,
+                        squad_type VARCHAR(50) NOT NULL,
+                        naming_convention VARCHAR(20) NOT NULL DEFAULT 'alpha',
+                        source_rsvp_pool VARCHAR(50) NOT NULL
+                    );
+                """)
                 print("Database setup is complete.")
 
-    # --- User Management Functions ---
+    # --- NEW: Squad Template Functions ---
+    async def create_squad_template(self, guild_id: int, template_name: str, definitions: List[Dict]) -> int:
+        async with self.pool.acquire() as conn:
+            async with conn.transaction():
+                template_id = await conn.fetchval(
+                    "INSERT INTO squad_templates (guild_id, template_name) VALUES ($1, $2) RETURNING template_id",
+                    guild_id, template_name
+                )
+                for defi in definitions:
+                    await conn.execute(
+                        """
+                        INSERT INTO squad_template_definitions 
+                        (template_id, squad_name, default_count, squad_type, naming_convention, source_rsvp_pool)
+                        VALUES ($1, $2, $3, $4, $5, $6)
+                        """,
+                        template_id, defi['squad_name'], defi['default_count'], defi['squad_type'],
+                        defi['naming_convention'], defi['source_rsvp_pool']
+                    )
+                return template_id
+
+    async def get_squad_template_by_id(self, template_id: int) -> Optional[Dict]:
+        async with self.pool.acquire() as conn:
+            template_row = await conn.fetchrow("SELECT * FROM squad_templates WHERE template_id = $1", template_id)
+            if not template_row:
+                return None
+            definitions = await conn.fetch(
+                "SELECT * FROM squad_template_definitions WHERE template_id = $1 ORDER BY definition_id", template_id
+            )
+            template = dict(template_row)
+            template['definitions'] = [dict(d) for d in definitions]
+            return template
+
+    async def get_all_squad_templates(self) -> List[Dict]:
+        async with self.pool.acquire() as conn:
+            templates = await conn.fetch("SELECT * FROM squad_templates ORDER BY template_name")
+            result = []
+            for t in templates:
+                template_with_defs = await self.get_squad_template_by_id(t['template_id'])
+                if template_with_defs:
+                    result.append(template_with_defs)
+            return result
+
+    async def delete_squad_template(self, template_id: int):
+        async with self.pool.acquire() as conn:
+            await conn.execute("DELETE FROM squad_templates WHERE template_id = $1", template_id)
+
+    # --- NEW: Tentative Player Promotion Function ---
+    async def promote_tentative_player(self, event_id: int, user_id: int, role_name: Optional[str], subclass_name: Optional[str]):
+        """
+        Promotes a user from Tentative to Accepted and assigns their role in a single transaction.
+        """
+        async with self.pool.acquire() as connection:
+            async with connection.transaction():
+                signup = await connection.fetchrow(
+                    "SELECT rsvp_status FROM signups WHERE event_id = $1 AND user_id = $2",
+                    event_id, user_id
+                )
+                old_status = signup['rsvp_status'] if signup else None
+
+                await connection.execute(
+                    """
+                    INSERT INTO signups (event_id, user_id, rsvp_status, role_name, subclass_name) VALUES ($1, $2, $3, $4, $5)
+                    ON CONFLICT (event_id, user_id) DO UPDATE SET rsvp_status = EXCLUDED.rsvp_status, role_name = EXCLUDED.role_name, subclass_name = EXCLUDED.subclass_name;
+                    """,
+                    event_id, user_id, RsvpStatus.ACCEPTED, role_name, subclass_name
+                )
+
+                await self.update_player_stats(user_id, old_status, RsvpStatus.ACCEPTED)
+
+                event_details = await connection.fetchrow("SELECT title, event_time FROM events WHERE event_id = $1", event_id)
+                if event_details:
+                    await connection.execute(
+                        """
+                        INSERT INTO player_event_history (user_id, event_id, event_title, event_time, role_name, subclass_name)
+                        VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (user_id, event_id) DO UPDATE
+                        SET role_name = EXCLUDED.role_name, subclass_name = EXCLUDED.subclass_name;
+                        """,
+                        user_id, event_id, event_details['title'], event_details['event_time'], role_name, subclass_name
+                    )
+
+    # --- User Management Functions (no changes) ---
     async def get_user_by_username(self, username: str) -> Optional[Dict]:
         async with self.pool.acquire() as conn:
             row = await conn.fetchrow("SELECT * FROM users WHERE username = $1", username)
@@ -155,9 +253,8 @@ class Database:
     async def delete_user(self, user_id: int):
         async with self.pool.acquire() as conn: await conn.execute("DELETE FROM users WHERE id = $1", user_id)
  
-    # --- Event & Signup Functions ---
+    # --- Event & Signup Functions (no changes) ---
     async def create_event(self, guild_id: int, channel_id: int, creator_id: int, data: Dict) -> int:
-        # --- MODIFIED: Added parent_event_id to the INSERT statement ---
         query = """
             INSERT INTO events (guild_id, channel_id, creator_id, title, description, event_time, end_time, timezone, is_recurring, recurrence_rule, mention_role_ids, restrict_to_role_ids, recreation_hours, parent_event_id)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING event_id;
@@ -175,12 +272,10 @@ class Database:
                 data.get('mention_role_ids', []),
                 data.get('restrict_to_role_ids', []),
                 data.get('recreation_hours'),
-                data.get('parent_event_id') # Added new parameter
+                data.get('parent_event_id')
             )
 
     async def update_event(self, event_id: int, data: Dict):
-        """Updates an event's details in the database."""
-        # This version allows editing recurrence rules, for use in the new admin UI
         query = """
             UPDATE events SET
                 title = $1, description = $2, event_time = $3, end_time = $4, timezone = $5,
@@ -298,27 +393,23 @@ class Database:
                     role_name, subclass_name, user_id, event_id
                 )
 
-    # --- ADDED: New functions for the Events web page ---
     async def get_recurring_parent_events(self) -> List[Dict]:
-        """Gets all parent recurring event templates."""
         query = "SELECT * FROM events WHERE is_recurring = TRUE AND parent_event_id IS NULL AND deleted_at IS NULL ORDER BY event_time DESC;"
         async with self.pool.acquire() as connection:
             return [dict(row) for row in await connection.fetch(query)]
 
     async def get_deleted_events(self) -> List[Dict]:
-        """Gets all soft-deleted events that can be restored."""
         query = "SELECT * FROM events WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC;"
         async with self.pool.acquire() as connection:
             return [dict(row) for row in await connection.fetch(query)]
 
     async def get_latest_child_event(self, parent_event_id: int) -> Optional[Dict]:
-        """Gets the most recent child event for a given parent to find its message_id."""
         query = "SELECT * FROM events WHERE parent_event_id = $1 AND deleted_at IS NULL ORDER BY event_time DESC LIMIT 1;"
         async with self.pool.acquire() as connection:
             row = await connection.fetchrow(query, parent_event_id)
             return dict(row) if row else None
             
-    # --- Player Statistics Functions ---
+    # --- Player Statistics Functions (no changes) ---
     async def update_player_stats(self, user_id: int, old_status: Optional[str], new_status: str):
         decrement_col = f"{old_status.lower()}_count" if old_status else None
         increment_col = f"{new_status.lower()}_count"
@@ -357,27 +448,24 @@ class Database:
             records = await connection.fetch(query, event_id)
             return [record['user_id'] for record in records]
 
-    # --- Reminder Job Functions ---
+    # --- Reminder Job Functions (no changes) ---
     async def create_reminder_job(self, job_id: uuid.UUID, user_ids: List[int]) -> None:
-        """Creates a new reminder job in the temporary table."""
         query = "INSERT INTO reminder_jobs (job_id, user_ids) VALUES ($1, $2);"
         async with self.pool.acquire() as connection:
             await connection.execute(query, job_id, user_ids)
 
     async def get_reminder_job(self, job_id: uuid.UUID) -> Optional[List[int]]:
-        """Retrieves the list of user IDs for a given reminder job."""
         query = "SELECT user_ids FROM reminder_jobs WHERE job_id = $1;"
         async with self.pool.acquire() as connection:
             record = await connection.fetchrow(query, job_id)
             return record['user_ids'] if record else None
 
     async def delete_reminder_job(self, job_id: uuid.UUID) -> None:
-        """Deletes a reminder job after it has been processed."""
         query = "DELETE FROM reminder_jobs WHERE job_id = $1;"
         async with self.pool.acquire() as connection:
             await connection.execute(query, job_id)
 
-    # --- Squad & Guild Config Functions ---
+    # --- Squad & Guild Config Functions (no changes) ---
     async def force_unlock_all_events(self):
         query = "UPDATE events SET locked_by_user_id = NULL, locked_at = NULL WHERE locked_by_user_id IS NOT NULL;"
         async with self.pool.acquire() as connection:
@@ -412,43 +500,6 @@ class Database:
         async with self.pool.acquire() as connection:
             await connection.execute(query, task, squad_member_id)
 
-    async def promote_tentative_player(self, event_id: int, user_id: int, role_name: Optional[str], subclass_name: Optional[str]):
-        """
-        Promotes a user from Tentative to Accepted and assigns their role in a single transaction.
-        """
-        async with self.pool.acquire() as connection:
-            async with connection.transaction():
-                # First, get the user's current RSVP status to correctly update player_stats
-                signup = await connection.fetchrow(
-                    "SELECT rsvp_status FROM signups WHERE event_id = $1 AND user_id = $2",
-                    event_id, user_id
-                )
-                old_status = signup['rsvp_status'] if signup else None
-
-                # Update the RSVP status to Accepted
-                await connection.execute(
-                    """
-                    INSERT INTO signups (event_id, user_id, rsvp_status, role_name, subclass_name) VALUES ($1, $2, $3, $4, $5)
-                    ON CONFLICT (event_id, user_id) DO UPDATE SET rsvp_status = EXCLUDED.rsvp_status, role_name = EXCLUDED.role_name, subclass_name = EXCLUDED.subclass_name;
-                    """,
-                    event_id, user_id, RsvpStatus.ACCEPTED, role_name, subclass_name
-                )
-
-                # Update player stats based on the status change
-                await self.update_player_stats(user_id, old_status, RsvpStatus.ACCEPTED)
-
-                # Add to permanent history
-                event_details = await connection.fetchrow("SELECT title, event_time FROM events WHERE event_id = $1", event_id)
-                if event_details:
-                    await connection.execute(
-                        """
-                        INSERT INTO player_event_history (user_id, event_id, event_title, event_time, role_name, subclass_name)
-                        VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (user_id, event_id) DO UPDATE
-                        SET role_name = EXCLUDED.role_name, subclass_name = EXCLUDED.subclass_name;
-                        """,
-                        user_id, event_id, event_details['title'], event_details['event_time'], role_name, subclass_name
-                    )
-
     async def get_event_lock_status(self, event_id: int) -> Optional[Dict]:
         query = "SELECT e.locked_by_user_id, e.locked_at, u.username as locked_by_username FROM events e LEFT JOIN users u ON e.locked_by_user_id = u.id WHERE e.event_id = $1;"
         async with self.pool.acquire() as conn:
@@ -465,7 +516,7 @@ class Database:
         async with self.pool.acquire() as conn:
             await conn.execute(query, event_id)
     
-    # --- Scheduler Functions ---
+    # --- Scheduler Functions (no changes) ---
     async def get_active_events_with_threads(self) -> List[Dict]:
         query = """
             SELECT event_id, guild_id, thread_id FROM events
@@ -478,9 +529,6 @@ class Database:
             return [dict(row) for row in await connection.fetch(query)]
 
     async def get_active_events_with_message_id(self) -> List[Dict]:
-        """
-        Gets all active, non-deleted events that have a message ID and should be present in a channel.
-        """
         query = """
             SELECT event_id, title, channel_id, message_id, mention_role_ids
             FROM events
@@ -523,13 +571,10 @@ class Database:
             SELECT event_id, thread_id, message_id, channel_id 
             FROM events
             WHERE 
-                -- The event must have finished more than 2 hours ago
                 COALESCE(end_time, event_time + INTERVAL '2 hours') < (NOW() AT TIME ZONE 'utc' - INTERVAL '2 hours')
             AND (
-                -- It is a regular, non-recurring event
                 is_recurring = FALSE 
                 OR
-                -- OR it is a child of a recurring event (and therefore should be deleted)
                 parent_event_id IS NOT NULL
             );
         """
