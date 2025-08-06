@@ -89,7 +89,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const templateName = document.getElementById('template-name').value;
         const definitions = [];
         definitionsContainer.querySelectorAll('.grid').forEach(row => {
-            // Skip the header row
+            // Skip the header row by checking for an input field
             if (row.querySelector('input')) {
                 definitions.push({
                     squad_name: row.querySelector('[data-field="squad_name"]').value,
@@ -332,15 +332,17 @@ document.addEventListener('DOMContentLoaded', () => {
     loadUsers();
     loadTemplates();
 
-    // --- NEW: Add headers for the template definitions ---
+    // --- Add headers for the template definitions ---
     const headerRow = document.createElement('div');
     headerRow.className = 'grid grid-cols-1 md:grid-cols-6 gap-2 items-center mb-2 text-sm font-semibold text-gray-400';
+    // --- FIX: Corrected column spans and added padding for alignment ---
     headerRow.innerHTML = `
-        <div class="md:col-span-2">Squad Name</div>
-        <div>Count</div>
-        <div>Player Pool</div>
-        <div>Squad Rules</div>
-        <div>Naming</div>
+        <div class="md:col-span-2 px-2">Squad Name</div>
+        <div class="px-2">Count</div>
+        <div class="px-2">Player Pool</div>
+        <div class="px-2">Squad Rules</div>
+        <div class="px-2">Naming</div>
+        <div class="px-2">Action</div>
     `;
     definitionsContainer.appendChild(headerRow);
 
