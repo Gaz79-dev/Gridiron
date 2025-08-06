@@ -37,25 +37,29 @@ async def run_web_draft(db: Database, event_id: int, request_data) -> List[Dict]
     
     squad_counts, squads_to_fill = {}, []
     
-    if request_data.squad_counts.get("Commander", 0) > 0:
-        commander_squad_id = await db.create_squad(event_id, "Commander", "Command")
-        squads_to_fill.append({
-            'id': commander_squad_id, 'squad_name': 'Commander', 'squad_type': 'Command',
-            'class_counts': defaultdict(int), 'source_rsvp_pool': 'Commander'
-        })
+    # --- FIX: Removed the hardcoded Commander block to prevent duplicates ---
 
-    # Use enumerate to get the group index for sequential numeric naming
-    for i, definition in enumerate(template['definitions'], 1):
+    # Use a separate counter for numeric groups to ensure it's sequential
+    numeric_group_index = 1
+    for definition in template['definitions']:
         squad_name = definition['squad_name']
+        convention = definition['naming_convention']
         count = request_data.squad_counts.get(squad_name, 0)
-        
+
+        # Pass the correct group index for naming
+        group_index_for_naming = numeric_group_index if convention == 'numeric' else 0
+
         for _ in range(count):
-            full_squad_name = get_squad_iteration(squad_name, squad_counts, definition['naming_convention'], i)
+            full_squad_name = get_squad_iteration(squad_name, squad_counts, convention, group_index_for_naming)
             s_id = await db.create_squad(event_id, full_squad_name, definition['squad_type'])
             squads_to_fill.append({
                 'id': s_id, 'squad_name': squad_name, 'squad_type': definition['squad_type'],
                 'class_counts': defaultdict(int), 'source_rsvp_pool': definition['source_rsvp_pool']
             })
+        
+        # Only increment the group index if the convention was numeric
+        if convention == 'numeric':
+            numeric_group_index += 1
 
     for squad in squads_to_fill:
         player_pool = player_pools.get(squad['source_rsvp_pool'], [])
