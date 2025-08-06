@@ -25,7 +25,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const definitionsContainer = document.getElementById('template-definitions-container');
     const templateList = document.getElementById('template-list');
     const RSVP_POOLS = ["Commander", "Infantry", "Armour", "Recon", "Pathfinders", "Artillery", "Unassigned"];
-    const SQUAD_TYPES = ["Commander", "Infantry", "Armour", "Recon", "Artillery", "Reserves"];
+    const SQUAD_TYPES = ["Command", "Infantry", "Armour", "Recon", "Artillery", "Reserves"];
 
     // --- Password Validation Function ---
     function validatePassword(password) {
@@ -42,7 +42,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const addDefinitionRow = () => {
         const rowId = `def-row-${Date.now()}`;
         const div = document.createElement('div');
-        div.className = 'grid grid-cols-1 md:grid-cols-6 gap-2 items-center border-t border-gray-600 pt-3';
+        div.className = 'grid grid-cols-1 md:grid-cols-7 gap-2 items-center border-t border-gray-600 pt-3';
         div.id = rowId;
 
         div.innerHTML = `
@@ -50,13 +50,12 @@ document.addEventListener('DOMContentLoaded', () => {
             <input type="number" value="1" min="0" class="bg-gray-600 border-gray-500 rounded-md p-2" data-field="default_count" required>
             <select class="bg-gray-600 border-gray-500 rounded-md p-2" data-field="source_rsvp_pool">${RSVP_POOLS.map(p => `<option value="${p}">${p}</option>`).join('')}</select>
             <select class="bg-gray-600 border-gray-500 rounded-md p-2" data-field="squad_type">${SQUAD_TYPES.map(t => `<option value="${t}">${t}</option>`).join('')}</select>
-            <div class="flex items-center space-x-2">
-                <select class="bg-gray-600 border-gray-500 rounded-md p-2 w-full" data-field="naming_convention">
-                    <option value="alpha">Alpha (A, B)</option>
-                    <option value="numeric">Numeric (1.1, 1.2)</option>
-                </select>
-                <button type="button" class="text-red-500 hover:text-red-700 font-bold" onclick="document.getElementById('${rowId}').remove()">X</button>
-            </div>
+            <select class="md:col-span-1 bg-gray-600 border-gray-500 rounded-md p-2" data-field="naming_convention">
+                <option value="none">None</option>
+                <option value="alpha">Alpha (A, B)</option>
+                <option value="numeric">Numeric (1.1, 1.2)</option>
+            </select>
+            <button type="button" class="text-red-500 hover:text-red-700 font-bold justify-self-center" onclick="document.getElementById('${rowId}').remove()">X</button>
         `;
         definitionsContainer.appendChild(div);
     };
@@ -89,7 +88,6 @@ document.addEventListener('DOMContentLoaded', () => {
         const templateName = document.getElementById('template-name').value;
         const definitions = [];
         definitionsContainer.querySelectorAll('.grid').forEach(row => {
-            // Skip the header row by checking for an input field
             if (row.querySelector('input')) {
                 definitions.push({
                     squad_name: row.querySelector('[data-field="squad_name"]').value,
@@ -115,11 +113,10 @@ document.addEventListener('DOMContentLoaded', () => {
             if (!response.ok) throw new Error((await response.json()).detail || 'Failed to save template');
             
             createTemplateForm.reset();
-            // Clear only definition rows, not the header
             definitionsContainer.querySelectorAll('.grid').forEach(row => {
                 if (row.querySelector('input')) row.remove();
             });
-            addDefinitionRow(); // Add a fresh row
+            addDefinitionRow();
             await loadTemplates();
             alert('Template saved successfully!');
 
@@ -332,18 +329,17 @@ document.addEventListener('DOMContentLoaded', () => {
     loadUsers();
     loadTemplates();
 
-    // --- Add headers for the template definitions ---
     const headerRow = document.createElement('div');
-    headerRow.className = 'grid grid-cols-1 md:grid-cols-6 gap-2 items-center mb-2 text-sm font-semibold text-gray-400';
-    // --- FIX: Corrected column layout to match input rows ---
+    headerRow.className = 'grid grid-cols-1 md:grid-cols-7 gap-2 items-center mb-2 text-sm font-semibold text-gray-400';
     headerRow.innerHTML = `
         <div class="md:col-span-2 px-2">Squad Name</div>
-        <div class="px-2">Default Count</div>
+        <div class="px-2">Count</div>
         <div class="px-2">Player Pool</div>
         <div class="px-2">Squad Rules</div>
-        <div class="px-2">Naming & Action</div>
+        <div class="px-2">Naming</div>
+        <div class="px-2">Action</div>
     `;
     definitionsContainer.appendChild(headerRow);
 
-    addDefinitionRow(); // Add one row to start
+    addDefinitionRow();
 });
