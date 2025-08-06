@@ -12,9 +12,14 @@ from bot.utils.database import Database, RsvpStatus
 from bot.api import auth, squad_logic
 from bot.api.dependencies import get_db
 from bot.api.models import Event, Signup, Squad, SquadBuildRequest, RosterUpdateRequest, SendEmbedRequest, Channel, User, EventLockStatus, EventUpdate
+from ..utils.database import ROLES, SUBCLASSES # Add SUBCLASSES
 
 # Import the emoji mapping for use in the embed
 from bot.cogs.event_management import EMOJI_MAPPING
+
+class PromoteRequest(BaseModel):
+    user_id: int
+    new_role_name: str
 
 router = APIRouter(
     prefix="/api/events",
@@ -127,6 +132,32 @@ async def get_guild_channels():
         except Exception as e:
             print(f"Error fetching channels from Discord API: {e}")
             raise HTTPException(status_code=502, detail="Failed to fetch channels from Discord.")
+
+@router.post("/{event_id}/promote-tentative", status_code=204, dependencies=[Depends(check_event_lock)])
+async def promote_tentative_player(event_id: int, request: PromoteRequest, db: Database = Depends(get_db)):
+    """
+    Promotes a tentative player to accepted and assigns them a role.
+    """
+    primary_role, subclass_name = None, None
+    
+    # Determine primary role and subclass from the new role name
+    for role, subclasses in SUBCLASSES.items():
+        if request.new_role_name in subclasses:
+            primary_role, subclass_name = role, request.new_role_name
+            break
+    if not primary_role and request.new_role_name in ROLES:
+        primary_role = request.new_role_name
+
+    if not primary_role:
+        primary_role = "Unassigned"
+
+    try:
+        await db.promote_tentative_player(event_id, request.user_id, primary_role, subclass_name)
+    except Exception as e:
+        print(f"Error promoting tentative player: {e}")
+        raise HTTPException(status_code=500, detail="Failed to update player status in the database.")
+    
+    return
 
 @router.get("/{event_id}", response_model=Event, dependencies=[Depends(auth.get_current_admin_user)])
 async def get_event_details(event_id: int, db: Database = Depends(get_db)):
