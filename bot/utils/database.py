@@ -113,7 +113,6 @@ class Database:
                         created_at TIMESTAMP WITH TIME ZONE DEFAULT (NOW() AT TIME ZONE 'utc')
                     );
                 """)
-                # --- NEW: Squad Template Tables ---
                 await connection.execute("""
                     CREATE TABLE IF NOT EXISTS squad_templates (
                         template_id SERIAL PRIMARY KEY,
@@ -134,7 +133,7 @@ class Database:
                 """)
                 print("Database setup is complete.")
 
-    # --- NEW: Squad Template Functions ---
+    # --- Squad Template Functions ---
     async def create_squad_template(self, guild_id: int, template_name: str, definitions: List[Dict]) -> int:
         async with self.pool.acquire() as conn:
             async with conn.transaction():
@@ -143,14 +142,15 @@ class Database:
                     guild_id, template_name
                 )
                 for defi in definitions:
+                    # --- FIX: Changed from dictionary access to attribute access ---
                     await conn.execute(
                         """
                         INSERT INTO squad_template_definitions 
                         (template_id, squad_name, default_count, squad_type, naming_convention, source_rsvp_pool)
                         VALUES ($1, $2, $3, $4, $5, $6)
                         """,
-                        template_id, defi['squad_name'], defi['default_count'], defi['squad_type'],
-                        defi['naming_convention'], defi['source_rsvp_pool']
+                        template_id, defi.squad_name, defi.default_count, defi.squad_type,
+                        defi.naming_convention, defi.source_rsvp_pool
                     )
                 return template_id
 
@@ -180,11 +180,8 @@ class Database:
         async with self.pool.acquire() as conn:
             await conn.execute("DELETE FROM squad_templates WHERE template_id = $1", template_id)
 
-    # --- NEW: Tentative Player Promotion Function ---
+    # --- Tentative Player Promotion Function ---
     async def promote_tentative_player(self, event_id: int, user_id: int, role_name: Optional[str], subclass_name: Optional[str]):
-        """
-        Promotes a user from Tentative to Accepted and assigns their role in a single transaction.
-        """
         async with self.pool.acquire() as connection:
             async with connection.transaction():
                 signup = await connection.fetchrow(
@@ -214,7 +211,7 @@ class Database:
                         user_id, event_id, event_details['title'], event_details['event_time'], role_name, subclass_name
                     )
 
-    # --- User Management Functions (no changes) ---
+    # --- User Management Functions ---
     async def get_user_by_username(self, username: str) -> Optional[Dict]:
         async with self.pool.acquire() as conn:
             row = await conn.fetchrow("SELECT * FROM users WHERE username = $1", username)
@@ -253,7 +250,7 @@ class Database:
     async def delete_user(self, user_id: int):
         async with self.pool.acquire() as conn: await conn.execute("DELETE FROM users WHERE id = $1", user_id)
  
-    # --- Event & Signup Functions (no changes) ---
+    # --- Event & Signup Functions ---
     async def create_event(self, guild_id: int, channel_id: int, creator_id: int, data: Dict) -> int:
         query = """
             INSERT INTO events (guild_id, channel_id, creator_id, title, description, event_time, end_time, timezone, is_recurring, recurrence_rule, mention_role_ids, restrict_to_role_ids, recreation_hours, parent_event_id)
@@ -409,7 +406,7 @@ class Database:
             row = await connection.fetchrow(query, parent_event_id)
             return dict(row) if row else None
             
-    # --- Player Statistics Functions (no changes) ---
+    # --- Player Statistics Functions ---
     async def update_player_stats(self, user_id: int, old_status: Optional[str], new_status: str):
         decrement_col = f"{old_status.lower()}_count" if old_status else None
         increment_col = f"{new_status.lower()}_count"
@@ -448,7 +445,7 @@ class Database:
             records = await connection.fetch(query, event_id)
             return [record['user_id'] for record in records]
 
-    # --- Reminder Job Functions (no changes) ---
+    # --- Reminder Job Functions ---
     async def create_reminder_job(self, job_id: uuid.UUID, user_ids: List[int]) -> None:
         query = "INSERT INTO reminder_jobs (job_id, user_ids) VALUES ($1, $2);"
         async with self.pool.acquire() as connection:
@@ -465,7 +462,7 @@ class Database:
         async with self.pool.acquire() as connection:
             await connection.execute(query, job_id)
 
-    # --- Squad & Guild Config Functions (no changes) ---
+    # --- Squad & Guild Config Functions ---
     async def force_unlock_all_events(self):
         query = "UPDATE events SET locked_by_user_id = NULL, locked_at = NULL WHERE locked_by_user_id IS NOT NULL;"
         async with self.pool.acquire() as connection:
@@ -516,7 +513,7 @@ class Database:
         async with self.pool.acquire() as conn:
             await conn.execute(query, event_id)
     
-    # --- Scheduler Functions (no changes) ---
+    # --- Scheduler Functions ---
     async def get_active_events_with_threads(self) -> List[Dict]:
         query = """
             SELECT event_id, guild_id, thread_id FROM events
