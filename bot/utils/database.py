@@ -412,6 +412,43 @@ class Database:
         async with self.pool.acquire() as connection:
             await connection.execute(query, task, squad_member_id)
 
+    async def promote_tentative_player(self, event_id: int, user_id: int, role_name: Optional[str], subclass_name: Optional[str]):
+        """
+        Promotes a user from Tentative to Accepted and assigns their role in a single transaction.
+        """
+        async with self.pool.acquire() as connection:
+            async with connection.transaction():
+                # First, get the user's current RSVP status to correctly update player_stats
+                signup = await connection.fetchrow(
+                    "SELECT rsvp_status FROM signups WHERE event_id = $1 AND user_id = $2",
+                    event_id, user_id
+                )
+                old_status = signup['rsvp_status'] if signup else None
+
+                # Update the RSVP status to Accepted
+                await connection.execute(
+                    """
+                    INSERT INTO signups (event_id, user_id, rsvp_status, role_name, subclass_name) VALUES ($1, $2, $3, $4, $5)
+                    ON CONFLICT (event_id, user_id) DO UPDATE SET rsvp_status = EXCLUDED.rsvp_status, role_name = EXCLUDED.role_name, subclass_name = EXCLUDED.subclass_name;
+                    """,
+                    event_id, user_id, RsvpStatus.ACCEPTED, role_name, subclass_name
+                )
+
+                # Update player stats based on the status change
+                await self.update_player_stats(user_id, old_status, RsvpStatus.ACCEPTED)
+
+                # Add to permanent history
+                event_details = await connection.fetchrow("SELECT title, event_time FROM events WHERE event_id = $1", event_id)
+                if event_details:
+                    await connection.execute(
+                        """
+                        INSERT INTO player_event_history (user_id, event_id, event_title, event_time, role_name, subclass_name)
+                        VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (user_id, event_id) DO UPDATE
+                        SET role_name = EXCLUDED.role_name, subclass_name = EXCLUDED.subclass_name;
+                        """,
+                        user_id, event_id, event_details['title'], event_details['event_time'], role_name, subclass_name
+                    )
+
     async def get_event_lock_status(self, event_id: int) -> Optional[Dict]:
         query = "SELECT e.locked_by_user_id, e.locked_at, u.username as locked_by_username FROM events e LEFT JOIN users u ON e.locked_by_user_id = u.id WHERE e.event_id = $1;"
         async with self.pool.acquire() as conn:
