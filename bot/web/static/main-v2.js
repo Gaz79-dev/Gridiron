@@ -128,7 +128,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     window.addEventListener('beforeunload', () => releaseLock(eventDropdown.value));
 
-    // --- NEW: Template and Form Logic ---
+    // --- Template and Form Logic ---
     const populateTemplateDropdown = () => {
         templateDropdown.innerHTML = '<option value="">-- Manual Build --</option>';
         SQUAD_TEMPLATES.forEach(template => {
@@ -140,7 +140,6 @@ document.addEventListener('DOMContentLoaded', () => {
         buildForm.innerHTML = '';
         const template = SQUAD_TEMPLATES.find(t => t.template_id == templateId);
         if (!template) {
-            // Add a default commander input for manual builds
             buildForm.innerHTML = `
                 <div>
                     <label for="squad_count_Commander" class="block text-sm font-medium">Commander</label>
@@ -159,7 +158,6 @@ document.addEventListener('DOMContentLoaded', () => {
             buildForm.appendChild(div);
         });
         
-        // Always ensure a Commander input exists if not in template
         if (!buildForm.querySelector('#squad_count_Commander')) {
              const div = document.createElement('div');
              div.innerHTML = `
@@ -246,7 +244,6 @@ document.addEventListener('DOMContentLoaded', () => {
     
     sendBtn.addEventListener('click', async () => {
         const selectedChannelId = channelDropdown.value;
-        const eventId = eventDropdown.value;
         if (!selectedChannelId || currentSquads.length === 0) {
             alert('Please select a channel and build squads first.');
             return;
@@ -262,7 +259,7 @@ document.addEventListener('DOMContentLoaded', () => {
             });
             if (await handleApiError(response)) throw new Error(`Server responded with status: ${response.status}`);
             alert('Squad embed sent successfully!');
-            await releaseLock(eventId);
+            await releaseLock(eventDropdown.value);
             setLockedState(true, 'Squads sent. This event is now read-only.');
         } catch (error) {
             console.error("Error in sendBtn listener:", error.message);
@@ -310,23 +307,31 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     promoteModalCancelBtn.addEventListener('click', () => promoteModal.classList.add('hidden'));
+    
     promoteForm.addEventListener('submit', async (e) => {
         e.preventDefault();
         const eventId = eventDropdown.value;
         const userId = promoteModalMemberId.value;
         const newRoleName = promoteModalRoleSelect.value;
+        const playerName = promoteModalMemberName.textContent;
+
         try {
             const response = await fetch(`/api/events/${eventId}/promote-tentative`, {
                 method: 'POST',
                 headers: { ...headers, 'Content-Type': 'application/json' },
                 body: JSON.stringify({ user_id: parseInt(userId), new_role_name: newRoleName })
             });
+
             if (await handleApiError(response)) return;
-            const promotedPlayer = fullRoster.find(p => p.user_id == userId);
-            if (promotedPlayer) promotedPlayer.rsvp_status = 'Accepted';
-            displayRoster(fullRoster);
+            
+            const updatedSquads = await response.json();
+
+            await fetchAndDisplayRoster(eventId);
+            renderWorkshop(updatedSquads);
+            
             promoteModal.classList.add('hidden');
-            alert(`${promotedPlayer.display_name} promoted. The Discord embed will update shortly.`);
+            alert(`${playerName} promoted. The Discord embed will update on its next cycle.`);
+
         } catch (err) {
             alert("Error: Could not promote player.");
             console.error(err);
@@ -406,7 +411,7 @@ document.addEventListener('DOMContentLoaded', () => {
         events.forEach(event => eventDropdown.add(new Option(`${event.title} (${new Date(event.event_time).toLocaleString()})`, event.event_id)));
         
         populateTemplateDropdown();
-        generateBuildForm(null); // Generate manual build form initially
+        generateBuildForm(null);
 
         eventDropdown.addEventListener('change', handleEventSelection);
         isPageInitialized = true;
