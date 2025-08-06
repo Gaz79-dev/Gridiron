@@ -25,7 +25,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const definitionsContainer = document.getElementById('template-definitions-container');
     const templateList = document.getElementById('template-list');
     const RSVP_POOLS = ["Commander", "Infantry", "Armour", "Recon", "Pathfinders", "Artillery", "Unassigned"];
-    const SQUAD_TYPES = ["Command", "Infantry", "Armour", "Recon", "Artillery", "Reserves"];
+    const SQUAD_TYPES = ["Commander", "Infantry", "Armour", "Recon", "Artillery", "Reserves"];
 
     // --- Password Validation Function ---
     function validatePassword(password) {
@@ -335,14 +335,13 @@ document.addEventListener('DOMContentLoaded', () => {
     // --- Add headers for the template definitions ---
     const headerRow = document.createElement('div');
     headerRow.className = 'grid grid-cols-1 md:grid-cols-6 gap-2 items-center mb-2 text-sm font-semibold text-gray-400';
-    // --- FIX: Corrected column spans and added padding for alignment ---
+    // --- FIX: Corrected column layout to match input rows ---
     headerRow.innerHTML = `
         <div class="md:col-span-2 px-2">Squad Name</div>
-        <div class="px-2">Count</div>
+        <div class="px-2">Default Count</div>
         <div class="px-2">Player Pool</div>
         <div class="px-2">Squad Rules</div>
-        <div class="px-2">Naming</div>
-        <div class="px-2">Action</div>
+        <div class="px-2">Naming & Action</div>
     `;
     definitionsContainer.appendChild(headerRow);
 
