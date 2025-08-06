@@ -19,7 +19,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const modalCancelBtn = document.getElementById('modal-cancel-btn');
     const modalMessageEl = document.getElementById('modal-password-change-message');
 
-    // --- NEW: Squad Template Elements ---
+    // --- Squad Template Elements ---
     const createTemplateForm = document.getElementById('create-template-form');
     const addDefinitionBtn = document.getElementById('add-definition-btn');
     const definitionsContainer = document.getElementById('template-definitions-container');
@@ -38,7 +38,7 @@ document.addEventListener('DOMContentLoaded', () => {
         return Object.values(validations).every(Boolean);
     }
 
-    // --- NEW: Squad Template Functions ---
+    // --- Squad Template Functions ---
     const addDefinitionRow = () => {
         const rowId = `def-row-${Date.now()}`;
         const div = document.createElement('div');
@@ -89,13 +89,16 @@ document.addEventListener('DOMContentLoaded', () => {
         const templateName = document.getElementById('template-name').value;
         const definitions = [];
         definitionsContainer.querySelectorAll('.grid').forEach(row => {
-            definitions.push({
-                squad_name: row.querySelector('[data-field="squad_name"]').value,
-                default_count: parseInt(row.querySelector('[data-field="default_count"]').value, 10),
-                source_rsvp_pool: row.querySelector('[data-field="source_rsvp_pool"]').value,
-                squad_type: row.querySelector('[data-field="squad_type"]').value,
-                naming_convention: row.querySelector('[data-field="naming_convention"]').value,
-            });
+            // Skip the header row
+            if (row.querySelector('input')) {
+                definitions.push({
+                    squad_name: row.querySelector('[data-field="squad_name"]').value,
+                    default_count: parseInt(row.querySelector('[data-field="default_count"]').value, 10),
+                    source_rsvp_pool: row.querySelector('[data-field="source_rsvp_pool"]').value,
+                    squad_type: row.querySelector('[data-field="squad_type"]').value,
+                    naming_convention: row.querySelector('[data-field="naming_convention"]').value,
+                });
+            }
         });
 
         if (!templateName || definitions.length === 0) {
@@ -112,7 +115,11 @@ document.addEventListener('DOMContentLoaded', () => {
             if (!response.ok) throw new Error((await response.json()).detail || 'Failed to save template');
             
             createTemplateForm.reset();
-            definitionsContainer.innerHTML = '';
+            // Clear only definition rows, not the header
+            definitionsContainer.querySelectorAll('.grid').forEach(row => {
+                if (row.querySelector('input')) row.remove();
+            });
+            addDefinitionRow(); // Add a fresh row
             await loadTemplates();
             alert('Template saved successfully!');
 
@@ -321,8 +328,21 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    // Initial loads
+    // --- Initial loads ---
     loadUsers();
     loadTemplates();
+
+    // --- NEW: Add headers for the template definitions ---
+    const headerRow = document.createElement('div');
+    headerRow.className = 'grid grid-cols-1 md:grid-cols-6 gap-2 items-center mb-2 text-sm font-semibold text-gray-400';
+    headerRow.innerHTML = `
+        <div class="md:col-span-2">Squad Name</div>
+        <div>Count</div>
+        <div>Player Pool</div>
+        <div>Squad Rules</div>
+        <div>Naming</div>
+    `;
+    definitionsContainer.appendChild(headerRow);
+
     addDefinitionRow(); // Add one row to start
 });
