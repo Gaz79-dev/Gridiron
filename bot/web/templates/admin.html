@@ -27,14 +27,16 @@
     <!-- Main Content -->
     <main class="container mx-auto px-6 py-8">
         
-        <!-- NEW: Squad Template Management -->
+        <!-- Squad Template Management -->
         <section class="bg-gray-800 p-6 rounded-lg shadow-md mb-8">
             <h2 class="text-xl font-semibold mb-4 text-white">Squad Template Management</h2>
             
             <!-- Create/Edit Form -->
             <div class="bg-gray-700 p-4 rounded-lg mb-6">
-                <h3 class="text-lg font-semibold mb-3">Create New Template</h3>
+                <h3 id="template-form-title" class="text-lg font-semibold mb-3">Create New Template</h3>
                 <form id="create-template-form" class="space-y-4">
+                    <input type="hidden" id="editing-template-id">
+                    
                     <div>
                         <label for="template-name" class="block text-sm font-medium">Template Name</label>
                         <input type="text" id="template-name" required class="mt-1 block w-full bg-gray-600 border-gray-500 rounded-md p-2">
@@ -48,8 +50,11 @@
                         <button type="button" id="add-definition-btn" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded-md text-sm">
                             Add Squad Type
                         </button>
-                        <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-md">
+                        <button type="submit" id="save-template-btn" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-md">
                             Save Template
+                        </button>
+                        <button type="button" id="cancel-edit-btn" class="hidden bg-gray-500 hover:bg-gray-600 text-white font-bold py-2 px-4 rounded-md">
+                            Cancel Edit
                         </button>
                     </div>
                 </form>
@@ -157,6 +162,6 @@
     </div>
 
     <script src="/static/auth.js"></script>
-    <script src="/static/admin.js?v=3"></script>
+    <script src="/static/admin.js?v=4"></script>
 </body>
 </html>
