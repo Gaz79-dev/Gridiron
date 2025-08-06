@@ -50,8 +50,13 @@ async def check_event_lock(event_id: int, current_user: User = Depends(auth.get_
 async def get_events(db: Database = Depends(get_db)):
     return await db.get_upcoming_events()
 
-@router.post("/{event_id}/promote-tentative", status_code=204, dependencies=[Depends(check_event_lock)])
+# --- START OF CHANGE ---
+@router.post("/{event_id}/promote-tentative", response_model=List[Squad], dependencies=[Depends(check_event_lock)])
 async def promote_tentative_player(event_id: int, request: PromoteRequest, db: Database = Depends(get_db)):
+    """
+    Promotes a tentative player to accepted, assigns them a role, adds them to reserves,
+    and returns the updated squad list.
+    """
     primary_role, subclass_name = None, None
     for role, subclasses in SUBCLASSES.items():
         if request.new_role_name in subclasses:
@@ -60,12 +65,24 @@ async def promote_tentative_player(event_id: int, request: PromoteRequest, db: D
     if not primary_role and request.new_role_name in ROLES:
         primary_role = request.new_role_name
     if not primary_role: primary_role = "Unassigned"
+    
     try:
+        # Update the player's RSVP status and role
         await db.promote_tentative_player(event_id, request.user_id, primary_role, subclass_name)
+
+        # Find the Reserves squad for this event
+        reserves_squad = await db.get_squad_by_name(event_id, "Reserves")
+        if reserves_squad:
+            # Add the newly promoted player to the Reserves squad
+            await db.add_squad_member(reserves_squad['squad_id'], request.user_id, request.new_role_name)
+        
+        # Return the complete, updated squad list for the UI
+        return await db.get_squads_with_members(event_id)
+
     except Exception as e:
         print(f"Error promoting tentative player: {e}")
         raise HTTPException(status_code=500, detail="Failed to update player status in the database.")
-    return
+# --- END OF CHANGE ---
 
 @router.get("/recurring", response_model=List[Event], dependencies=[Depends(auth.get_current_admin_user)])
 async def get_recurring_events(db: Database = Depends(get_db)):
