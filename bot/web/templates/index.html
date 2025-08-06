@@ -134,6 +134,23 @@
         </div>
     </div>
 
+    <div id="promote-tentative-modal" class="hidden fixed inset-0 bg-gray-900 bg-opacity-75 flex items-center justify-center z-50">
+        <div class="bg-gray-800 p-8 rounded-lg shadow-xl w-full max-w-md">
+            <h2 class="text-xl font-semibold mb-4 text-white">Promote Player: <span id="promote-modal-member-name" class="font-bold"></span></h2>
+            <form id="promote-tentative-form">
+                <input type="hidden" id="promote-modal-member-id">
+                <div>
+                    <label for="promote-modal-role-select" class="block text-sm font-medium">Assign Role</label>
+                    <select id="promote-modal-role-select" required class="mt-1 block w-full bg-gray-700 border-gray-600 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500"></select>
+                </div>
+                <div class="mt-6 flex justify-end space-x-4">
+                    <button type="button" id="promote-modal-cancel-btn" class="bg-gray-600 hover:bg-gray-700 text-white font-bold py-2 px-4 rounded-md">Cancel</button>
+                    <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-md">Promote to Accepted</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
     <script src="/static/auth.js"></script>
     <script src="/static/main-v2.js"></script>
 </body>
