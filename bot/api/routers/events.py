@@ -10,7 +10,7 @@ import discord
 
 # Use absolute imports from the 'bot' package root
 from bot.utils.database import Database, RsvpStatus, ROLES, SUBCLASSES
-from bot.api import squad_logic
+from bot.api import auth, squad_logic
 from bot.api.dependencies import get_db
 from bot.api.models import Event, Signup, Squad, SquadBuildRequest, RosterUpdateRequest, SendEmbedRequest, Channel, User, EventLockStatus, EventUpdate, PromoteRequest
 
