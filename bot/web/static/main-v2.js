@@ -1,3 +1,4 @@
+// Replace the existing main-v2.js file with this complete updated version.
 document.addEventListener('DOMContentLoaded', () => {
     // --- STATE AND HEADERS ---
     const token = getAuthToken();
@@ -12,6 +13,7 @@ document.addEventListener('DOMContentLoaded', () => {
     let lockInterval = null;
     let currentUser = null;
     let isPageInitialized = false;
+    let fullRoster = []; // Store the full roster including tentative players
 
     // --- ELEMENT SELECTORS ---
     const eventDropdown = document.getElementById('event-dropdown');
@@ -26,22 +28,35 @@ document.addEventListener('DOMContentLoaded', () => {
     const refreshRosterBtn = document.getElementById('refresh-roster-btn');
     const adminLink = document.getElementById('admin-link');
     const logoutBtn = document.getElementById('logout-btn');
+    const lockOverlay = document.getElementById('lock-overlay');
+    const lockMessage = document.getElementById('lock-message');
+    const mainContent = document.getElementById('main-content');
+    const clearLockBtn = document.getElementById('clear-lock-btn');
+
+    // Edit Member Modal
     const editModal = document.getElementById('edit-member-modal');
     const editMemberForm = document.getElementById('edit-member-form');
     const modalMemberName = document.getElementById('modal-member-name');
     const modalMemberIdInput = document.getElementById('modal-member-id');
     const modalRoleSelect = document.getElementById('modal-role-select');
     const modalCancelBtn = document.getElementById('modal-cancel-btn');
-    const lockOverlay = document.getElementById('lock-overlay');
-    const lockMessage = document.getElementById('lock-message');
-    const mainContent = document.getElementById('main-content');
-    const clearLockBtn = document.getElementById('clear-lock-btn');
+    
+    // Assign Task Modal
     const assignTaskModal = document.getElementById('assign-task-modal');
     const assignTaskForm = document.getElementById('assign-task-form');
     const taskModalMemberName = document.getElementById('task-modal-member-name');
     const taskModalMemberIdInput = document.getElementById('task-modal-member-id');
     const modalTaskSelect = document.getElementById('modal-task-select');
     const taskModalCancelBtn = document.getElementById('task-modal-cancel-btn');
+
+    // --- NEW: Promote Tentative Modal ---
+    const promoteModal = document.getElementById('promote-tentative-modal');
+    const promoteForm = document.getElementById('promote-tentative-form');
+    const promoteModalMemberName = document.getElementById('promote-modal-member-name');
+    const promoteModalMemberId = document.getElementById('promote-modal-member-id');
+    const promoteModalRoleSelect = document.getElementById('promote-modal-role-select');
+    const promoteModalCancelBtn = document.getElementById('promote-modal-cancel-btn');
+
 
     const STARTUP_TASKS = [
         "HQ1 Supplies", "HQ1 Nodes Engineer",
@@ -182,8 +197,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 body: JSON.stringify({ squads: currentSquads })
             });
             if (await handleApiError(response)) return;
+            
+            // --- NEW: After refreshing roster, re-fetch and re-display signups ---
+            await fetchAndDisplayRoster(eventId);
             renderWorkshop(await response.json());
             alert('Roster has been updated!');
+
         } catch (error) {
             alert('Error refreshing roster.');
         } finally {
@@ -228,7 +247,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 body: JSON.stringify({
                     channel_id: selectedChannelId,
                     squads: currentSquads,
-                    mention_accepted: mentionAttendees // Add this new key
+                    mention_accepted: mentionAttendees
                 })
             });
             
@@ -249,7 +268,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     document.body.addEventListener('click', (e) => {
-        if (e.target.classList.contains('edit-member-btn')) {
+        if (e.target.closest('.edit-member-btn')) {
             const memberItem = e.target.closest('.member-item');
             modalMemberName.textContent = memberItem.querySelector('.member-name').textContent;
             modalMemberIdInput.value = memberItem.dataset.memberId;
@@ -278,11 +297,60 @@ document.addEventListener('DOMContentLoaded', () => {
             modalTaskSelect.value = currentTask;
             
             assignTaskModal.classList.remove('hidden');
+        } else if (e.target.closest('.promote-tentative-btn')) {
+            // --- NEW: Handle promote button click ---
+            const memberItem = e.target.closest('.tentative-member-item');
+            promoteModalMemberName.textContent = memberItem.dataset.displayName;
+            promoteModalMemberId.value = memberItem.dataset.userId;
+
+            promoteModalRoleSelect.innerHTML = '';
+            const allRoles = [...new Set([...ALL_ROLES.roles, ...Object.values(ALL_ROLES.subclasses).flat()])].sort();
+            allRoles.forEach(role => {
+                promoteModalRoleSelect.add(new Option(role, role));
+            });
+            promoteModal.classList.remove('hidden');
+        }
+    });
+
+    // --- NEW: Event listeners for the promote modal ---
+    promoteModalCancelBtn.addEventListener('click', () => promoteModal.classList.add('hidden'));
+
+    promoteForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const eventId = eventDropdown.value;
+        const userId = promoteModalMemberId.value;
+        const newRoleName = promoteModalRoleSelect.value;
+        
+        try {
+            const response = await fetch(`/api/events/${eventId}/promote-tentative`, {
+                method: 'POST',
+                headers: { ...headers, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ user_id: parseInt(userId), new_role_name: newRoleName })
+            });
+
+            if (await handleApiError(response)) return;
+
+            // Optimistic UI update
+            const promotedPlayer = fullRoster.find(p => p.user_id == userId);
+            if (promotedPlayer) {
+                promotedPlayer.rsvp_status = 'Accepted'; // Update local state
+            }
+            displayRoster(fullRoster); // Re-render both accepted and tentative lists
+
+            // Remove from the tentative box in the workshop
+            const tentativeItem = document.querySelector(`.tentative-member-item[data-user-id='${userId}']`);
+            if (tentativeItem) tentativeItem.remove();
+            
+            promoteModal.classList.add('hidden');
+            alert(`${promotedPlayer.display_name} promoted to Accepted. The Discord embed will update shortly.`);
+
+        } catch (err) {
+            alert("Error: Could not promote player.");
+            console.error(err);
         }
     });
 
     modalCancelBtn.addEventListener('click', () => editModal.classList.add('hidden'));
-
     taskModalCancelBtn.addEventListener('click', () => assignTaskModal.classList.add('hidden'));
 
     assignTaskForm.addEventListener('submit', async (e) => {
@@ -362,8 +430,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }).catch(err => console.error("FATAL: Initial page data failed to load:", err));
 
     async function handleEventSelection() {
-        if (!isPageInitialized) return;
-        if (!currentUser) return;
+        if (!isPageInitialized || !currentUser) return;
 
         const previousEventId = eventDropdown.dataset.previousEventId;
         if (previousEventId) {
@@ -402,8 +469,8 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
             const rosterResponse = await fetch(`/api/events/${eventId}/signups`, { headers });
             if(await handleApiError(rosterResponse)) return;
-            const rosterData = await rosterResponse.json();
-            displayRoster(rosterData);
+            fullRoster = await rosterResponse.json(); // Store full roster
+            displayRoster(fullRoster);
         } catch (error) {
             console.error(`Error fetching roster for event ${eventId}:`, error);
             rosterList.innerHTML = '<p class="text-red-400">Could not load roster.</p>';
@@ -412,7 +479,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function displayRoster(roster) {
         rosterList.innerHTML = '';
-        (roster || []).forEach(player => {
+        const accepted = roster.filter(p => p.rsvp_status === 'Accepted');
+        
+        accepted.forEach(player => {
             const div = document.createElement('div');
             div.className = 'p-2 bg-gray-700 rounded-md text-sm flex items-center';
             const emojiKey = player.subclass_name || player.role_name;
@@ -423,6 +492,45 @@ document.addEventListener('DOMContentLoaded', () => {
             `;
             rosterList.appendChild(div);
         });
+
+        // --- NEW: Render tentative players in the workshop ---
+        renderTentativePlayers();
+    }
+
+    function renderTentativePlayers() {
+        // Find or create the tentative players container in the workshop
+        let tentativeBox = document.getElementById('tentative-players-box');
+        if (!tentativeBox) {
+            tentativeBox = document.createElement('div');
+            tentativeBox.id = 'tentative-players-box';
+            tentativeBox.className = 'bg-gray-700 p-4 rounded-lg';
+            workshopArea.appendChild(tentativeBox);
+        }
+
+        const tentative = fullRoster.filter(p => p.rsvp_status === 'Tentative');
+        
+        tentativeBox.innerHTML = `<h3 class="font-bold text-white border-b border-gray-600 pb-2 mb-2">Tentative Players (${tentative.length})</h3>`;
+        
+        const memberList = document.createElement('div');
+        memberList.className = 'space-y-1';
+        
+        tentative.forEach(player => {
+            const memberEl = document.createElement('div');
+            memberEl.className = 'p-2 bg-gray-800 rounded-md flex justify-between items-center tentative-member-item';
+            memberEl.dataset.userId = player.user_id;
+            memberEl.dataset.displayName = player.display_name;
+
+            memberEl.innerHTML = `
+                <div class="flex items-center">
+                    <span class="mr-2">🤔</span>
+                    <span>${player.display_name}</span>
+                </div>
+                <button class="promote-tentative-btn text-green-400 hover:text-green-600" title="Promote to Accepted">▲</button>
+            `;
+            memberList.appendChild(memberEl);
+        });
+        
+        tentativeBox.appendChild(memberList);
     }
 
     function populateBuildForm() {
@@ -476,12 +584,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function renderWorkshop(squads) {
         currentSquads = squads;
-        // Get the workshop area and clear it for the new render.
-        const workshopArea = document.getElementById('workshop-area');
-        workshopArea.innerHTML = '';
+        workshopArea.innerHTML = ''; // Clear previous squads, but not the tentative box
 
         (squads || []).forEach(squad => {
-            // This single, unified block creates a box for ALL squads, including Reserves.
             const squadBox = document.createElement('div');
             squadBox.className = 'bg-gray-700 p-4 rounded-lg';
             
@@ -515,10 +620,11 @@ document.addEventListener('DOMContentLoaded', () => {
             });
 
             squadBox.appendChild(memberList);
-
-            // Append every squad box to the main workshop grid.
             workshopArea.appendChild(squadBox);
         });
+
+        // --- NEW: Re-render tentative players after workshop is built ---
+        renderTentativePlayers();
 
         document.querySelectorAll('.member-list').forEach(list => {
             new Sortable(list, { 
