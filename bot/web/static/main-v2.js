@@ -308,7 +308,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
     promoteModalCancelBtn.addEventListener('click', () => promoteModal.classList.add('hidden'));
     
-    // --- START OF CHANGE ---
     promoteForm.addEventListener('submit', async (e) => {
         e.preventDefault();
         const eventId = eventDropdown.value;
@@ -325,20 +324,20 @@ document.addEventListener('DOMContentLoaded', () => {
 
             if (await handleApiError(response)) return;
             
-            promoteModal.classList.add('hidden');
-            alert(`${playerName} promoted. Refreshing roster to add them to reserves...`);
+            const updatedSquads = await response.json();
 
-            // Programmatically click the refresh button to trigger a full, clean refresh.
-            // This ensures the newly accepted player is correctly added to the reserves squad
-            // and the UI is fully synchronized with the backend state.
-            refreshRosterBtn.click();
+            // Re-fetch the roster and re-render everything to ensure consistency
+            await fetchAndDisplayRoster(eventId);
+            renderWorkshop(updatedSquads);
+            
+            promoteModal.classList.add('hidden');
+            alert(`${playerName} promoted. The Discord embed will update on its next cycle.`);
 
         } catch (err) {
             alert("Error: Could not promote player.");
             console.error(err);
         }
     });
-    // --- END OF CHANGE ---
 
     modalCancelBtn.addEventListener('click', () => editModal.classList.add('hidden'));
     taskModalCancelBtn.addEventListener('click', () => assignTaskModal.classList.add('hidden'));
