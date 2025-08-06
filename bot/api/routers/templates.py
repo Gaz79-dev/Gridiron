@@ -21,9 +21,6 @@ async def create_squad_template(
     """
     Creates a new squad template with its definitions.
     """
-    # In a real app, you'd get the guild_id from the user's session/token
-    # For now, we'll assume a default or it's passed in if needed.
-    # This example assumes a single-guild context for simplicity.
     guild_id = 1 
     
     try:
@@ -47,6 +44,31 @@ async def get_all_squad_templates(db: Database = Depends(get_db)):
     Retrieves all squad templates.
     """
     return await db.get_all_squad_templates()
+
+# --- NEW: Endpoint to update a template ---
+@router.put("/{template_id}", response_model=SquadTemplate)
+async def update_squad_template(
+    template_id: int,
+    template_data: SquadTemplateCreate,
+    db: Database = Depends(get_db)
+):
+    """
+    Updates an existing squad template.
+    """
+    try:
+        await db.update_squad_template(
+            template_id,
+            template_data.template_name,
+            template_data.definitions
+        )
+        updated_template = await db.get_squad_template_by_id(template_id)
+        if not updated_template:
+            raise HTTPException(status_code=404, detail="Template not found after update")
+        return updated_template
+    except Exception as e:
+        print(f"Error updating template: {e}")
+        raise HTTPException(status_code=500, detail="An internal error occurred while updating the template.")
+
 
 @router.delete("/{template_id}", status_code=204)
 async def delete_squad_template(template_id: int, db: Database = Depends(get_db)):
