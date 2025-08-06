@@ -51,6 +51,8 @@ class Signup(BaseModel):
     display_name: str
     role_name: Optional[str] = "Unassigned"
     subclass_name: Optional[str] = "N/A"
+    # --- NEW: Add rsvp_status to the model ---
+    rsvp_status: str
 
 class Channel(BaseModel):
     id: str
@@ -78,19 +80,14 @@ class EventLockStatus(BaseModel):
     locked_by_username: Optional[str] = None
 
 class SquadBuildRequest(BaseModel):
-    infantry_squad_size: int = 6
-    attack_squads: int = 0
-    defence_squads: int = 0
-    flex_squads: int = 0
-    pathfinder_squads: int = 0
-    armour_squads: int = 0
-    recon_squads: int = 0
-    arty_squads: int = 0
+    # This model is now dynamic, so we expect a dictionary
+    squad_counts: dict[str, int]
+    template_id: int
 
 class SendEmbedRequest(BaseModel):
     channel_id: str
     squads: List[Squad]
-    mention_accepted: bool = False # Add this line
+    mention_accepted: bool = False
 
 class RoleUpdateRequest(BaseModel):
     new_role_name: str
@@ -105,6 +102,30 @@ class RosterUpdateRequest(BaseModel):
 class StartupTaskUpdateRequest(BaseModel):
     task: Optional[str] = None
 
+class PromoteRequest(BaseModel):
+    user_id: int
+    new_role_name: str
+
+# --- NEW: Squad Template Models ---
+class SquadTemplateDefinition(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    definition_id: Optional[int] = None
+    squad_name: str
+    default_count: int
+    squad_type: str
+    naming_convention: str
+    source_rsvp_pool: str
+
+class SquadTemplate(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    template_id: int
+    template_name: str
+    definitions: List[SquadTemplateDefinition]
+
+class SquadTemplateCreate(BaseModel):
+    template_name: str
+    definitions: List[SquadTemplateDefinition]
+
 # --- Player Statistics Models ---
 class PlayerStats(BaseModel):
     user_id: str
@@ -118,7 +139,6 @@ class PlayerStats(BaseModel):
 class AcceptedEvent(BaseModel):
     event_title: str
     event_time: datetime
-    # --- ADDITION: Add role and subclass fields ---
     role_name: Optional[str] = None
     subclass_name: Optional[str] = None
 
