@@ -142,7 +142,6 @@ class Database:
                     guild_id, template_name
                 )
                 for defi in definitions:
-                    # --- FIX: Changed from dictionary access to attribute access ---
                     await conn.execute(
                         """
                         INSERT INTO squad_template_definitions 
@@ -153,6 +152,25 @@ class Database:
                         defi.naming_convention, defi.source_rsvp_pool
                     )
                 return template_id
+
+    async def update_squad_template(self, template_id: int, template_name: str, definitions: List[Dict]):
+        async with self.pool.acquire() as conn:
+            async with conn.transaction():
+                await conn.execute(
+                    "UPDATE squad_templates SET template_name = $1 WHERE template_id = $2",
+                    template_name, template_id
+                )
+                await conn.execute("DELETE FROM squad_template_definitions WHERE template_id = $1", template_id)
+                for defi in definitions:
+                    await conn.execute(
+                        """
+                        INSERT INTO squad_template_definitions 
+                        (template_id, squad_name, default_count, squad_type, naming_convention, source_rsvp_pool)
+                        VALUES ($1, $2, $3, $4, $5, $6)
+                        """,
+                        template_id, defi.squad_name, defi.default_count, defi.squad_type,
+                        defi.naming_convention, defi.source_rsvp_pool
+                    )
 
     async def get_squad_template_by_id(self, template_id: int) -> Optional[Dict]:
         async with self.pool.acquire() as conn:
