@@ -70,10 +70,12 @@ class Database:
                         last_recreated_at TIMESTAMP WITH TIME ZONE,
                         deleted_at TIMESTAMP WITH TIME ZONE DEFAULT NULL,
                         locked_by_user_id INT REFERENCES users(id) ON DELETE SET NULL,
-                        locked_at TIMESTAMP WITH TIME ZONE,
-                        needs_embed_update BOOLEAN DEFAULT FALSE
+                        locked_at TIMESTAMP WITH TIME ZONE
                     );
                 """)
+                # --- FIX: Add the column if it doesn't exist to handle migration ---
+                await connection.execute("ALTER TABLE events ADD COLUMN IF NOT EXISTS needs_embed_update BOOLEAN DEFAULT FALSE;")
+
                 await connection.execute("CREATE TABLE IF NOT EXISTS signups (signup_id SERIAL PRIMARY KEY, event_id INT REFERENCES events(event_id) ON DELETE CASCADE, user_id BIGINT NOT NULL, role_name VARCHAR(100), subclass_name VARCHAR(100), rsvp_status VARCHAR(10) NOT NULL, UNIQUE(event_id, user_id));")
                 await connection.execute("CREATE TABLE IF NOT EXISTS squads (squad_id SERIAL PRIMARY KEY, event_id INT NOT NULL REFERENCES events(event_id) ON DELETE CASCADE, name VARCHAR(100) NOT NULL, squad_type VARCHAR(50) NOT NULL);")
                 await connection.execute("""
@@ -149,8 +151,8 @@ class Database:
                         (template_id, squad_name, default_count, squad_type, naming_convention, source_rsvp_pool)
                         VALUES ($1, $2, $3, $4, $5, $6)
                         """,
-                        template_id, defi.squad_name, defi.default_count, defi.squad_type,
-                        defi.naming_convention, defi.source_rsvp_pool
+                        template_id, defi['squad_name'], defi['default_count'], defi['squad_type'],
+                        defi['naming_convention'], defi['source_rsvp_pool']
                     )
                 return template_id
 
@@ -169,8 +171,8 @@ class Database:
                         (template_id, squad_name, default_count, squad_type, naming_convention, source_rsvp_pool)
                         VALUES ($1, $2, $3, $4, $5, $6)
                         """,
-                        template_id, defi.squad_name, defi.default_count, defi.squad_type,
-                        defi.naming_convention, defi.source_rsvp_pool
+                        template_id, defi['squad_name'], defi['default_count'], defi['squad_type'],
+                        defi['naming_convention'], defi['source_rsvp_pool']
                     )
 
     async def get_squad_template_by_id(self, template_id: int) -> Optional[Dict]:
