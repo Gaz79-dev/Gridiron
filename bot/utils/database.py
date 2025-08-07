@@ -73,7 +73,6 @@ class Database:
                         locked_at TIMESTAMP WITH TIME ZONE
                     );
                 """)
-                # --- FIX: Add the column if it doesn't exist to handle migration ---
                 await connection.execute("ALTER TABLE events ADD COLUMN IF NOT EXISTS needs_embed_update BOOLEAN DEFAULT FALSE;")
 
                 await connection.execute("CREATE TABLE IF NOT EXISTS signups (signup_id SERIAL PRIMARY KEY, event_id INT REFERENCES events(event_id) ON DELETE CASCADE, user_id BIGINT NOT NULL, role_name VARCHAR(100), subclass_name VARCHAR(100), rsvp_status VARCHAR(10) NOT NULL, UNIQUE(event_id, user_id));")
@@ -205,32 +204,11 @@ class Database:
     async def promote_tentative_player(self, event_id: int, user_id: int, role_name: Optional[str], subclass_name: Optional[str]):
         async with self.pool.acquire() as connection:
             async with connection.transaction():
-                signup = await connection.fetchrow(
-                    "SELECT rsvp_status FROM signups WHERE event_id = $1 AND user_id = $2",
-                    event_id, user_id
-                )
-                old_status = signup['rsvp_status'] if signup else None
+                # This function now only handles the database state change for the promotion.
+                # The calling function in events.py is responsible for adding to squads.
+                await self.set_rsvp(event_id, user_id, RsvpStatus.ACCEPTED)
+                await self.update_signup_role(event_id, user_id, role_name, subclass_name)
 
-                await connection.execute(
-                    """
-                    INSERT INTO signups (event_id, user_id, rsvp_status, role_name, subclass_name) VALUES ($1, $2, $3, $4, $5)
-                    ON CONFLICT (event_id, user_id) DO UPDATE SET rsvp_status = EXCLUDED.rsvp_status, role_name = EXCLUDED.role_name, subclass_name = EXCLUDED.subclass_name;
-                    """,
-                    event_id, user_id, RsvpStatus.ACCEPTED, role_name, subclass_name
-                )
-
-                await self.update_player_stats(user_id, old_status, RsvpStatus.ACCEPTED)
-
-                event_details = await connection.fetchrow("SELECT title, event_time FROM events WHERE event_id = $1", event_id)
-                if event_details:
-                    await connection.execute(
-                        """
-                        INSERT INTO player_event_history (user_id, event_id, event_title, event_time, role_name, subclass_name)
-                        VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (user_id, event_id) DO UPDATE
-                        SET role_name = EXCLUDED.role_name, subclass_name = EXCLUDED.subclass_name;
-                        """,
-                        user_id, event_id, event_details['title'], event_details['event_time'], role_name, subclass_name
-                    )
 
     # --- User Management Functions ---
     async def get_user_by_username(self, username: str) -> Optional[Dict]:
