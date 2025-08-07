@@ -48,29 +48,30 @@ class Database:
             async with connection.transaction():
                 await connection.execute("CREATE TABLE IF NOT EXISTS users (id SERIAL PRIMARY KEY, username VARCHAR(50) UNIQUE NOT NULL, hashed_password VARCHAR(255) NOT NULL, is_active BOOLEAN DEFAULT TRUE, is_admin BOOLEAN DEFAULT FALSE);")
                 await connection.execute("CREATE TABLE IF NOT EXISTS guilds (guild_id BIGINT PRIMARY KEY, event_manager_role_ids BIGINT[], thread_creation_hours INT DEFAULT 24);")
-                await connection.execute("""CREATE TABLE IF NOT EXISTS events (event_id SERIAL PRIMARY KEY, 
-                        guild_id BIGINT NOT NULL, 
-                        creator_id BIGINT NOT NULL, 
-                        message_id BIGINT UNIQUE, 
-                        channel_id BIGINT NOT NULL, 
-                        thread_id BIGINT, 
-                        title VARCHAR(255) NOT NULL, 
-                        description TEXT, 
-                        event_time TIMESTAMP WITH TIME ZONE NOT NULL, 
-                        end_time TIMESTAMP WITH TIME ZONE, 
-                        timezone VARCHAR(100), 
-                        created_at TIMESTAMP WITH TIME ZONE DEFAULT (NOW() AT TIME ZONE 'utc'), 
-                        thread_created BOOLEAN DEFAULT FALSE, 
-                        is_recurring BOOLEAN DEFAULT FALSE, 
-                        recurrence_rule VARCHAR(50), 
-                        mention_role_ids BIGINT[], 
-                        restrict_to_role_ids BIGINT[], 
-                        recreation_hours INT, 
-                        parent_event_id INT REFERENCES events(event_id) ON DELETE SET NULL, 
-                        last_recreated_at TIMESTAMP WITH TIME ZONE, 
-                        deleted_at TIMESTAMP WITH TIME ZONE DEFAULT NULL, 
-                        locked_by_user_id INT REFERENCES users(id) ON DELETE SET NULL, 
-                        locked_at TIMESTAMP WITH TIME ZONE
+                await connection.execute("""CREATE TABLE IF NOT EXISTS events (event_id SERIAL PRIMARY KEY,
+                        guild_id BIGINT NOT NULL,
+                        creator_id BIGINT NOT NULL,
+                        message_id BIGINT UNIQUE,
+                        channel_id BIGINT NOT NULL,
+                        thread_id BIGINT,
+                        title VARCHAR(255) NOT NULL,
+                        description TEXT,
+                        event_time TIMESTAMP WITH TIME ZONE NOT NULL,
+                        end_time TIMESTAMP WITH TIME ZONE,
+                        timezone VARCHAR(100),
+                        created_at TIMESTAMP WITH TIME ZONE DEFAULT (NOW() AT TIME ZONE 'utc'),
+                        thread_created BOOLEAN DEFAULT FALSE,
+                        is_recurring BOOLEAN DEFAULT FALSE,
+                        recurrence_rule VARCHAR(50),
+                        mention_role_ids BIGINT[],
+                        restrict_to_role_ids BIGINT[],
+                        recreation_hours INT,
+                        parent_event_id INT REFERENCES events(event_id) ON DELETE SET NULL,
+                        last_recreated_at TIMESTAMP WITH TIME ZONE,
+                        deleted_at TIMESTAMP WITH TIME ZONE DEFAULT NULL,
+                        locked_by_user_id INT REFERENCES users(id) ON DELETE SET NULL,
+                        locked_at TIMESTAMP WITH TIME ZONE,
+                        needs_embed_update BOOLEAN DEFAULT FALSE
                     );
                 """)
                 await connection.execute("CREATE TABLE IF NOT EXISTS signups (signup_id SERIAL PRIMARY KEY, event_id INT REFERENCES events(event_id) ON DELETE CASCADE, user_id BIGINT NOT NULL, role_name VARCHAR(100), subclass_name VARCHAR(100), rsvp_status VARCHAR(10) NOT NULL, UNIQUE(event_id, user_id));")
@@ -144,7 +145,7 @@ class Database:
                 for defi in definitions:
                     await conn.execute(
                         """
-                        INSERT INTO squad_template_definitions 
+                        INSERT INTO squad_template_definitions
                         (template_id, squad_name, default_count, squad_type, naming_convention, source_rsvp_pool)
                         VALUES ($1, $2, $3, $4, $5, $6)
                         """,
@@ -164,7 +165,7 @@ class Database:
                 for defi in definitions:
                     await conn.execute(
                         """
-                        INSERT INTO squad_template_definitions 
+                        INSERT INTO squad_template_definitions
                         (template_id, squad_name, default_count, squad_type, naming_convention, source_rsvp_pool)
                         VALUES ($1, $2, $3, $4, $5, $6)
                         """,
@@ -267,7 +268,7 @@ class Database:
 
     async def delete_user(self, user_id: int):
         async with self.pool.acquire() as conn: await conn.execute("DELETE FROM users WHERE id = $1", user_id)
- 
+
     # --- Event & Signup Functions ---
     async def create_event(self, guild_id: int, channel_id: int, creator_id: int, data: Dict) -> int:
         query = """
@@ -366,7 +367,7 @@ class Database:
                         "DELETE FROM player_event_history WHERE user_id = $1 AND event_id = $2;",
                         user_id, event_id
                     )
-    
+
     async def get_upcoming_events(self) -> List[Dict]:
         query = "SELECT * FROM events WHERE deleted_at IS NULL AND (is_recurring = FALSE OR parent_event_id IS NOT NULL) AND COALESCE(end_time, event_time + INTERVAL '2 hours') > (NOW() AT TIME ZONE 'utc' - INTERVAL '12 hours');"
         async with self.pool.acquire() as connection:
@@ -381,7 +382,7 @@ class Database:
         async with self.pool.acquire() as conn:
             row = await conn.fetchrow("SELECT * FROM signups WHERE event_id = $1 AND user_id = $2", event_id, user_id)
             return dict(row) if row else None
-            
+
     async def get_event_by_id(self, event_id: int, include_deleted: bool = False) -> Optional[Dict]:
         query = "SELECT * FROM events WHERE event_id = $1"
         if not include_deleted:
@@ -423,7 +424,7 @@ class Database:
         async with self.pool.acquire() as connection:
             row = await connection.fetchrow(query, parent_event_id)
             return dict(row) if row else None
-            
+
     # --- Player Statistics Functions ---
     async def update_player_stats(self, user_id: int, old_status: Optional[str], new_status: str):
         decrement_col = f"{old_status.lower()}_count" if old_status else None
@@ -435,19 +436,19 @@ class Database:
 
         if new_status == RsvpStatus.ACCEPTED:
             update_parts.append("last_signup_date = (NOW() AT TIME ZONE 'utc')")
-        
+
         query = f"""
             INSERT INTO player_stats (user_id, {increment_col}) VALUES ($1, 1)
             ON CONFLICT (user_id) DO UPDATE SET {', '.join(update_parts)};
         """
-        
+
         async with self.pool.acquire() as connection:
             await connection.execute(query, user_id)
 
     async def get_all_player_stats(self) -> List[Dict]:
         async with self.pool.acquire() as connection:
             return [dict(row) for row in await connection.fetch("SELECT * FROM player_stats;")]
-            
+
     async def get_accepted_events_for_user(self, user_id: int) -> List[Dict]:
         query = """
             SELECT event_title, event_time, role_name, subclass_name
@@ -456,7 +457,7 @@ class Database:
         """
         async with self.pool.acquire() as connection:
             return [dict(row) for row in await connection.fetch(query, user_id)]
-    
+
     async def get_all_rsvpd_user_ids_for_event(self, event_id: int) -> List[int]:
         query = "SELECT user_id FROM signups WHERE event_id = $1;"
         async with self.pool.acquire() as connection:
@@ -485,7 +486,7 @@ class Database:
         query = "UPDATE events SET locked_by_user_id = NULL, locked_at = NULL WHERE locked_by_user_id IS NOT NULL;"
         async with self.pool.acquire() as connection:
             await connection.execute(query)
-    
+
     async def get_all_roles_and_subclasses(self) -> Dict:
         return {"roles": ROLES, "subclasses": SUBCLASSES}
 
@@ -496,7 +497,7 @@ class Database:
     async def add_squad_member(self, squad_id: int, user_id: int, assigned_role: str):
         async with self.pool.acquire() as connection:
             await connection.execute("INSERT INTO squad_members (squad_id, user_id, assigned_role_name) VALUES ($1, $2, $3) ON CONFLICT (squad_id, user_id) DO UPDATE SET assigned_role_name = EXCLUDED.assigned_role_name;", squad_id, user_id, assigned_role)
-            
+
     async def update_squad_member_role(self, squad_member_id: int, new_role: str):
         async with self.pool.acquire() as conn:
             await conn.execute("UPDATE squad_members SET assigned_role_name = $1 WHERE squad_member_id = $2", new_role, squad_member_id)
@@ -530,7 +531,7 @@ class Database:
         query = "UPDATE events SET locked_by_user_id = NULL, locked_at = NULL WHERE event_id = $1;"
         async with self.pool.acquire() as conn:
             await conn.execute(query, event_id)
-    
+
     # --- Scheduler Functions ---
     async def get_active_events_with_threads(self) -> List[Dict]:
         query = """
@@ -553,7 +554,7 @@ class Database:
         """
         async with self.pool.acquire() as connection:
             return [dict(row) for row in await connection.fetch(query)]
-    
+
     async def get_past_events_with_tentatives(self) -> List[Dict]:
         query = """
             SELECT s.event_id, s.user_id FROM signups s
@@ -583,12 +584,12 @@ class Database:
 
     async def get_finished_events_for_cleanup(self) -> List[dict]:
         query = """
-            SELECT event_id, thread_id, message_id, channel_id 
+            SELECT event_id, thread_id, message_id, channel_id
             FROM events
-            WHERE 
+            WHERE
                 COALESCE(end_time, event_time + INTERVAL '2 hours') < (NOW() AT TIME ZONE 'utc' - INTERVAL '2 hours')
             AND (
-                is_recurring = FALSE 
+                is_recurring = FALSE
                 OR
                 parent_event_id IS NOT NULL
             );
@@ -610,7 +611,7 @@ class Database:
         query = "SELECT event_id FROM events WHERE deleted_at IS NOT NULL AND deleted_at <= (NOW() AT TIME ZONE 'utc' - INTERVAL '7 days');"
         async with self.pool.acquire() as connection:
             return [dict(row) for row in await connection.fetch(query)]
-    
+
     async def delete_event(self, event_id: int):
         async with self.pool.acquire() as conn:
             await conn.execute("DELETE FROM events WHERE event_id = $1", event_id)
@@ -624,7 +625,7 @@ class Database:
         query = "UPDATE events SET last_recreated_at = (NOW() AT TIME ZONE 'utc') WHERE event_id = $1;"
         async with self.pool.acquire() as connection:
             await connection.execute(query, event_id)
-    
+
     async def get_squad_by_id(self, squad_id: int) -> Optional[dict]:
         async with self.pool.acquire() as conn:
             row = await conn.fetchrow("SELECT * FROM squads WHERE squad_id = $1", squad_id)
@@ -633,20 +634,42 @@ class Database:
     async def remove_user_from_all_squads(self, event_id: int, user_id: int):
         async with self.pool.acquire() as conn:
             await conn.execute("DELETE FROM squad_members WHERE user_id = $1 AND squad_id IN (SELECT squad_id FROM squads WHERE event_id = $2)", user_id, event_id)
-            
+
     async def get_squad_member_details(self, squad_member_id: int) -> Optional[Dict]:
         async with self.pool.acquire() as conn:
             row = await conn.fetchrow("SELECT sm.user_id, s.event_id FROM squad_members sm JOIN squads s ON sm.squad_id = s.squad_id WHERE sm.squad_member_id = $1", squad_member_id)
             return dict(row) if row else None
 
+    async def flag_event_for_embed_update(self, event_id: int):
+        """Sets a flag indicating the event embed needs to be refreshed."""
+        await self.pool.execute("UPDATE events SET needs_embed_update = TRUE WHERE event_id = $1;", event_id)
+
+    async def get_events_for_embed_update(self) -> List[Dict]:
+        """Gets all events that are flagged for an embed update."""
+        query = "SELECT event_id, channel_id, message_id FROM events WHERE needs_embed_update = TRUE AND message_id IS NOT NULL AND deleted_at IS NULL;"
+        async with self.pool.acquire() as connection:
+            return [dict(row) for row in await connection.fetch(query)]
+
+    async def clear_embed_update_flag(self, event_id: int):
+        """Clears the embed update flag for an event."""
+        await self.pool.execute("UPDATE events SET needs_embed_update = FALSE WHERE event_id = $1;", event_id)
+
     async def get_squads_with_members(self, event_id: int) -> List[Dict]:
         GUILD_ID, BOT_TOKEN = os.getenv("GUILD_ID"), os.getenv("DISCORD_TOKEN")
         headers = {"Authorization": f"Bot {BOT_TOKEN}"}
         query = "SELECT s.squad_id, s.name, s.squad_type, COALESCE(json_agg(sm.*) FILTER (WHERE sm.squad_member_id IS NOT NULL), '[]') as members FROM squads s LEFT JOIN squad_members sm ON s.squad_id = sm.squad_id WHERE s.event_id = $1 GROUP BY s.squad_id ORDER BY s.squad_id;"
-        
+
         async with self.pool.acquire() as connection: records = await connection.fetch(query, event_id)
-        
-        if not GUILD_ID or not BOT_TOKEN: return [dict(r) for r in records]
+
+        if not GUILD_ID or not BOT_TOKEN:
+            processed_squads = []
+            for record in records:
+                squad = dict(record)
+                for member_data in squad.get('members', []):
+                    # Ensure 'display_name' key exists as a fallback
+                    member_data['display_name'] = f"User ID: {member_data['user_id']}"
+                processed_squads.append(squad)
+            return processed_squads
 
         processed_squads = []
         async with httpx.AsyncClient() as client:
@@ -654,14 +677,18 @@ class Database:
                 squad, processed_members = dict(record), []
                 for member_data in squad.get('members', []):
                     member = dict(member_data)
-                    display_name = f"User ID: {member['user_id']}"
+                    display_name = f"User ID: {member['user_id']}" # Default fallback name
                     url = f"https://discord.com/api/v10/guilds/{GUILD_ID}/members/{member['user_id']}"
                     try:
                         response = await client.get(url, headers=headers)
                         if response.is_success:
                             api_member_data = response.json()
                             display_name = api_member_data.get('nick') or api_member_data['user'].get('global_name') or api_member_data['user']['username']
-                    except Exception as e: print(f"Error fetching member {member['user_id']}: {e}")
+                        else:
+                            print(f"Failed to fetch member {member['user_id']}. Status: {response.status_code}")
+                    except Exception as e:
+                        print(f"Exception while fetching member {member['user_id']}: {e}")
+
                     member['display_name'] = display_name
                     processed_members.append(member)
                 squad['members'] = processed_members
