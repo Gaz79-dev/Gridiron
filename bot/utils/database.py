@@ -427,19 +427,40 @@ class Database:
 
     # --- Player Statistics Functions ---
     async def update_player_stats(self, user_id: int, old_status: Optional[str], new_status: str):
-        decrement_col = f"{old_status.lower()}_count" if old_status else None
-        increment_col = f"{new_status.lower()}_count"
+        # Determine the integer changes for each count column
+        accepted_change = 0
+        tentative_change = 0
+        declined_change = 0
 
-        update_parts = [f"{increment_col} = player_stats.{increment_col} + 1"]
-        if decrement_col:
-            update_parts.append(f"{decrement_col} = GREATEST(0, player_stats.{decrement_col} - 1)")
+        if new_status == RsvpStatus.ACCEPTED: accepted_change = 1
+        elif new_status == RsvpStatus.TENTATIVE: tentative_change = 1
+        elif new_status == RsvpStatus.DECLINED: declined_change = 1
+
+        if old_status == RsvpStatus.ACCEPTED: accepted_change = -1
+        elif old_status == RsvpStatus.TENTATIVE: tentative_change = -1
+        elif old_status == RsvpStatus.DECLINED: declined_change = -1
+
+        # Build the SET clause parts
+        update_parts = [
+            f"accepted_count = GREATEST(0, player_stats.accepted_count + {accepted_change})",
+            f"tentative_count = GREATEST(0, player_stats.tentative_count + {tentative_change})",
+            f"declined_count = GREATEST(0, player_stats.declined_count + {declined_change})"
+        ]
+
+        # Handle the initial insert value for the new status
+        initial_insert_col = f"{new_status.lower()}_count"
 
         if new_status == RsvpStatus.ACCEPTED:
             update_parts.append("last_signup_date = (NOW() AT TIME ZONE 'utc')")
 
+        set_clause = ', '.join(update_parts)
+
+        # This query handles both new and existing users in the stats table.
+        # For a new user, it inserts a row with 1 for their new status.
+        # For an existing user, it atomically updates all counts based on the change.
         query = f"""
-            INSERT INTO player_stats (user_id, {increment_col}) VALUES ($1, 1)
-            ON CONFLICT (user_id) DO UPDATE SET {', '.join(update_parts)};
+            INSERT INTO player_stats (user_id, {initial_insert_col}) VALUES ($1, 1)
+            ON CONFLICT (user_id) DO UPDATE SET {set_clause};
         """
 
         async with self.pool.acquire() as connection:
