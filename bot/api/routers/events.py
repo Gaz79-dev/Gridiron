@@ -50,11 +50,11 @@ async def check_event_lock(event_id: int, current_user: User = Depends(auth.get_
 async def get_events(db: Database = Depends(get_db)):
     return await db.get_upcoming_events()
 
-@router.post("/{event_id}/promote-tentative", response_model=List[Squad], dependencies=[Depends(check_event_lock)])
+@router.post("/{event_id}/promote-tentative", response_model=List[Signup], dependencies=[Depends(check_event_lock)])
 async def promote_tentative_player(event_id: int, request: PromoteRequest, db: Database = Depends(get_db)):
     """
     Promotes a tentative player to accepted, assigns them a role, adds them to reserves,
-    and returns the updated squad list.
+    and returns the updated full roster.
     """
     primary_role, subclass_name = None, None
     for role, subclasses in SUBCLASSES.items():
@@ -64,7 +64,7 @@ async def promote_tentative_player(event_id: int, request: PromoteRequest, db: D
     if not primary_role and request.new_role_name in ROLES:
         primary_role = request.new_role_name
     if not primary_role: primary_role = "Unassigned"
-    
+
     try:
         # Update the player's RSVP status and role
         await db.promote_tentative_player(event_id, request.user_id, primary_role, subclass_name)
@@ -74,9 +74,12 @@ async def promote_tentative_player(event_id: int, request: PromoteRequest, db: D
         if reserves_squad:
             # Add the newly promoted player to the Reserves squad
             await db.add_squad_member(reserves_squad['squad_id'], request.user_id, request.new_role_name)
-        
-        # Return the complete, updated squad list for the UI
-        return await db.get_squads_with_members(event_id)
+
+        # Flag the event so the scheduler updates the Discord embed
+        await db.flag_event_for_embed_update(event_id)
+
+        # Return the complete, updated roster for the UI
+        return await get_event_signups(event_id, db)
 
     except Exception as e:
         print(f"Error promoting tentative player: {e}")
@@ -220,7 +223,7 @@ async def refresh_event_roster(event_id: int, request: RosterUpdateRequest, db: 
 @router.post("/send-embed", status_code=204)
 async def send_squad_embed(
     event_id: int,
-    request: SendEmbedRequest, 
+    request: SendEmbedRequest,
     db: Database = Depends(get_db),
     lock_check: None = Depends(check_event_lock)
 ):
@@ -228,7 +231,7 @@ async def send_squad_embed(
     if not BOT_TOKEN: raise HTTPException(status_code=500, detail="Bot token not configured on server.")
     url = f"https://discord.com/api/v10/channels/{request.channel_id}/messages"
     headers = {"Authorization": f"Bot {BOT_TOKEN}"}
-    
+
     event_details = await db.get_event_by_id(event_id) if event_id else None
     title_str, event_time_str = "Team Composition", ""
     if event_details:
