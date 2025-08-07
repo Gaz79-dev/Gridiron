@@ -157,7 +157,7 @@ document.addEventListener('DOMContentLoaded', () => {
             `;
             buildForm.appendChild(div);
         });
-        
+
         if (!buildForm.querySelector('#squad_count_Commander')) {
              const div = document.createElement('div');
              div.innerHTML = `
@@ -183,7 +183,7 @@ document.addEventListener('DOMContentLoaded', () => {
         for (let [key, value] of formData.entries()) {
             squadCounts[key] = parseInt(value, 10) || 0;
         }
-        
+
         const buildRequest = { squad_counts: squadCounts, template_id: parseInt(templateId) };
 
         buildBtn.textContent = 'Building...';
@@ -241,19 +241,19 @@ document.addEventListener('DOMContentLoaded', () => {
         localStorage.removeItem('accessToken');
         window.location.href = '/login';
     });
-    
+
     sendBtn.addEventListener('click', async () => {
         const selectedChannelId = channelDropdown.value;
         const eventId = eventDropdown.value;
-        
+
         if (!selectedChannelId || currentSquads.length === 0 || !eventId) {
             alert('Please select an event and channel, and build squads first.');
             return;
         }
-        
+
         sendBtn.textContent = 'Sending...';
         sendBtn.disabled = true;
-        
+
         try {
             const url = `/api/events/send-embed?event_id=${eventId}`;
             const mentionAttendees = document.getElementById('mention-attendees-checkbox').checked;
@@ -267,11 +267,11 @@ document.addEventListener('DOMContentLoaded', () => {
                     mention_accepted: mentionAttendees
                 })
             });
-            
+
             if (await handleApiError(response)) {
                 throw new Error(`Server responded with status: ${response.status}`);
             }
-            
+
             alert('Squad embed sent successfully!');
             await releaseLock(eventId);
             setLockedState(true, 'Squads sent. This event is now read-only.');
@@ -322,7 +322,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     promoteModalCancelBtn.addEventListener('click', () => promoteModal.classList.add('hidden'));
-    
+
     promoteForm.addEventListener('submit', async (e) => {
         e.preventDefault();
         const eventId = eventDropdown.value;
@@ -338,21 +338,27 @@ document.addEventListener('DOMContentLoaded', () => {
             });
 
             if (await handleApiError(response)) return;
-            
-            const updatedSquads = await response.json();
 
-            // Re-fetch the roster and re-render everything to ensure consistency
-            await fetchAndDisplayRoster(eventId);
-            renderWorkshop(updatedSquads);
-            
+            // The API now returns the full updated roster
+            const updatedRoster = await response.json();
+
+            // Re-fetch squads and re-render everything to ensure consistency
+            const squadsResponse = await fetch(`/api/events/${eventId}/squads`, { headers });
+            if(await handleApiError(squadsResponse)) return;
+            const existingSquads = await squadsResponse.json();
+
+            displayRoster(updatedRoster); // This will re-render the accepted and tentative lists
+            renderWorkshop(existingSquads); // This will re-render the squads including reserves
+
             promoteModal.classList.add('hidden');
-            alert(`${playerName} promoted. The Discord embed will update on its next cycle.`);
+            alert(`${playerName} promoted. The Discord embed will update shortly.`);
 
         } catch (err) {
             alert("Error: Could not promote player.");
             console.error(err);
         }
     });
+
 
     modalCancelBtn.addEventListener('click', () => editModal.classList.add('hidden'));
     taskModalCancelBtn.addEventListener('click', () => assignTaskModal.classList.add('hidden'));
@@ -414,7 +420,7 @@ document.addEventListener('DOMContentLoaded', () => {
         fetch('/api/templates', { headers: { 'Authorization': `Bearer ${token}` } })
     ]).then(async ([userRes, rolesRes, eventsRes, emojiRes, templatesRes]) => {
         if (await handleApiError(userRes) || await handleApiError(rolesRes) || await handleApiError(eventsRes) || await handleApiError(emojiRes) || await handleApiError(templatesRes)) return;
-        
+
         currentUser = await userRes.json();
         if (currentUser?.is_admin) adminLink.classList.remove('hidden');
 
@@ -425,7 +431,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         eventDropdown.innerHTML = '<option value="">-- Select an Event --</option>';
         events.forEach(event => eventDropdown.add(new Option(`${event.title} (${new Date(event.event_time).toLocaleString()})`, event.event_id)));
-        
+
         populateTemplateDropdown();
         generateBuildForm(null);
 
@@ -458,7 +464,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         } catch (error) { console.error(`Error loading event data for ${eventId}:`, error); }
     }
-    
+
     async function fetchAndDisplayRoster(eventId) {
         try {
             const rosterResponse = await fetch(`/api/events/${eventId}/signups`, { headers });
@@ -568,9 +574,9 @@ document.addEventListener('DOMContentLoaded', () => {
         });
         renderTentativePlayers();
         document.querySelectorAll('.member-list').forEach(list => {
-            new Sortable(list, { 
-                group: 'squads', 
-                animation: 150, 
+            new Sortable(list, {
+                group: 'squads',
+                animation: 150,
                 onEnd: async (evt) => {
                     const memberId = evt.item.dataset.memberId;
                     const newSquadId = evt.to.dataset.squadId;
