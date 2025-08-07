@@ -46,15 +46,12 @@ async def check_event_lock(event_id: int, current_user: User = Depends(auth.get_
 
 # --- API Routes ---
 
-@router.get("", response_model=List[Event])
-async def get_events(db: Database = Depends(get_db)):
-    return await db.get_upcoming_events()
-
-@router.post("/{event_id}/promote-tentative", response_model=List[Signup], dependencies=[Depends(check_event_lock)])
+# --- FIX START: The endpoint now returns the updated squad list instead of the signup list ---
+@router.post("/{event_id}/promote-tentative", response_model=List[Squad], dependencies=[Depends(check_event_lock)])
 async def promote_tentative_player(event_id: int, request: PromoteRequest, db: Database = Depends(get_db)):
     """
     Promotes a tentative player to accepted, assigns them a role, adds them to reserves,
-    and returns the updated full roster.
+    and returns the updated full squad list.
     """
     primary_role, subclass_name = None, None
     for role, subclasses in SUBCLASSES.items():
@@ -78,12 +75,17 @@ async def promote_tentative_player(event_id: int, request: PromoteRequest, db: D
         # Flag the event so the scheduler updates the Discord embed
         await db.flag_event_for_embed_update(event_id)
 
-        # Return the complete, updated roster for the UI
-        return await get_event_signups(event_id, db)
+        # Return the complete, updated squad list for the UI to render
+        return await db.get_squads_with_members(event_id)
 
     except Exception as e:
         print(f"Error promoting tentative player: {e}")
         raise HTTPException(status_code=500, detail="Failed to update player status in the database.")
+# --- FIX END ---
+
+@router.get("", response_model=List[Event])
+async def get_events(db: Database = Depends(get_db)):
+    return await db.get_upcoming_events()
 
 @router.get("/recurring", response_model=List[Event], dependencies=[Depends(auth.get_current_admin_user)])
 async def get_recurring_events(db: Database = Depends(get_db)):
