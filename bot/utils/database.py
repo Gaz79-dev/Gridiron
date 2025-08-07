@@ -339,6 +339,12 @@ class Database:
                 if old_status == new_status:
                     return
 
+                # If the user is no longer 'Accepted', remove them from any squads for this event.
+                if new_status != RsvpStatus.ACCEPTED:
+                    await self.remove_user_from_all_squads(event_id, user_id)
+                    # Also clear their role selection as it's no longer relevant
+                    await self.update_signup_role(event_id, user_id, None, None)
+
                 await connection.execute(
                     """
                     INSERT INTO signups (event_id, user_id, rsvp_status) VALUES ($1, $2, $3)
@@ -367,6 +373,9 @@ class Database:
                         "DELETE FROM player_event_history WHERE user_id = $1 AND event_id = $2;",
                         user_id, event_id
                     )
+
+                # Flag the event for an embed update since the roster has changed
+                await self.flag_event_for_embed_update(event_id)
 
     async def get_upcoming_events(self) -> List[Dict]:
         query = "SELECT * FROM events WHERE deleted_at IS NULL AND (is_recurring = FALSE OR parent_event_id IS NOT NULL) AND COALESCE(end_time, event_time + INTERVAL '2 hours') > (NOW() AT TIME ZONE 'utc' - INTERVAL '12 hours');"
