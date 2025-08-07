@@ -217,16 +217,13 @@ async def refresh_event_roster(event_id: int, request: RosterUpdateRequest, db: 
                     await db.add_squad_member(reserves_squad['squad_id'], user_id, role_name)
     return await db.get_squads_with_members(event_id)
 
-# --- START OF CHANGE ---
 @router.post("/send-embed", status_code=204)
 async def send_squad_embed(
-    event_id: int, # Add event_id as a query parameter
+    event_id: int,
     request: SendEmbedRequest, 
     db: Database = Depends(get_db),
-    # Manually run the lock check dependency
     lock_check: None = Depends(check_event_lock)
 ):
-# --- END OF CHANGE ---
     BOT_TOKEN = os.getenv("DISCORD_TOKEN")
     if not BOT_TOKEN: raise HTTPException(status_code=500, detail="Bot token not configured on server.")
     url = f"https://discord.com/api/v10/channels/{request.channel_id}/messages"
