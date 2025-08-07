@@ -323,6 +323,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     promoteModalCancelBtn.addEventListener('click', () => promoteModal.classList.add('hidden'));
 
+    // --- FIX START: The form handler now expects a squad list and updates the UI accordingly ---
     promoteForm.addEventListener('submit', async (e) => {
         e.preventDefault();
         const eventId = eventDropdown.value;
@@ -339,16 +340,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
             if (await handleApiError(response)) return;
 
-            // The API now returns the full updated roster
-            const updatedRoster = await response.json();
+            // The API now returns the full updated squad list
+            const updatedSquads = await response.json();
 
-            // Re-fetch squads and re-render everything to ensure consistency
-            const squadsResponse = await fetch(`/api/events/${eventId}/squads`, { headers });
-            if(await handleApiError(squadsResponse)) return;
-            const existingSquads = await squadsResponse.json();
-
-            displayRoster(updatedRoster); // This will re-render the accepted and tentative lists
-            renderWorkshop(existingSquads); // This will re-render the squads including reserves
+            // Re-fetch the roster to update the "Accepted" list
+            await fetchAndDisplayRoster(eventId);
+            
+            // Re-render the workshop with the new squad data
+            renderWorkshop(updatedSquads);
 
             promoteModal.classList.add('hidden');
             alert(`${playerName} promoted. The Discord embed will update shortly.`);
@@ -358,6 +357,7 @@ document.addEventListener('DOMContentLoaded', () => {
             console.error(err);
         }
     });
+    // --- FIX END ---
 
 
     modalCancelBtn.addEventListener('click', () => editModal.classList.add('hidden'));
