@@ -427,44 +427,46 @@ class Database:
 
     # --- Player Statistics Functions ---
     async def update_player_stats(self, user_id: int, old_status: Optional[str], new_status: str):
-        # Determine the integer changes for each count column
-        accepted_change = 0
-        tentative_change = 0
-        declined_change = 0
+        # Calculate the deltas for each count
+        accepted_delta = 0
+        tentative_delta = 0
+        declined_delta = 0
 
-        if new_status == RsvpStatus.ACCEPTED: accepted_change = 1
-        elif new_status == RsvpStatus.TENTATIVE: tentative_change = 1
-        elif new_status == RsvpStatus.DECLINED: declined_change = 1
+        if new_status == RsvpStatus.ACCEPTED: accepted_delta += 1
+        elif new_status == RsvpStatus.TENTATIVE: tentative_delta += 1
+        elif new_status == RsvpStatus.DECLINED: declined_delta += 1
 
-        if old_status == RsvpStatus.ACCEPTED: accepted_change = -1
-        elif old_status == RsvpStatus.TENTATIVE: tentative_change = -1
-        elif old_status == RsvpStatus.DECLINED: declined_change = -1
+        if old_status == RsvpStatus.ACCEPTED: accepted_delta -= 1
+        elif old_status == RsvpStatus.TENTATIVE: tentative_delta -= 1
+        elif old_status == RsvpStatus.DECLINED: declined_delta -= 1
 
-        # Build the SET clause parts
-        update_parts = [
-            f"accepted_count = GREATEST(0, player_stats.accepted_count + {accepted_change})",
-            f"tentative_count = GREATEST(0, player_stats.tentative_count + {tentative_change})",
-            f"declined_count = GREATEST(0, player_stats.declined_count + {declined_change})"
-        ]
-
-        # Handle the initial insert value for the new status
-        initial_insert_col = f"{new_status.lower()}_count"
-
+        # Determine the new last_signup_date
+        last_signup_date_val = None
         if new_status == RsvpStatus.ACCEPTED:
-            update_parts.append("last_signup_date = (NOW() AT TIME ZONE 'utc')")
+            last_signup_date_val = datetime.datetime.now(datetime.timezone.utc)
 
-        set_clause = ', '.join(update_parts)
-
-        # This query handles both new and existing users in the stats table.
-        # For a new user, it inserts a row with 1 for their new status.
-        # For an existing user, it atomically updates all counts based on the change.
-        query = f"""
-            INSERT INTO player_stats (user_id, {initial_insert_col}) VALUES ($1, 1)
-            ON CONFLICT (user_id) DO UPDATE SET {set_clause};
+        query = """
+            INSERT INTO player_stats (user_id, accepted_count, tentative_count, declined_count, last_signup_date)
+            VALUES ($1, $2, $3, $4, $5)
+            ON CONFLICT (user_id) DO UPDATE SET
+                accepted_count = GREATEST(0, player_stats.accepted_count + EXCLUDED.accepted_count),
+                tentative_count = GREATEST(0, player_stats.tentative_count + EXCLUDED.tentative_count),
+                declined_count = GREATEST(0, player_stats.declined_count + EXCLUDED.declined_count),
+                last_signup_date = CASE
+                                    WHEN EXCLUDED.last_signup_date IS NOT NULL THEN EXCLUDED.last_signup_date
+                                    ELSE player_stats.last_signup_date
+                                   END;
         """
 
         async with self.pool.acquire() as connection:
-            await connection.execute(query, user_id)
+            await connection.execute(
+                query,
+                user_id,
+                accepted_delta,
+                tentative_delta,
+                declined_delta,
+                last_signup_date_val
+            )
 
     async def get_all_player_stats(self) -> List[Dict]:
         async with self.pool.acquire() as connection:
