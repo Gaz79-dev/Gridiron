@@ -11,7 +11,7 @@ import discord
 # Use absolute imports from the 'bot' package root
 from bot.utils.database import Database, RsvpStatus, ROLES, SUBCLASSES
 from bot.api import auth, squad_logic
-from bot.api.dependencies import get_db, get_bot
+from bot.api.dependencies import get_db
 from bot.api.models import Event, Signup, Squad, SquadBuildRequest, RosterUpdateRequest, SendEmbedRequest, Channel, User, EventLockStatus, EventUpdate, PromoteRequest
 
 # Import the emoji mapping for use in the embed
@@ -24,7 +24,7 @@ router = APIRouter(
 )
 
 # Load constants from environment variables
-GUILD_ID = int(os.getenv("GUILD_ID"))
+GUILD_ID = os.getenv("GUILD_ID")
 BOT_TOKEN = os.getenv("DISCORD_TOKEN")
 LOCK_TIMEOUT_MINUTES = 15
 
@@ -51,7 +51,7 @@ async def get_events(db: Database = Depends(get_db)):
     return await db.get_upcoming_events()
 
 @router.post("/{event_id}/promote-tentative", response_model=List[Signup], dependencies=[Depends(check_event_lock)])
-async def promote_tentative_player(event_id: int, request: PromoteRequest, db: Database = Depends(get_db), bot: discord.Client = Depends(get_bot)):
+async def promote_tentative_player(event_id: int, request: PromoteRequest, db: Database = Depends(get_db)):
     """
     Promotes a tentative player to accepted, assigns them a role, adds them to reserves,
     and returns the updated full roster.
@@ -79,7 +79,7 @@ async def promote_tentative_player(event_id: int, request: PromoteRequest, db: D
         await db.flag_event_for_embed_update(event_id)
 
         # Return the complete, updated roster for the UI
-        return await get_event_signups(event_id, db, bot)
+        return await get_event_signups(event_id, db)
 
     except Exception as e:
         print(f"Error promoting tentative player: {e}")
@@ -162,56 +162,56 @@ async def force_unlock_all_events_endpoint(db: Database = Depends(get_db)):
     return
 
 @router.get("/{event_id}/squads", response_model=List[Squad])
-async def get_event_squads(event_id: int, db: Database = Depends(get_db), bot: discord.Client = Depends(get_bot)):
-    return await db.get_squads_with_members(event_id, bot)
+async def get_event_squads(event_id: int, db: Database = Depends(get_db)):
+    return await db.get_squads_with_members(event_id)
 
 @router.get("/{event_id}/signups", response_model=List[Signup])
-async def get_event_signups(event_id: int, db: Database = Depends(get_db), bot: discord.Client = Depends(get_bot)):
+async def get_event_signups(event_id: int, db: Database = Depends(get_db)):
+    if not BOT_TOKEN or not GUILD_ID:
+        raise HTTPException(status_code=500, detail="Bot token or Guild ID not configured on server.")
     signups_records = await db.get_signups_for_event(event_id)
-    roster = []
-    guild = bot.get_guild(GUILD_ID)
-    if not guild:
-         raise HTTPException(status_code=500, detail="Bot is not connected to the configured Guild.")
-
-    for record in signups_records:
-        user_id = record['user_id']
-        member = guild.get_member(user_id)
-        try:
-            if not member:
-                member = await guild.fetch_member(user_id)
-            display_name = member.nick or member.global_name or member.name
-        except discord.NotFound:
-            display_name = f"Left Server ({user_id})"
-        except Exception as e:
-            print(f"Error fetching member {user_id}: {e}")
+    roster, headers = [], {"Authorization": f"Bot {BOT_TOKEN}"}
+    async with httpx.AsyncClient() as client:
+        for record in signups_records:
+            user_id = record['user_id']
             display_name = f"User ID: {user_id}"
+            url = f"https://discord.com/api/v10/guilds/{GUILD_ID}/members/{user_id}"
+            try:
+                response = await client.get(url, headers=headers)
+                if response.is_success:
+                    member_data = response.json()
+                    display_name = member_data.get('nick') or member_data['user'].get('global_name') or member_data['user']['username']
+                elif response.status_code == 404:
+                    display_name = f"Left Server ({user_id})"
+            except Exception as e:
+                print(f"Error fetching member {user_id}: {e}")
 
-        roster.append(Signup(
-            user_id=user_id,
-            display_name=display_name,
-            role_name=record.get('role_name'),
-            subclass_name=record.get('subclass_name'),
-            rsvp_status=record['rsvp_status']
-        ))
+            roster.append(Signup(
+                user_id=user_id,
+                display_name=display_name,
+                role_name=record.get('role_name'),
+                subclass_name=record.get('subclass_name'),
+                rsvp_status=record['rsvp_status']
+            ))
     return roster
 
 @router.post("/{event_id}/build-squads", response_model=List[Squad], dependencies=[Depends(check_event_lock)])
-async def build_squads_for_event(event_id: int, request: SquadBuildRequest, db: Database = Depends(get_db), bot: discord.Client = Depends(get_bot)):
+async def build_squads_for_event(event_id: int, request: SquadBuildRequest, db: Database = Depends(get_db)):
     try:
-        return await squad_logic.run_web_draft(db, event_id, request, bot)
+        return await squad_logic.run_web_draft(db, event_id, request)
     except Exception as e:
         print(f"Error during squad build process: {e}")
         raise HTTPException(status_code=500, detail="An internal error occurred during squad drafting.")
 
 @router.post("/{event_id}/refresh-roster", response_model=List[Squad], dependencies=[Depends(check_event_lock)])
-async def refresh_event_roster(event_id: int, request: RosterUpdateRequest, db: Database = Depends(get_db), bot: discord.Client = Depends(get_bot)):
+async def refresh_event_roster(event_id: int, request: RosterUpdateRequest, db: Database = Depends(get_db)):
     current_member_ids = {member.user_id for squad in request.squads for member in squad.members}
     latest_signups = await db.get_signups_for_event(event_id)
     accepted_user_ids = {s['user_id'] for s in latest_signups if s['rsvp_status'] == RsvpStatus.ACCEPTED}
     users_to_remove = current_member_ids - accepted_user_ids
     for user_id in users_to_remove:
         await db.remove_user_from_all_squads(event_id, user_id)
-    squads_with_members = await db.get_squads_with_members(event_id, bot)
+    squads_with_members = await db.get_squads_with_members(event_id)
     all_current_db_member_ids = {member['user_id'] for squad in squads_with_members for member in squad.get('members', [])}
     new_users = accepted_user_ids - all_current_db_member_ids
     if new_users:
@@ -222,7 +222,7 @@ async def refresh_event_roster(event_id: int, request: RosterUpdateRequest, db: 
                 if signup:
                     role_name = signup.get('subclass_name') or signup.get('role_name', 'Unassigned') or 'Unassigned'
                     await db.add_squad_member(reserves_squad['squad_id'], user_id, role_name)
-    return await db.get_squads_with_members(event_id, bot)
+    return await db.get_squads_with_members(event_id)
 
 @router.post("/send-embed", status_code=204)
 async def send_squad_embed(
