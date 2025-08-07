@@ -3,6 +3,7 @@ import os
 import datetime
 import json
 import httpx
+import discord
 from typing import List, Optional, Dict
 import uuid
 
@@ -688,45 +689,45 @@ class Database:
         """Clears the embed update flag for an event."""
         await self.pool.execute("UPDATE events SET needs_embed_update = FALSE WHERE event_id = $1;", event_id)
 
-    async def get_squads_with_members(self, event_id: int) -> List[Dict]:
-        GUILD_ID, BOT_TOKEN = os.getenv("GUILD_ID"), os.getenv("DISCORD_TOKEN")
-        headers = {"Authorization": f"Bot {BOT_TOKEN}"}
+    async def get_squads_with_members(self, event_id: int, bot: discord.Client) -> List[Dict]:
+        GUILD_ID = int(os.getenv("GUILD_ID"))
         query = "SELECT s.squad_id, s.name, s.squad_type, COALESCE(json_agg(sm.*) FILTER (WHERE sm.squad_member_id IS NOT NULL), '[]') as members FROM squads s LEFT JOIN squad_members sm ON s.squad_id = sm.squad_id WHERE s.event_id = $1 GROUP BY s.squad_id ORDER BY s.squad_id;"
 
-        async with self.pool.acquire() as connection: records = await connection.fetch(query, event_id)
+        async with self.pool.acquire() as connection:
+            records = await connection.fetch(query, event_id)
 
-        if not GUILD_ID or not BOT_TOKEN:
-            processed_squads = []
+        processed_squads = []
+        guild = bot.get_guild(GUILD_ID)
+        if not guild:
+            # Fallback if bot isn't connected to the guild
             for record in records:
                 squad = dict(record)
                 for member_data in squad.get('members', []):
-                    # Ensure 'display_name' key exists as a fallback
                     member_data['display_name'] = f"User ID: {member_data['user_id']}"
                 processed_squads.append(squad)
             return processed_squads
 
-        processed_squads = []
-        async with httpx.AsyncClient() as client:
-            for record in records:
-                squad, processed_members = dict(record), []
-                for member_data in squad.get('members', []):
-                    member = dict(member_data)
-                    display_name = f"User ID: {member['user_id']}" # Default fallback name
-                    url = f"https://discord.com/api/v10/guilds/{GUILD_ID}/members/{member['user_id']}"
-                    try:
-                        response = await client.get(url, headers=headers)
-                        if response.is_success:
-                            api_member_data = response.json()
-                            display_name = api_member_data.get('nick') or api_member_data['user'].get('global_name') or api_member_data['user']['username']
-                        else:
-                            print(f"Failed to fetch member {member['user_id']}. Status: {response.status_code}")
-                    except Exception as e:
-                        print(f"Exception while fetching member {member['user_id']}: {e}")
+        for record in records:
+            squad, processed_members = dict(record), []
+            for member_data in squad.get('members', []):
+                member = dict(member_data)
+                user_id = member['user_id']
+                display_name = f"User ID: {user_id}"
 
-                    member['display_name'] = display_name
-                    processed_members.append(member)
-                squad['members'] = processed_members
-                processed_squads.append(squad)
+                discord_member = guild.get_member(user_id)
+                try:
+                    if not discord_member:
+                        discord_member = await guild.fetch_member(user_id)
+                    display_name = discord_member.nick or discord_member.global_name or discord_member.name
+                except discord.NotFound:
+                    display_name = f"Left Server ({user_id})"
+                except Exception as e:
+                    print(f"Exception while fetching member {user_id}: {e}")
+
+                member['display_name'] = display_name
+                processed_members.append(member)
+            squad['members'] = processed_members
+            processed_squads.append(squad)
         return processed_squads
 
     async def delete_squads_for_event(self, event_id: int):
