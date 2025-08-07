@@ -323,7 +323,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
     promoteModalCancelBtn.addEventListener('click', () => promoteModal.classList.add('hidden'));
     
-    // --- START OF CHANGE ---
     promoteForm.addEventListener('submit', async (e) => {
         e.preventDefault();
         const eventId = eventDropdown.value;
@@ -354,7 +353,6 @@ document.addEventListener('DOMContentLoaded', () => {
             console.error(err);
         }
     });
-    // --- END OF CHANGE ---
 
     modalCancelBtn.addEventListener('click', () => editModal.classList.add('hidden'));
     taskModalCancelBtn.addEventListener('click', () => assignTaskModal.classList.add('hidden'));
