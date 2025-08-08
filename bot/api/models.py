@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field, ConfigDict
-from typing import Optional, List
+from typing import Optional, List, Dict
 from datetime import datetime
 
 # --- Token Models ---
@@ -47,7 +47,6 @@ class Event(BaseModel):
     end_time: Optional[datetime] = None
 
 class Signup(BaseModel):
-    # --- FIX: user_id is now a string to preserve precision ---
     user_id: str
     display_name: str
     role_name: Optional[str] = "Unassigned"
@@ -62,7 +61,6 @@ class Channel(BaseModel):
 class SquadMember(BaseModel):
     model_config = ConfigDict(from_attributes=True, extra='ignore')
     squad_member_id: int
-    # --- FIX: user_id is now a string to preserve precision ---
     user_id: str
     assigned_role_name: str
     display_name: Optional[str] = None
@@ -81,7 +79,6 @@ class EventLockStatus(BaseModel):
     locked_by_username: Optional[str] = None
 
 class SquadBuildRequest(BaseModel):
-    # This model is now dynamic, so we expect a dictionary
     squad_counts: dict[str, int]
     template_id: int
 
@@ -104,11 +101,9 @@ class StartupTaskUpdateRequest(BaseModel):
     task: Optional[str] = None
 
 class PromoteRequest(BaseModel):
-    # --- FIX: user_id is now a string to preserve precision ---
     user_id: str
     new_role_name: str
 
-# --- NEW: Squad Template Models ---
 class SquadTemplateDefinition(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     definition_id: Optional[int] = None
@@ -128,7 +123,8 @@ class SquadTemplateCreate(BaseModel):
     template_name: str
     definitions: List[SquadTemplateDefinition]
 
-# --- Player Statistics Models ---
+# --- Player Statistics Models (Updated for AI) ---
+
 class PlayerStats(BaseModel):
     user_id: str
     display_name: str
@@ -137,6 +133,10 @@ class PlayerStats(BaseModel):
     declined_count: int
     last_signup_date: Optional[datetime] = None
     days_since_last_signup: Optional[int] = None
+    # --- FIX: Add new AI-related fields ---
+    rating: int
+    is_active: bool
+    role_affinities: Optional[Dict] = None
 
 class AcceptedEvent(BaseModel):
     event_title: str
@@ -155,3 +155,16 @@ class EventUpdate(BaseModel):
     recreation_hours: Optional[int] = None
     mention_role_ids: List[int] = []
     restrict_to_role_ids: List[int] = []
+
+# --- FIX START: New models for the Admin Rating Panel ---
+class PlayerRatingUpdate(BaseModel):
+    user_id: str
+    rating: int = Field(..., ge=0, le=100) # Rating must be between 0 and 100
+
+class PlayerAdminInfo(BaseModel):
+    """Model for displaying players in the admin rating panel."""
+    user_id: str
+    display_name: str
+    rating: int
+    is_active: bool
+# --- FIX END ---
