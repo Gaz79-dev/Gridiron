@@ -4,17 +4,17 @@ import datetime
 import asyncio
 from fastapi import APIRouter, Depends, HTTPException, status
 from typing import List, Optional
-from pydantic import BaseModel
-
-import discord
 
 # Use absolute imports from the 'bot' package root
 from bot.utils.database import Database, RsvpStatus, ROLES, SUBCLASSES
-from bot.api import auth, squad_logic
+from bot.api import auth
+# --- FIX: Import the new AI squad optimizer ---
+from bot.ai import squad_optimizer
 from bot.api.dependencies import get_db
-from bot.api.models import Event, Signup, Squad, SquadBuildRequest, RosterUpdateRequest, SendEmbedRequest, Channel, User, EventLockStatus, EventUpdate, PromoteRequest
-
-# Import the emoji mapping for use in the embed
+from bot.api.models import (
+    Event, Signup, Squad, SquadBuildRequest, RosterUpdateRequest, 
+    SendEmbedRequest, Channel, User, EventLockStatus, EventUpdate, PromoteRequest
+)
 from bot.cogs.event_management import EMOJI_MAPPING
 
 router = APIRouter(
@@ -48,10 +48,6 @@ async def check_event_lock(event_id: int, current_user: User = Depends(auth.get_
 
 @router.post("/{event_id}/promote-tentative", response_model=List[Squad], dependencies=[Depends(check_event_lock)])
 async def promote_tentative_player(event_id: int, request: PromoteRequest, db: Database = Depends(get_db)):
-    """
-    Promotes a tentative player to accepted, assigns them a role, adds them to reserves,
-    and returns the updated full squad list.
-    """
     primary_role, subclass_name = None, None
     for role, subclasses in SUBCLASSES.items():
         if request.new_role_name in subclasses:
@@ -62,24 +58,13 @@ async def promote_tentative_player(event_id: int, request: PromoteRequest, db: D
     if not primary_role: primary_role = "Unassigned"
 
     try:
-        # The user_id from the request is a string, so we need to convert it to an int for the DB
         user_id_int = int(request.user_id)
-        
-        # Update the player's RSVP status and role
         await db.promote_tentative_player(event_id, user_id_int, primary_role, subclass_name)
-
-        # Find the Reserves squad for this event
         reserves_squad = await db.get_squad_by_name(event_id, "Reserves")
         if reserves_squad:
-            # Add the newly promoted player to the Reserves squad
             await db.add_squad_member(reserves_squad['squad_id'], user_id_int, request.new_role_name)
-
-        # Flag the event so the scheduler updates the Discord embed
         await db.flag_event_for_embed_update(event_id)
-
-        # Return the complete, updated squad list for the UI to render
         return await db.get_squads_with_members(event_id)
-
     except Exception as e:
         print(f"Error promoting tentative player: {e}")
         raise HTTPException(status_code=500, detail="Failed to update player status in the database.")
@@ -168,7 +153,6 @@ async def force_unlock_all_events_endpoint(db: Database = Depends(get_db)):
 async def get_event_squads(event_id: int, db: Database = Depends(get_db)):
     return await db.get_squads_with_members(event_id)
 
-# --- FIX START: Cast user_id to string before Pydantic validation ---
 @router.get("/{event_id}/signups", response_model=List[Signup])
 async def get_event_signups(event_id: int, db: Database = Depends(get_db)):
     if not BOT_TOKEN or not GUILD_ID:
@@ -191,22 +175,24 @@ async def get_event_signups(event_id: int, db: Database = Depends(get_db)):
                 print(f"Error fetching member {user_id}: {e}")
 
             roster.append(Signup(
-                user_id=str(user_id),  # Cast the integer ID to a string here
+                user_id=str(user_id),
                 display_name=display_name,
                 role_name=record.get('role_name'),
                 subclass_name=record.get('subclass_name'),
                 rsvp_status=record['rsvp_status']
             ))
     return roster
-# --- FIX END ---
 
+# --- FIX START: Replace old logic with a call to the new AI optimizer ---
 @router.post("/{event_id}/build-squads", response_model=List[Squad], dependencies=[Depends(check_event_lock)])
 async def build_squads_for_event(event_id: int, request: SquadBuildRequest, db: Database = Depends(get_db)):
     try:
-        return await squad_logic.run_web_draft(db, event_id, request)
+        # Defer to the new AI-driven squad optimizer
+        return await squad_optimizer.run_ai_draft(db, event_id, request)
     except Exception as e:
-        print(f"Error during squad build process: {e}")
-        raise HTTPException(status_code=500, detail="An internal error occurred during squad drafting.")
+        print(f"Error during AI squad build process: {e}")
+        raise HTTPException(status_code=500, detail="An internal error occurred during AI squad drafting.")
+# --- FIX END ---
 
 @router.post("/{event_id}/refresh-roster", response_model=List[Squad], dependencies=[Depends(check_event_lock)])
 async def refresh_event_roster(event_id: int, request: RosterUpdateRequest, db: Database = Depends(get_db)):
@@ -227,15 +213,46 @@ async def refresh_event_roster(event_id: int, request: RosterUpdateRequest, db: 
                 if signup:
                     role_name = signup.get('subclass_name') or signup.get('role_name', 'Unassigned') or 'Unassigned'
                     await db.add_squad_member(reserves_squad['squad_id'], user_id, role_name)
+        await db.flag_event_for_embed_update(event_id)
     return await db.get_squads_with_members(event_id)
 
-@router.post("/send-embed", status_code=204)
+# --- FIX START: New endpoint for finalizing squads and triggering AI learning ---
+@router.post("/{event_id}/finalize-squads", status_code=204)
+async def finalize_squads_and_learn(
+    event_id: int,
+    request: SendEmbedRequest,
+    db: Database = Depends(get_db),
+    lock_check: None = Depends(check_event_lock)
+):
+    """
+    Sends the final squad embed and triggers the AI learning process.
+    """
+    # First, send the embed (re-using the logic from the old send-embed endpoint)
+    await send_squad_embed(event_id, request, db)
+    
+    # After sending, trigger the AI learning process
+    try:
+        # Convert Pydantic models back to dictionaries for the database function
+        squads_for_learning = [s.model_dump() for s in request.squads]
+        await db.update_player_affinities(squads_for_learning)
+        print(f"AI learning process triggered for event {event_id}.")
+    except Exception as e:
+        print(f"Error during AI learning process for event {event_id}: {e}")
+        # We don't raise an HTTPException here because the primary action (sending the embed) succeeded.
+        # The error is logged for maintenance.
+# --- FIX END ---
+
+@router.post("/send-draft-embed", status_code=204)
 async def send_squad_embed(
     event_id: int,
     request: SendEmbedRequest,
     db: Database = Depends(get_db),
     lock_check: None = Depends(check_event_lock)
 ):
+    """
+    Sends a squad composition embed to a Discord channel without triggering any learning.
+    This is used for drafts and feedback.
+    """
     BOT_TOKEN = os.getenv("DISCORD_TOKEN")
     if not BOT_TOKEN: raise HTTPException(status_code=500, detail="Bot token not configured on server.")
     url = f"https://discord.com/api/v10/channels/{request.channel_id}/messages"
@@ -246,7 +263,7 @@ async def send_squad_embed(
     if event_details:
         event_timestamp = int(event_details['event_time'].timestamp())
         event_time_str = f" - <t:{event_timestamp}:F>"
-        title_str = f"Team Composition - {event_details['title']}"
+        title_str = f"DRAFT - {event_details['title']}"
     content_str, allowed_mentions = "", {"parse": ["users", "roles"]}
     if request.mention_accepted and event_id:
         signups = await db.get_signups_for_event(event_id)
@@ -272,7 +289,7 @@ async def send_squad_embed(
         fields.append({"name": f"__**{squad.name}**__", "value": value, "inline": True})
     embed_payload = {
         "content": content_str,
-        "embeds": [{"title": f"{title_str}{event_time_str}", "description": "The following squads have been finalized for the event.", "color": 15844367, "fields": fields, "footer": {"text": f"Reserves: {', '.join(reserves_list) if reserves_list else 'None'}"}}],
+        "embeds": [{"title": f"{title_str}{event_time_str}", "description": "The following draft has been prepared for feedback.", "color": 15844367, "fields": fields, "footer": {"text": f"Reserves: {', '.join(reserves_list) if reserves_list else 'None'}"}}],
         "allowed_mentions": allowed_mentions
     }
     async with httpx.AsyncClient() as client:
