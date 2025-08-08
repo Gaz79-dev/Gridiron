@@ -323,7 +323,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
     promoteModalCancelBtn.addEventListener('click', () => promoteModal.classList.add('hidden'));
 
-    // --- FIX START: The form handler now expects a squad list and updates the UI accordingly ---
     promoteForm.addEventListener('submit', async (e) => {
         e.preventDefault();
         const eventId = eventDropdown.value;
@@ -335,18 +334,14 @@ document.addEventListener('DOMContentLoaded', () => {
             const response = await fetch(`/api/events/${eventId}/promote-tentative`, {
                 method: 'POST',
                 headers: { ...headers, 'Content-Type': 'application/json' },
-                body: JSON.stringify({ user_id: parseInt(userId), new_role_name: newRoleName })
+                // --- FIX: Send user_id as a string, removing parseInt ---
+                body: JSON.stringify({ user_id: userId, new_role_name: newRoleName })
             });
 
             if (await handleApiError(response)) return;
 
-            // The API now returns the full updated squad list
             const updatedSquads = await response.json();
-
-            // Re-fetch the roster to update the "Accepted" list
             await fetchAndDisplayRoster(eventId);
-            
-            // Re-render the workshop with the new squad data
             renderWorkshop(updatedSquads);
 
             promoteModal.classList.add('hidden');
@@ -357,7 +352,6 @@ document.addEventListener('DOMContentLoaded', () => {
             console.error(err);
         }
     });
-    // --- FIX END ---
 
 
     modalCancelBtn.addEventListener('click', () => editModal.classList.add('hidden'));
