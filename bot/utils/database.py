@@ -22,6 +22,59 @@ class RsvpStatus:
     TENTATIVE = "Tentative"
     DECLINED = "Declined"
 
+# --- FIX START: New helper function to send log messages ---
+async def _send_rsvp_log_message(user_id: int, event_title: str, old_status: str, new_status: str):
+    """Sends a formatted log message to the Discord channel specified in .env."""
+    log_channel_id = os.getenv("EVENT_LOG_CHANNEL_ID")
+    bot_token = os.getenv("DISCORD_TOKEN")
+    guild_id = os.getenv("GUILD_ID")
+
+    if not all([log_channel_id, bot_token, guild_id]):
+        print("Log channel, bot token, or guild ID not configured. Skipping log message.")
+        return
+
+    headers = {"Authorization": f"Bot {bot_token}"}
+    member_name = f"ID: {user_id}"
+    
+    # Fetch member details to get their display name
+    async with httpx.AsyncClient() as client:
+        try:
+            url = f"https://discord.com/api/v10/guilds/{guild_id}/members/{user_id}"
+            response = await client.get(url, headers=headers)
+            if response.is_success:
+                member_data = response.json()
+                member_name = member_data.get('nick') or member_data['user'].get('global_name') or member_data['user']['username']
+        except Exception as e:
+            print(f"Could not fetch member name for logging: {e}")
+
+    # Define color and message based on status change
+    color = 0
+    if new_status == RsvpStatus.ACCEPTED:
+        color = 3066993  # Green
+    elif new_status in [RsvpStatus.TENTATIVE, RsvpStatus.DECLINED]:
+        color = 15158332 # Red
+
+    embed = {
+        "title": "RSVP Status Change",
+        "color": color,
+        "fields": [
+            {"name": "Player", "value": member_name, "inline": True},
+            {"name": "Event", "value": event_title, "inline": True},
+            {"name": "Status Change", "value": f"**{old_status or 'None'}** → **{new_status}**", "inline": False},
+        ],
+        "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat()
+    }
+
+    # Send the message to the log channel
+    try:
+        url = f"https://discord.com/api/v10/channels/{log_channel_id}/messages"
+        async with httpx.AsyncClient() as client:
+            response = await client.post(url, headers=headers, json={"embeds": [embed]})
+            response.raise_for_status()
+    except Exception as e:
+        print(f"Failed to send log message to Discord: {e}")
+# --- FIX END ---
+
 class Database:
     def __init__(self):
         self.pool = None
@@ -298,6 +351,7 @@ class Database:
             row = await conn.fetchrow("SELECT * FROM events WHERE message_id = $1;", message_id)
             return dict(row) if row else None
 
+    # --- FIX START: Integrate logging into the main RSVP function ---
     async def set_rsvp(self, event_id: int, user_id: int, new_status: str):
         async with self.pool.acquire() as connection:
             async with connection.transaction():
@@ -335,6 +389,18 @@ class Database:
 
                 await self.update_player_stats(user_id, old_status, new_status)
 
+                # Check if this status change is log-worthy
+                is_log_worthy = (old_status == RsvpStatus.ACCEPTED and new_status in [RsvpStatus.TENTATIVE, RsvpStatus.DECLINED]) or \
+                                (old_status in [RsvpStatus.TENTATIVE, RsvpStatus.DECLINED] and new_status == RsvpStatus.ACCEPTED)
+
+                if is_log_worthy:
+                    await _send_rsvp_log_message(
+                        user_id=user_id,
+                        event_title=event_and_signup_data['title'],
+                        old_status=old_status,
+                        new_status=new_status
+                    )
+
                 if new_status == RsvpStatus.ACCEPTED:
                     await connection.execute(
                         """
@@ -356,6 +422,7 @@ class Database:
 
                 # Flag the event for an embed update since the roster has changed
                 await self.flag_event_for_embed_update(event_id)
+    # --- FIX END ---
 
     async def get_upcoming_events(self) -> List[Dict]:
         query = "SELECT * FROM events WHERE deleted_at IS NULL AND (is_recurring = FALSE OR parent_event_id IS NOT NULL) AND COALESCE(end_time, event_time + INTERVAL '2 hours') > (NOW() AT TIME ZONE 'utc' - INTERVAL '12 hours');"
@@ -666,7 +733,6 @@ class Database:
         """Clears the embed update flag for an event."""
         await self.pool.execute("UPDATE events SET needs_embed_update = FALSE WHERE event_id = $1;", event_id)
 
-    # --- FIX START: Explicitly cast user_id to text to prevent precision loss ---
     async def get_squads_with_members(self, event_id: int) -> List[Dict]:
         GUILD_ID, BOT_TOKEN = os.getenv("GUILD_ID"), os.getenv("DISCORD_TOKEN")
         headers = {"Authorization": f"Bot {BOT_TOKEN}"}
@@ -725,7 +791,6 @@ class Database:
                 squad['members'] = processed_members
                 processed_squads.append(squad)
         return processed_squads
-    # --- FIX END ---
 
     async def delete_squads_for_event(self, event_id: int):
         async with self.pool.acquire() as connection:
