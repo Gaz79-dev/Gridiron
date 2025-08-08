@@ -5,16 +5,13 @@ document.addEventListener('DOMContentLoaded', () => {
         return;
     }
 
-    // --- FIX: Add a guard clause to ensure this script only runs on the players.html page ---
     const playerRatingsBody = document.getElementById('player-ratings-body');
     if (!playerRatingsBody) {
-        return; // Stop execution if the main table body isn't found
+        return; 
     }
 
     const headers = { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' };
-    
-    const playerSearchInput = document.getElementById('player-search-input');
-    let allPlayers = []; // Cache for player data
+    let allPlayers = [];
 
     const renderPlayerTable = (players) => {
         playerRatingsBody.innerHTML = '';
@@ -43,12 +40,22 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     };
 
+    const setupSearch = () => {
+        const playerSearchInput = document.getElementById('player-search-input');
+        if (playerSearchInput) {
+            playerSearchInput.addEventListener('input', () => {
+                const searchTerm = playerSearchInput.value.toLowerCase();
+                const filteredPlayers = allPlayers.filter(p => p.display_name.toLowerCase().includes(searchTerm));
+                renderPlayerTable(filteredPlayers);
+            });
+        }
+    };
+
     const loadPlayers = async () => {
         try {
             const response = await fetch('/api/players', { headers });
             if (!response.ok) throw new Error('Failed to load players');
             allPlayers = await response.json();
-            // Sort by active status first, then by name
             allPlayers.sort((a, b) => {
                 if (a.is_active === b.is_active) {
                     return a.display_name.localeCompare(b.display_name);
@@ -56,19 +63,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 return a.is_active ? -1 : 1;
             });
             renderPlayerTable(allPlayers);
+            // --- FIX: Set up the search functionality AFTER the main data has been loaded ---
+            setupSearch();
         } catch (error) {
             playerRatingsBody.innerHTML = `<tr><td colspan="4" class="text-center p-4 text-red-400">${error.message}</td></tr>`;
         }
     };
-
-    // --- FIX: Add a check to ensure the search input exists before adding an event listener ---
-    if (playerSearchInput) {
-        playerSearchInput.addEventListener('input', () => {
-            const searchTerm = playerSearchInput.value.toLowerCase();
-            const filteredPlayers = allPlayers.filter(p => p.display_name.toLowerCase().includes(searchTerm));
-            renderPlayerTable(filteredPlayers);
-        });
-    }
 
     playerRatingsBody.addEventListener('click', async (e) => {
         if (e.target.classList.contains('save-rating-btn')) {
