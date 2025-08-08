@@ -5,7 +5,7 @@ import asyncio
 import traceback
 from dotenv import load_dotenv
 
-# --- FIX: The sys.path hack is removed. Imports are now relative to the project root. ---
+# Use absolute imports from the 'bot' package root
 from bot.utils.database import Database
 
 # Load environment variables from .env file
@@ -21,11 +21,13 @@ class EventBot(commands.Bot):
         """The setup_hook is called when the bot logs in."""
         print("Bot setup hook running...")
         
+        # --- FIX: Add the new admin cog to the list ---
         cogs_to_load = [
             'bot.cogs.event_management',
             'bot.cogs.scheduler',
             'bot.cogs.setup',
-            'bot.cogs.sort'
+            'bot.cogs.sort',
+            'bot.cogs.admin'  # New cog for admin commands
         ]
 
         # Load each cog
@@ -54,35 +56,51 @@ async def main():
     await db.connect()
     
     intents = discord.Intents.default()
-    intents.members = True
+    intents.members = True  # Ensure the members intent is enabled
     intents.message_content = True
     
     bot = EventBot(db=db, command_prefix="!", intents=intents)
 
-    # --- START: New Global Command Check ---
+    # --- FIX START: Add event listeners for member join/leave ---
+    @bot.event
+    async def on_member_join(member: discord.Member):
+        """Automatically adds new members to the player database."""
+        if not member.bot:
+            try:
+                await db.add_or_update_server_member(member.id)
+                print(f"Added new member to database: {member.display_name} (ID: {member.id})")
+            except Exception as e:
+                print(f"Error adding member {member.id} to database: {e}")
+
+    @bot.event
+    async def on_member_remove(member: discord.Member):
+        """Automatically marks leaving members as inactive in the player database."""
+        if not member.bot:
+            try:
+                await db.deactivate_server_member(member.id)
+                print(f"Deactivated member in database: {member.display_name} (ID: {member.id})")
+            except Exception as e:
+                print(f"Error deactivating member {member.id} in database: {e}")
+    # --- FIX END ---
+
     @bot.check
     async def global_role_check(interaction: discord.Interaction):
-        # Load the configured role IDs from the .env file.
         allowed_role_ids = set()
-        for i in range(1, 6): # Checks for ALLOWED_ROLE_ID_1 through 5
+        for i in range(1, 6):
             role_id_str = os.getenv(f"ALLOWED_ROLE_ID_{i}")
             if role_id_str and role_id_str.isdigit():
                 allowed_role_ids.add(int(role_id_str))
 
-        # If no roles are configured in the .env file, allow everyone.
         if not allowed_role_ids:
             return True
 
-        # Ensure the command is being run by a member in a server, not a user in a DM.
         if not isinstance(interaction.user, discord.Member):
             return False
             
-        # Check if the user has any of the allowed roles.
         user_role_ids = {role.id for role in interaction.user.roles}
         if user_role_ids.intersection(allowed_role_ids):
-            return True # User has at least one of the required roles.
+            return True
         
-        # If the check fails, send an ephemeral message and block the command.
         try:
             await interaction.response.send_message(
                 "You do not have the required role to use bot commands.", 
@@ -90,11 +108,9 @@ async def main():
                 delete_after=15
             )
         except discord.InteractionResponded:
-            # If the interaction was already responded to (e.g., a deferred modal), do nothing.
             pass
             
         return False
-    # --- END: New Global Command Check ---
 
     token = os.getenv("DISCORD_TOKEN")
     if not token:
@@ -110,7 +126,6 @@ async def main():
         await db.close()
         await bot.close()
         print("Bot cleanup complete.")
-
 
 if __name__ == "__main__":
     try:
