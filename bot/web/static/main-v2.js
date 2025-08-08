@@ -24,7 +24,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const workshopSection = document.getElementById('workshop-section');
     const workshopArea = document.getElementById('workshop-area');
     const channelDropdown = document.getElementById('channel-dropdown');
-    const sendBtn = document.getElementById('send-btn');
+    // --- FIX: Update button selectors ---
+    const sendDraftBtn = document.getElementById('send-draft-btn');
+    const finalizeBtn = document.getElementById('finalize-btn');
     const refreshRosterBtn = document.getElementById('refresh-roster-btn');
     const adminLink = document.getElementById('admin-link');
     const logoutBtn = document.getElementById('logout-btn');
@@ -33,7 +35,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const mainContent = document.getElementById('main-content');
     const clearLockBtn = document.getElementById('clear-lock-btn');
     const templateDropdown = document.getElementById('template-dropdown');
-    // --- FIX: Get the new counter element ---
     const teamSizeCounter = document.getElementById('team-size-counter');
 
     // Modals
@@ -130,7 +131,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
     window.addEventListener('beforeunload', () => releaseLock(eventDropdown.value));
 
-    // --- Template and Form Logic ---
     const populateTemplateDropdown = () => {
         templateDropdown.innerHTML = '<option value="">-- Manual Build --</option>';
         SQUAD_TEMPLATES.forEach(template => {
@@ -206,7 +206,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    // --- Other Event Listeners ---
     refreshRosterBtn.addEventListener('click', async () => {
         const eventId = eventDropdown.value;
         if (!eventId || currentSquads.length === 0) return;
@@ -244,22 +243,21 @@ document.addEventListener('DOMContentLoaded', () => {
         window.location.href = '/login';
     });
 
-    sendBtn.addEventListener('click', async () => {
+    // --- FIX START: Add event listeners for new buttons ---
+    const handleSend = async (url, button, successMessage) => {
         const selectedChannelId = channelDropdown.value;
         const eventId = eventDropdown.value;
 
         if (!selectedChannelId || currentSquads.length === 0 || !eventId) {
-            alert('Please select an event and channel, and build squads first.');
+            alert('Please select an event and channel, and ensure squads are built.');
             return;
         }
 
-        sendBtn.textContent = 'Sending...';
-        sendBtn.disabled = true;
+        button.textContent = 'Sending...';
+        button.disabled = true;
 
         try {
-            const url = `/api/events/send-embed?event_id=${eventId}`;
             const mentionAttendees = document.getElementById('mention-attendees-checkbox').checked;
-
             const response = await fetch(url, {
                 method: 'POST',
                 headers: { ...headers, 'Content-Type': 'application/json' },
@@ -274,17 +272,27 @@ document.addEventListener('DOMContentLoaded', () => {
                 throw new Error(`Server responded with status: ${response.status}`);
             }
 
-            alert('Squad embed sent successfully!');
-            await releaseLock(eventId);
-            setLockedState(true, 'Squads sent. This event is now read-only.');
-
+            alert(successMessage);
         } catch (error) {
-            console.error("Error in sendBtn listener:", error.message);
+            console.error("Error sending embed:", error.message);
         } finally {
-            sendBtn.textContent = 'Send to Discord Channel';
-            sendBtn.disabled = false;
+            button.textContent = button.id === 'finalize-btn' ? 'Finalize Squads & Learn' : 'Send Draft Embed';
+            button.disabled = false;
         }
+    };
+
+    sendDraftBtn.addEventListener('click', () => {
+        const eventId = eventDropdown.value;
+        handleSend(`/api/events/send-draft-embed?event_id=${eventId}`, sendDraftBtn, 'Draft embed sent successfully!');
     });
+
+    finalizeBtn.addEventListener('click', async () => {
+        const eventId = eventDropdown.value;
+        await handleSend(`/api/events/${eventId}/finalize-squads`, finalizeBtn, 'Finalized squads sent and AI learning initiated!');
+        await releaseLock(eventId);
+        setLockedState(true, 'Squads finalized. This event is now read-only.');
+    });
+    // --- FIX END ---
 
     document.body.addEventListener('click', (e) => {
         const editBtn = e.target.closest('.edit-member-btn');
@@ -406,7 +414,6 @@ document.addEventListener('DOMContentLoaded', () => {
         } catch (err) { alert("Error: Could not update role."); }
     });
 
-    // --- Initial Page Load ---
     Promise.all([
         fetch('/api/users/me', { headers }),
         fetch('/api/squads/roles', { headers }),
@@ -534,14 +541,12 @@ document.addEventListener('DOMContentLoaded', () => {
         } catch(err) { console.error("Could not load channels", err)}
     }
 
-    // --- FIX START: Update team size counter within renderWorkshop ---
     function renderWorkshop(squads) {
         currentSquads = squads;
         workshopArea.innerHTML = '';
-        let teamSize = 0; // Initialize counter
+        let teamSize = 0;
 
         (squads || []).forEach(squad => {
-            // Add to team size if not a reserves squad
             if (squad.squad_type !== 'Reserves') {
                 teamSize += squad.members.length;
             }
@@ -576,7 +581,6 @@ document.addEventListener('DOMContentLoaded', () => {
             workshopArea.appendChild(squadBox);
         });
 
-        // Update the counter's text
         teamSizeCounter.textContent = teamSize;
 
         renderTentativePlayers();
@@ -603,5 +607,4 @@ document.addEventListener('DOMContentLoaded', () => {
         workshopSection.classList.remove('hidden');
         loadChannels();
     }
-    // --- FIX END ---
 });
