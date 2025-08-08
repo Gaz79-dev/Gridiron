@@ -666,31 +666,48 @@ class Database:
         """Clears the embed update flag for an event."""
         await self.pool.execute("UPDATE events SET needs_embed_update = FALSE WHERE event_id = $1;", event_id)
 
+    # --- FIX START: Explicitly cast user_id to text to prevent precision loss ---
     async def get_squads_with_members(self, event_id: int) -> List[Dict]:
         GUILD_ID, BOT_TOKEN = os.getenv("GUILD_ID"), os.getenv("DISCORD_TOKEN")
         headers = {"Authorization": f"Bot {BOT_TOKEN}"}
-        query = "SELECT s.squad_id, s.name, s.squad_type, COALESCE(json_agg(sm.*) FILTER (WHERE sm.squad_member_id IS NOT NULL), '[]') as members FROM squads s LEFT JOIN squad_members sm ON s.squad_id = sm.squad_id WHERE s.event_id = $1 GROUP BY s.squad_id ORDER BY s.squad_id;"
+        
+        # This query now builds a JSON object for each member within the database,
+        # casting the user_id to text to preserve its precision.
+        query = """
+            SELECT s.squad_id, s.name, s.squad_type, 
+                   COALESCE(
+                       json_agg(
+                           json_build_object(
+                               'squad_member_id', sm.squad_member_id,
+                               'user_id', sm.user_id::text,  -- Cast to text here
+                               'assigned_role_name', sm.assigned_role_name,
+                               'startup_task', sm.startup_task
+                           )
+                       ) FILTER (WHERE sm.squad_member_id IS NOT NULL), 
+                       '[]'
+                   ) as members
+            FROM squads s
+            LEFT JOIN squad_members sm ON s.squad_id = sm.squad_id
+            WHERE s.event_id = $1
+            GROUP BY s.squad_id
+            ORDER BY s.squad_id;
+        """
 
-        async with self.pool.acquire() as connection: records = await connection.fetch(query, event_id)
+        async with self.pool.acquire() as connection:
+            records = await connection.fetch(query, event_id)
 
         if not GUILD_ID or not BOT_TOKEN:
-            processed_squads = []
-            for record in records:
-                squad = dict(record)
-                for member_data in squad.get('members', []):
-                    # Ensure 'display_name' key exists as a fallback
-                    member_data['display_name'] = f"User ID: {member_data['user_id']}"
-                processed_squads.append(squad)
-            return processed_squads
+            return [dict(record) for record in records]
 
         processed_squads = []
         async with httpx.AsyncClient() as client:
             for record in records:
-                squad, processed_members = dict(record), []
+                squad = dict(record)
+                processed_members = []
                 for member_data in squad.get('members', []):
-                    member = dict(member_data)
-                    user_id = member['user_id']
-                    display_name = f"User ID: {user_id}" # Default fallback name
+                    # The user_id from the DB is now a string, so no precision is lost
+                    user_id = member_data['user_id']
+                    display_name = f"User ID: {user_id}"
                     url = f"https://discord.com/api/v10/guilds/{GUILD_ID}/members/{user_id}"
                     try:
                         response = await client.get(url, headers=headers)
@@ -698,17 +715,17 @@ class Database:
                             api_member_data = response.json()
                             display_name = api_member_data.get('nick') or api_member_data['user'].get('global_name') or api_member_data['user']['username']
                         elif response.status_code == 404:
-                             display_name = f"Left Server ({user_id})"
-                        else:
-                            print(f"Failed to fetch member {user_id}. Status: {response.status_code}")
+                            display_name = f"Left Server ({user_id})"
                     except Exception as e:
                         print(f"Exception while fetching member {user_id}: {e}")
 
-                    member['display_name'] = display_name
-                    processed_members.append(member)
+                    member_data['display_name'] = display_name
+                    processed_members.append(member_data)
+                
                 squad['members'] = processed_members
                 processed_squads.append(squad)
         return processed_squads
+    # --- FIX END ---
 
     async def delete_squads_for_event(self, event_id: int):
         async with self.pool.acquire() as connection:
