@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 # Use absolute imports from the 'bot' package root
 from bot.utils.database import Database
-# --- FIX: Add the new 'players' router ---
+# --- FIX: Import the new 'players' router ---
 from bot.api.routers import events, users, squads, stats, players
 from bot.api.routers import templates as templates_router
 from bot.api import auth
@@ -95,3 +95,8 @@ async def player_detail_page(request: Request, user_id: int):
 @app.get("/events", tags=["HTML"], summary="Serves the event management page")
 async def events_page(request: Request):
     return templates.TemplateResponse("events.html", {"request": request})
+
+# --- FIX: Add the new route for the players page ---
+@app.get("/players", tags=["HTML"], summary="Serves the player ratings page")
+async def players_page(request: Request):
+    return templates.TemplateResponse("players.html", {"request": request})
