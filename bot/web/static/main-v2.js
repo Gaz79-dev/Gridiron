@@ -17,6 +17,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // --- ELEMENT SELECTORS ---
     const eventDropdown = document.getElementById('event-dropdown');
+    
+    // --- FIX: Add a guard clause to ensure the script only runs on the squad builder page ---
+    // If the main event dropdown doesn't exist, we're not on the right page, so stop execution.
+    if (!eventDropdown) {
+        return;
+    }
+
     const rosterAndBuildSection = document.getElementById('roster-and-build');
     const rosterList = document.getElementById('roster-list');
     const buildForm = document.getElementById('build-form');
@@ -24,7 +31,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const workshopSection = document.getElementById('workshop-section');
     const workshopArea = document.getElementById('workshop-area');
     const channelDropdown = document.getElementById('channel-dropdown');
-    // --- FIX: Update button selectors ---
     const sendDraftBtn = document.getElementById('send-draft-btn');
     const finalizeBtn = document.getElementById('finalize-btn');
     const refreshRosterBtn = document.getElementById('refresh-roster-btn');
@@ -243,7 +249,6 @@ document.addEventListener('DOMContentLoaded', () => {
         window.location.href = '/login';
     });
 
-    // --- FIX START: Add event listeners for new buttons ---
     const handleSend = async (url, button, successMessage) => {
         const selectedChannelId = channelDropdown.value;
         const eventId = eventDropdown.value;
@@ -292,7 +297,6 @@ document.addEventListener('DOMContentLoaded', () => {
         await releaseLock(eventId);
         setLockedState(true, 'Squads finalized. This event is now read-only.');
     });
-    // --- FIX END ---
 
     document.body.addEventListener('click', (e) => {
         const editBtn = e.target.closest('.edit-member-btn');
