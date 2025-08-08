@@ -47,11 +47,11 @@ class Event(BaseModel):
     end_time: Optional[datetime] = None
 
 class Signup(BaseModel):
-    user_id: int
+    # --- FIX: user_id is now a string to preserve precision ---
+    user_id: str
     display_name: str
     role_name: Optional[str] = "Unassigned"
     subclass_name: Optional[str] = "N/A"
-    # --- NEW: Add rsvp_status to the model ---
     rsvp_status: str
 
 class Channel(BaseModel):
@@ -62,7 +62,8 @@ class Channel(BaseModel):
 class SquadMember(BaseModel):
     model_config = ConfigDict(from_attributes=True, extra='ignore')
     squad_member_id: int
-    user_id: int
+    # --- FIX: user_id is now a string to preserve precision ---
+    user_id: str
     assigned_role_name: str
     display_name: Optional[str] = None
     startup_task: Optional[str] = None
@@ -103,7 +104,8 @@ class StartupTaskUpdateRequest(BaseModel):
     task: Optional[str] = None
 
 class PromoteRequest(BaseModel):
-    user_id: int
+    # --- FIX: user_id is now a string to preserve precision ---
+    user_id: str
     new_role_name: str
 
 # --- NEW: Squad Template Models ---
