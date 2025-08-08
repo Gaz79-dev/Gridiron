@@ -57,7 +57,6 @@
                 <div class="md:col-span-2 bg-gray-800 p-6 rounded-lg shadow-md">
                     <h2 class="text-xl font-semibold mb-4 text-white">Step 2: Define Squads</h2>
                     
-                    <!-- NEW: Template selection dropdown -->
                     <div class="mb-4">
                         <label for="template-dropdown" class="block text-sm font-medium">Load Squad Template</label>
                         <select id="template-dropdown" class="w-full p-2 bg-gray-700 border border-gray-600 rounded-md mt-1">
@@ -65,7 +64,6 @@
                         </select>
                     </div>
                     
-                    <!-- Form is now dynamically generated -->
                     <form id="build-form" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 border-t border-gray-700 pt-4">
                         <!-- JS will inject squad count inputs here -->
                     </form>
@@ -77,7 +75,13 @@
 
             <section id="workshop-section" class="hidden bg-gray-800 p-6 rounded-lg shadow-md">
                 <div class="flex justify-between items-center mb-4">
-                    <h2 class="text-xl font-semibold text-white">Step 3: Finalize and Send</h2>
+                    <div>
+                        <h2 class="text-xl font-semibold text-white">Step 3: Finalize and Send</h2>
+                        <!-- FIX: Add the team size counter element -->
+                        <p class="text-sm text-gray-400 mt-1">
+                            Team Size: <span id="team-size-counter" class="font-bold text-white">0</span>
+                        </p>
+                    </div>
                     <button id="refresh-roster-btn" class="bg-purple-600 hover:bg-purple-700 text-white font-bold py-2 px-4 rounded-md text-sm">
                         Refresh Roster
                     </button>
