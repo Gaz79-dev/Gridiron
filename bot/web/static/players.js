@@ -5,10 +5,10 @@ document.addEventListener('DOMContentLoaded', () => {
         return;
     }
 
-    // This script is only for the players.html page.
+    // --- FIX: Add a guard clause to ensure this script only runs on the players.html page ---
     const playerRatingsBody = document.getElementById('player-ratings-body');
     if (!playerRatingsBody) {
-        return;
+        return; // Stop execution if the main table body isn't found
     }
 
     const headers = { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' };
