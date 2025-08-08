@@ -3,6 +3,7 @@ from discord.ext import tasks, commands
 import datetime
 import pytz
 import traceback
+import os
 from dateutil.relativedelta import relativedelta
 
 # Use relative import to go up one level to the 'bot' package root
@@ -23,6 +24,8 @@ class Scheduler(commands.Cog):
         self.sync_event_threads.start()
         self.process_tentatives.start()
         self.update_event_embeds.start()
+        # --- FIX: Start the new player sync task ---
+        self.sync_player_database.start()
 
     def cog_unload(self):
         """Cleanly cancels all tasks when the cog is unloaded."""
@@ -34,6 +37,52 @@ class Scheduler(commands.Cog):
         self.sync_event_threads.cancel()
         self.process_tentatives.cancel()
         self.update_event_embeds.cancel()
+        # --- FIX: Cancel the new player sync task ---
+        self.sync_player_database.cancel()
+
+    # --- FIX START: New background task to sync players with a specific role ---
+    @tasks.loop(minutes=10)
+    async def sync_player_database(self):
+        """Periodically syncs the player database with members of a specific role."""
+        print("\n[Scheduler] Running sync_player_database loop...")
+        guild_id_str = os.getenv("GUILD_ID")
+        role_id_str = os.getenv("PLAYER_SYNC_ROLE_ID")
+
+        if not guild_id_str or not role_id_str:
+            print("[Player Sync] GUILD_ID or PLAYER_SYNC_ROLE_ID not set in .env. Skipping sync.")
+            return
+
+        try:
+            guild_id = int(guild_id_str)
+            role_id = int(role_id_str)
+        except ValueError:
+            print("[Player Sync] GUILD_ID or PLAYER_SYNC_ROLE_ID is not a valid integer. Skipping sync.")
+            return
+            
+        guild = self.bot.get_guild(guild_id)
+        if not guild:
+            print(f"[Player Sync] Could not find guild with ID {guild_id}. Skipping sync.")
+            return
+
+        role = guild.get_role(role_id)
+        if not role:
+            print(f"[Player Sync] Could not find role with ID {role_id} in guild {guild.name}. Skipping sync.")
+            return
+
+        # Get all non-bot members who have the specified role
+        member_ids_with_role = [member.id for member in role.members if not member.bot]
+
+        if not member_ids_with_role:
+            print("[Player Sync] No members found with the specified role. Syncing with an empty list.")
+        
+        try:
+            await self.db.sync_all_server_members(member_ids_with_role)
+            print(f"[Player Sync] Successfully synced {len(member_ids_with_role)} members from role '{role.name}'.")
+        except Exception as e:
+            print(f"[Player Sync] FATAL ERROR during database sync operation: {e}")
+            traceback.print_exc()
+
+    # --- FIX END ---
 
     @tasks.loop(seconds=15)
     async def update_event_embeds(self):
@@ -53,7 +102,6 @@ class Scheduler(commands.Cog):
                     channel = self.bot.get_channel(event['channel_id']) or await self.bot.fetch_channel(event['channel_id'])
                     message = await channel.fetch_message(event['message_id'])
 
-                    # Recreate the embed with the latest data
                     new_embed = await create_event_embed(self.bot, event_id, self.db)
 
                     await message.edit(embed=new_embed)
@@ -190,7 +238,6 @@ class Scheduler(commands.Cog):
             traceback.print_exc()
 
     async def process_thread_creation(self, event: dict):
-        """Creates a single event discussion thread and adds/notifies accepted members."""
         event_id = event['event_id']
         print(f"  [Process:{event_id}] Starting thread creation process.")
         try:
@@ -201,12 +248,9 @@ class Scheduler(commands.Cog):
 
             print(f"  [Process:{event_id}] Found parent channel: '{parent_channel.name}'.")
 
-            # --- START: Updated Naming Convention ---
             event_time = event['event_time']
-            # Format the date as "Mon Day" (e.g., Aug 09)
             date_str = event_time.strftime('%b %d')
             thread_name = f"{event['title']} - {date_str}"
-            # --- END: Updated Naming Convention ---
 
             print(f"  [Process:{event_id}] Attempting to create a private thread with name '{thread_name}'...")
             discussion_thread = await parent_channel.create_thread(
@@ -277,14 +321,11 @@ class Scheduler(commands.Cog):
         now = datetime.datetime.now(pytz.utc)
         latest_child = await self.db.get_latest_child_event(parent_event['event_id'])
 
-        # This logic handles the very first occurrence after the parent is made
         if not latest_child:
-            # Check if it's within the creation window based on the parent's time
             recreation_window = parent_event['event_time'] - datetime.timedelta(hours=parent_event.get('recreation_hours', 168))
             if now < recreation_window:
                 return
         else:
-            # For all subsequent occurrences, check if the latest child has finished
             if latest_child['end_time'] > now:
                 return
 
@@ -301,23 +342,14 @@ class Scheduler(commands.Cog):
         child_data['is_recurring'] = False
         child_data['parent_event_id'] = parent_event['event_id']
 
-        # --- START OF FIX ---
-        # 1. Determine the correct channel ID. Use the latest child's channel if it exists,
-        #    otherwise fall back to the parent's default. This handles cases where events were moved.
         target_channel_id = latest_child['channel_id'] if latest_child else parent_event['channel_id']
-
-        # 2. Explicitly overwrite the channel ID in the data payload to ensure the new
-        #    database record is correct, overriding any stale ID copied from the parent.
         child_data['channel_id'] = target_channel_id
-        # --- END OF FIX ---
 
         try:
-            # 3. Use the corrected `target_channel_id` when creating the new event record.
             child_id = await self.db.create_event(
                 parent_event['guild_id'], target_channel_id, parent_event['creator_id'], child_data
             )
 
-            # 4. Use the corrected `target_channel_id` to fetch the channel for posting.
             target_channel = self.bot.get_channel(target_channel_id) or await self.bot.fetch_channel(target_channel_id)
 
             embed = await create_event_embed(self.bot, child_id, self.db)
@@ -356,7 +388,6 @@ class Scheduler(commands.Cog):
             events_to_delete = await self.db.get_finished_events_for_cleanup()
             for event in events_to_delete:
                 print(f"Cleaning up finished event ID: {event['event_id']}")
-                # Delete Discord assets first
                 if event.get('message_id') and event.get('channel_id'):
                     try:
                         channel = self.bot.get_channel(event['channel_id']) or await self.bot.fetch_channel(event['channel_id'])
@@ -372,7 +403,6 @@ class Scheduler(commands.Cog):
                     except discord.NotFound: pass
                     except Exception as e: print(f"Could not delete thread for event {event['event_id']}: {e}")
 
-                # Hard delete the event from the database, which will cascade to signups and squads
                 await self.db.delete_event(event['event_id'])
 
             if len(events_to_delete) > 0:
@@ -388,6 +418,8 @@ class Scheduler(commands.Cog):
     @cleanup_finished_events.before_loop
     @purge_deleted_events.before_loop
     @update_event_embeds.before_loop
+    # --- FIX: Add the new sync task to the before_loop wait ---
+    @sync_player_database.before_loop
     async def before_tasks(self):
         """Waits until the bot is fully logged in and ready before starting loops."""
         print("[Scheduler Tasks] Waiting for bot to be ready...")
