@@ -61,11 +61,14 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     };
 
-    playerSearchInput.addEventListener('input', () => {
-        const searchTerm = playerSearchInput.value.toLowerCase();
-        const filteredPlayers = allPlayers.filter(p => p.display_name.toLowerCase().includes(searchTerm));
-        renderPlayerTable(filteredPlayers);
-    });
+    // --- FIX: Add a check to ensure the search input exists before adding an event listener ---
+    if (playerSearchInput) {
+        playerSearchInput.addEventListener('input', () => {
+            const searchTerm = playerSearchInput.value.toLowerCase();
+            const filteredPlayers = allPlayers.filter(p => p.display_name.toLowerCase().includes(searchTerm));
+            renderPlayerTable(filteredPlayers);
+        });
+    }
 
     playerRatingsBody.addEventListener('click', async (e) => {
         if (e.target.classList.contains('save-rating-btn')) {
