@@ -13,7 +13,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const headers = { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' };
     
-    // --- FIX: Remove the sync button as it's now automated ---
     const playerSearchInput = document.getElementById('player-search-input');
     let allPlayers = []; // Cache for player data
 
