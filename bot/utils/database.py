@@ -5,6 +5,7 @@ import json
 import httpx
 from typing import List, Optional, Dict
 import uuid
+from collections import defaultdict
 
 # Static Definitions
 ROLES = ["Commander", "Infantry", "Armour", "Recon", "Pathfinders", "Artillery"]
@@ -22,9 +23,7 @@ class RsvpStatus:
     TENTATIVE = "Tentative"
     DECLINED = "Declined"
 
-# --- FIX START: New helper function to send log messages ---
 async def _send_rsvp_log_message(user_id: int, event_title: str, old_status: str, new_status: str):
-    """Sends a formatted log message to the Discord channel specified in .env."""
     log_channel_id = os.getenv("EVENT_LOG_CHANNEL_ID")
     bot_token = os.getenv("DISCORD_TOKEN")
     guild_id = os.getenv("GUILD_ID")
@@ -36,7 +35,6 @@ async def _send_rsvp_log_message(user_id: int, event_title: str, old_status: str
     headers = {"Authorization": f"Bot {bot_token}"}
     member_name = f"ID: {user_id}"
     
-    # Fetch member details to get their display name
     async with httpx.AsyncClient() as client:
         try:
             url = f"https://discord.com/api/v10/guilds/{guild_id}/members/{user_id}"
@@ -47,7 +45,6 @@ async def _send_rsvp_log_message(user_id: int, event_title: str, old_status: str
         except Exception as e:
             print(f"Could not fetch member name for logging: {e}")
 
-    # Define color and message based on status change
     color = 0
     if new_status == RsvpStatus.ACCEPTED:
         color = 3066993  # Green
@@ -65,7 +62,6 @@ async def _send_rsvp_log_message(user_id: int, event_title: str, old_status: str
         "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat()
     }
 
-    # Send the message to the log channel
     try:
         url = f"https://discord.com/api/v10/channels/{log_channel_id}/messages"
         async with httpx.AsyncClient() as client:
@@ -73,7 +69,6 @@ async def _send_rsvp_log_message(user_id: int, event_title: str, old_status: str
             response.raise_for_status()
     except Exception as e:
         print(f"Failed to send log message to Discord: {e}")
-# --- FIX END ---
 
 class Database:
     def __init__(self):
@@ -140,15 +135,26 @@ class Database:
                         UNIQUE(squad_id, user_id)
                     );
                 """)
+                
+                # --- FIX START: Update player_stats table for AI features ---
                 await connection.execute("""
                     CREATE TABLE IF NOT EXISTS player_stats (
                         user_id BIGINT PRIMARY KEY,
                         accepted_count INT DEFAULT 0,
                         tentative_count INT DEFAULT 0,
                         declined_count INT DEFAULT 0,
-                        last_signup_date TIMESTAMP WITH TIME ZONE
+                        last_signup_date TIMESTAMP WITH TIME ZONE,
+                        rating INT DEFAULT 50,
+                        is_active BOOLEAN DEFAULT TRUE,
+                        role_affinities JSONB DEFAULT '{}'::jsonb
                     );
                 """)
+                # Add columns if they don't exist for graceful migration
+                await connection.execute("ALTER TABLE player_stats ADD COLUMN IF NOT EXISTS rating INT DEFAULT 50;")
+                await connection.execute("ALTER TABLE player_stats ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE;")
+                await connection.execute("ALTER TABLE player_stats ADD COLUMN IF NOT EXISTS role_affinities JSONB DEFAULT '{}'::jsonb;")
+                # --- FIX END ---
+
                 await connection.execute("""
                     CREATE TABLE IF NOT EXISTS player_event_history (
                         history_id SERIAL PRIMARY KEY,
@@ -187,6 +193,79 @@ class Database:
                     );
                 """)
                 print("Database setup is complete.")
+
+    # --- FIX START: New functions for player sync and AI data management ---
+    async def add_or_update_server_member(self, user_id: int):
+        """Adds a new member to player_stats or reactivates them if they already exist."""
+        query = """
+            INSERT INTO player_stats (user_id, is_active) VALUES ($1, TRUE)
+            ON CONFLICT (user_id) DO UPDATE SET is_active = TRUE;
+        """
+        async with self.pool.acquire() as connection:
+            await connection.execute(query, user_id)
+
+    async def deactivate_server_member(self, user_id: int):
+        """Marks a member as inactive in the player_stats table."""
+        async with self.pool.acquire() as connection:
+            await connection.execute("UPDATE player_stats SET is_active = FALSE WHERE user_id = $1;", user_id)
+
+    async def sync_all_server_members(self, member_ids: List[int]):
+        """Syncs the entire server member list, marking missing users as inactive."""
+        async with self.pool.acquire() as connection:
+            async with connection.transaction():
+                # First, set all users to inactive
+                await connection.execute("UPDATE player_stats SET is_active = FALSE;")
+                # Then, add/update all current members to be active
+                for user_id in member_ids:
+                    await self.add_or_update_server_member(user_id)
+
+    async def get_all_player_stats_for_admin(self) -> List[Dict]:
+        """Gets all player stats, including inactive ones, for the admin panel."""
+        async with self.pool.acquire() as connection:
+            return [dict(row) for row in await connection.fetch("SELECT * FROM player_stats;")]
+
+    async def update_player_rating(self, user_id: int, rating: int):
+        """Updates a player's manually assigned skill rating."""
+        query = "UPDATE player_stats SET rating = $1 WHERE user_id = $2;"
+        async with self.pool.acquire() as connection:
+            await connection.execute(query, rating, user_id)
+
+    async def update_player_affinities(self, finalized_squads: List[Dict]):
+        """Analyzes a finalized squad list and updates the role affinities for each player."""
+        async with self.pool.acquire() as conn:
+            async with conn.transaction():
+                for squad in finalized_squads:
+                    squad_type = squad['squad_type']
+                    for member in squad['members']:
+                        user_id = int(member['user_id'])
+                        role_name = member['assigned_role_name']
+
+                        # Fetch the current affinities
+                        current_affinities_raw = await conn.fetchval(
+                            "SELECT role_affinities FROM player_stats WHERE user_id = $1", user_id
+                        )
+                        current_affinities = json.loads(current_affinities_raw or '{}')
+
+                        # Use defaultdict for easier counting
+                        squad_counts = defaultdict(int, current_affinities.get('squad_types', {}))
+                        role_counts = defaultdict(int, current_affinities.get('roles', {}))
+
+                        # Increment counts
+                        squad_counts[squad_type] += 1
+                        role_counts[role_name] += 1
+
+                        # Prepare the new JSONB data
+                        new_affinities = {
+                            'squad_types': squad_counts,
+                            'roles': role_counts
+                        }
+
+                        # Update the database
+                        await conn.execute(
+                            "UPDATE player_stats SET role_affinities = $1 WHERE user_id = $2",
+                            json.dumps(new_affinities), user_id
+                        )
+    # --- FIX END ---
 
     # --- Squad Template Functions ---
     async def create_squad_template(self, guild_id: int, template_name: str, definitions: List[Dict]) -> int:
@@ -257,8 +336,6 @@ class Database:
     async def promote_tentative_player(self, event_id: int, user_id: int, role_name: Optional[str], subclass_name: Optional[str]):
         async with self.pool.acquire() as connection:
             async with connection.transaction():
-                # This function now only handles the database state change for the promotion.
-                # The calling function in events.py is responsible for adding to squads.
                 await self.set_rsvp(event_id, user_id, RsvpStatus.ACCEPTED)
                 await self.update_signup_role(event_id, user_id, role_name, subclass_name)
 
@@ -351,7 +428,6 @@ class Database:
             row = await conn.fetchrow("SELECT * FROM events WHERE message_id = $1;", message_id)
             return dict(row) if row else None
 
-    # --- FIX START: Integrate logging into the main RSVP function ---
     async def set_rsvp(self, event_id: int, user_id: int, new_status: str):
         async with self.pool.acquire() as connection:
             async with connection.transaction():
@@ -373,10 +449,8 @@ class Database:
                 if old_status == new_status:
                     return
 
-                # If the user is no longer 'Accepted', remove them from any squads for this event.
                 if new_status != RsvpStatus.ACCEPTED:
                     await self.remove_user_from_all_squads(event_id, user_id)
-                    # Also clear their role selection as it's no longer relevant
                     await self.update_signup_role(event_id, user_id, None, None)
 
                 await connection.execute(
@@ -389,9 +463,8 @@ class Database:
 
                 await self.update_player_stats(user_id, old_status, new_status)
 
-                # Check if this status change is log-worthy
                 is_log_worthy = (old_status == RsvpStatus.ACCEPTED and new_status in [RsvpStatus.TENTATIVE, RsvpStatus.DECLINED]) or \
-                                (old_status in [RsvpStatus.TENTATIVE, RsvpStatus.DECLINED] and new_status == RsvpStatus.ACCEPTED)
+                                (old_status in [RsvpStatus.TENTATIVE, RsvpStatus.DECLINED, None] and new_status == RsvpStatus.ACCEPTED)
 
                 if is_log_worthy:
                     await _send_rsvp_log_message(
@@ -420,9 +493,7 @@ class Database:
                         user_id, event_id
                     )
 
-                # Flag the event for an embed update since the roster has changed
                 await self.flag_event_for_embed_update(event_id)
-    # --- FIX END ---
 
     async def get_upcoming_events(self) -> List[Dict]:
         query = "SELECT * FROM events WHERE deleted_at IS NULL AND (is_recurring = FALSE OR parent_event_id IS NOT NULL) AND COALESCE(end_time, event_time + INTERVAL '2 hours') > (NOW() AT TIME ZONE 'utc' - INTERVAL '12 hours');"
@@ -483,7 +554,6 @@ class Database:
 
     # --- Player Statistics Functions ---
     async def update_player_stats(self, user_id: int, old_status: Optional[str], new_status: str):
-        # Calculate the deltas for each count
         accepted_delta = 0
         tentative_delta = 0
         declined_delta = 0
@@ -496,7 +566,6 @@ class Database:
         elif old_status == RsvpStatus.TENTATIVE: tentative_delta -= 1
         elif old_status == RsvpStatus.DECLINED: declined_delta -= 1
 
-        # Determine the new last_signup_date
         last_signup_date_val = None
         if new_status == RsvpStatus.ACCEPTED:
             last_signup_date_val = datetime.datetime.now(datetime.timezone.utc)
@@ -525,8 +594,9 @@ class Database:
             )
 
     async def get_all_player_stats(self) -> List[Dict]:
+        # --- FIX: Only return active players for the main stats page ---
         async with self.pool.acquire() as connection:
-            return [dict(row) for row in await connection.fetch("SELECT * FROM player_stats;")]
+            return [dict(row) for row in await connection.fetch("SELECT * FROM player_stats WHERE is_active = TRUE;")]
 
     async def get_accepted_events_for_user(self, user_id: int) -> List[Dict]:
         query = """
@@ -737,15 +807,13 @@ class Database:
         GUILD_ID, BOT_TOKEN = os.getenv("GUILD_ID"), os.getenv("DISCORD_TOKEN")
         headers = {"Authorization": f"Bot {BOT_TOKEN}"}
         
-        # This query now builds a JSON object for each member within the database,
-        # casting the user_id to text to preserve its precision.
         query = """
             SELECT s.squad_id, s.name, s.squad_type, 
                    COALESCE(
                        json_agg(
                            json_build_object(
                                'squad_member_id', sm.squad_member_id,
-                               'user_id', sm.user_id::text,  -- Cast to text here
+                               'user_id', sm.user_id::text,
                                'assigned_role_name', sm.assigned_role_name,
                                'startup_task', sm.startup_task
                            )
@@ -771,7 +839,6 @@ class Database:
                 squad = dict(record)
                 processed_members = []
                 for member_data in squad.get('members', []):
-                    # The user_id from the DB is now a string, so no precision is lost
                     user_id = member_data['user_id']
                     display_name = f"User ID: {user_id}"
                     url = f"https://discord.com/api/v10/guilds/{GUILD_ID}/members/{user_id}"
