@@ -33,6 +33,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const mainContent = document.getElementById('main-content');
     const clearLockBtn = document.getElementById('clear-lock-btn');
     const templateDropdown = document.getElementById('template-dropdown');
+    // --- FIX: Get the new counter element ---
+    const teamSizeCounter = document.getElementById('team-size-counter');
 
     // Modals
     const editModal = document.getElementById('edit-member-modal');
@@ -334,7 +336,6 @@ document.addEventListener('DOMContentLoaded', () => {
             const response = await fetch(`/api/events/${eventId}/promote-tentative`, {
                 method: 'POST',
                 headers: { ...headers, 'Content-Type': 'application/json' },
-                // --- FIX: Send user_id as a string, removing parseInt ---
                 body: JSON.stringify({ user_id: userId, new_role_name: newRoleName })
             });
 
@@ -533,10 +534,18 @@ document.addEventListener('DOMContentLoaded', () => {
         } catch(err) { console.error("Could not load channels", err)}
     }
 
+    // --- FIX START: Update team size counter within renderWorkshop ---
     function renderWorkshop(squads) {
         currentSquads = squads;
         workshopArea.innerHTML = '';
+        let teamSize = 0; // Initialize counter
+
         (squads || []).forEach(squad => {
+            // Add to team size if not a reserves squad
+            if (squad.squad_type !== 'Reserves') {
+                teamSize += squad.members.length;
+            }
+
             const squadBox = document.createElement('div');
             squadBox.className = 'bg-gray-700 p-4 rounded-lg';
             squadBox.innerHTML = `<h3 class="font-bold text-white border-b border-gray-600 pb-2 mb-2">${squad.name}</h3>`;
@@ -566,6 +575,10 @@ document.addEventListener('DOMContentLoaded', () => {
             squadBox.appendChild(memberList);
             workshopArea.appendChild(squadBox);
         });
+
+        // Update the counter's text
+        teamSizeCounter.textContent = teamSize;
+
         renderTentativePlayers();
         document.querySelectorAll('.member-list').forEach(list => {
             new Sortable(list, {
@@ -590,4 +603,5 @@ document.addEventListener('DOMContentLoaded', () => {
         workshopSection.classList.remove('hidden');
         loadChannels();
     }
+    // --- FIX END ---
 });
