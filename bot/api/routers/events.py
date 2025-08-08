@@ -46,7 +46,6 @@ async def check_event_lock(event_id: int, current_user: User = Depends(auth.get_
 
 # --- API Routes ---
 
-# --- FIX START: The endpoint now returns the updated squad list instead of the signup list ---
 @router.post("/{event_id}/promote-tentative", response_model=List[Squad], dependencies=[Depends(check_event_lock)])
 async def promote_tentative_player(event_id: int, request: PromoteRequest, db: Database = Depends(get_db)):
     """
@@ -63,14 +62,17 @@ async def promote_tentative_player(event_id: int, request: PromoteRequest, db: D
     if not primary_role: primary_role = "Unassigned"
 
     try:
+        # The user_id from the request is a string, so we need to convert it to an int for the DB
+        user_id_int = int(request.user_id)
+        
         # Update the player's RSVP status and role
-        await db.promote_tentative_player(event_id, request.user_id, primary_role, subclass_name)
+        await db.promote_tentative_player(event_id, user_id_int, primary_role, subclass_name)
 
         # Find the Reserves squad for this event
         reserves_squad = await db.get_squad_by_name(event_id, "Reserves")
         if reserves_squad:
             # Add the newly promoted player to the Reserves squad
-            await db.add_squad_member(reserves_squad['squad_id'], request.user_id, request.new_role_name)
+            await db.add_squad_member(reserves_squad['squad_id'], user_id_int, request.new_role_name)
 
         # Flag the event so the scheduler updates the Discord embed
         await db.flag_event_for_embed_update(event_id)
@@ -81,7 +83,6 @@ async def promote_tentative_player(event_id: int, request: PromoteRequest, db: D
     except Exception as e:
         print(f"Error promoting tentative player: {e}")
         raise HTTPException(status_code=500, detail="Failed to update player status in the database.")
-# --- FIX END ---
 
 @router.get("", response_model=List[Event])
 async def get_events(db: Database = Depends(get_db)):
@@ -167,6 +168,7 @@ async def force_unlock_all_events_endpoint(db: Database = Depends(get_db)):
 async def get_event_squads(event_id: int, db: Database = Depends(get_db)):
     return await db.get_squads_with_members(event_id)
 
+# --- FIX START: Cast user_id to string before Pydantic validation ---
 @router.get("/{event_id}/signups", response_model=List[Signup])
 async def get_event_signups(event_id: int, db: Database = Depends(get_db)):
     if not BOT_TOKEN or not GUILD_ID:
@@ -189,13 +191,14 @@ async def get_event_signups(event_id: int, db: Database = Depends(get_db)):
                 print(f"Error fetching member {user_id}: {e}")
 
             roster.append(Signup(
-                user_id=user_id,
+                user_id=str(user_id),  # Cast the integer ID to a string here
                 display_name=display_name,
                 role_name=record.get('role_name'),
                 subclass_name=record.get('subclass_name'),
                 rsvp_status=record['rsvp_status']
             ))
     return roster
+# --- FIX END ---
 
 @router.post("/{event_id}/build-squads", response_model=List[Squad], dependencies=[Depends(check_event_lock)])
 async def build_squads_for_event(event_id: int, request: SquadBuildRequest, db: Database = Depends(get_db)):
@@ -207,14 +210,14 @@ async def build_squads_for_event(event_id: int, request: SquadBuildRequest, db: 
 
 @router.post("/{event_id}/refresh-roster", response_model=List[Squad], dependencies=[Depends(check_event_lock)])
 async def refresh_event_roster(event_id: int, request: RosterUpdateRequest, db: Database = Depends(get_db)):
-    current_member_ids = {member.user_id for squad in request.squads for member in squad.members}
+    current_member_ids = {int(member.user_id) for squad in request.squads for member in squad.members}
     latest_signups = await db.get_signups_for_event(event_id)
     accepted_user_ids = {s['user_id'] for s in latest_signups if s['rsvp_status'] == RsvpStatus.ACCEPTED}
     users_to_remove = current_member_ids - accepted_user_ids
     for user_id in users_to_remove:
         await db.remove_user_from_all_squads(event_id, user_id)
     squads_with_members = await db.get_squads_with_members(event_id)
-    all_current_db_member_ids = {member['user_id'] for squad in squads_with_members for member in squad.get('members', [])}
+    all_current_db_member_ids = {int(member['user_id']) for squad in squads_with_members for member in squad.get('members', [])}
     new_users = accepted_user_ids - all_current_db_member_ids
     if new_users:
         reserves_squad = await db.get_squad_by_name(event_id, "Reserves")
