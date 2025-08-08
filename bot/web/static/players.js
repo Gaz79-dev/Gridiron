@@ -6,7 +6,6 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // This script is only for the players.html page.
-    // If the main element isn't found, stop execution.
     const playerRatingsBody = document.getElementById('player-ratings-body');
     if (!playerRatingsBody) {
         return;
@@ -14,14 +13,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const headers = { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' };
     
-    const syncMembersBtn = document.getElementById('sync-members-btn');
+    // --- FIX: Remove the sync button as it's now automated ---
     const playerSearchInput = document.getElementById('player-search-input');
     let allPlayers = []; // Cache for player data
 
     const renderPlayerTable = (players) => {
         playerRatingsBody.innerHTML = '';
         if (!players || players.length === 0) {
-            playerRatingsBody.innerHTML = '<tr><td colspan="4" class="text-center p-4">No players found. Try syncing members.</td></tr>';
+            playerRatingsBody.innerHTML = '<tr><td colspan="4" class="text-center p-4">No players found. The database will sync automatically.</td></tr>';
             return;
         }
         players.forEach(player => {
@@ -62,25 +61,6 @@ document.addEventListener('DOMContentLoaded', () => {
             playerRatingsBody.innerHTML = `<tr><td colspan="4" class="text-center p-4 text-red-400">${error.message}</td></tr>`;
         }
     };
-
-    syncMembersBtn.addEventListener('click', async () => {
-        if (!confirm('This will sync all members from your Discord server. This may take a moment for large servers. Continue?')) return;
-        
-        syncMembersBtn.textContent = 'Syncing...';
-        syncMembersBtn.disabled = true;
-        try {
-            const response = await fetch('/api/players/sync', { method: 'POST', headers });
-            if (!response.ok) throw new Error((await response.json()).detail || 'Sync failed');
-            const result = await response.json();
-            alert(result.message);
-            await loadPlayers(); // Refresh the list after sync
-        } catch (error) {
-            alert(`Error: ${error.message}`);
-        } finally {
-            syncMembersBtn.textContent = 'Sync All Server Members';
-            syncMembersBtn.disabled = false;
-        }
-    });
 
     playerSearchInput.addEventListener('input', () => {
         const searchTerm = playerSearchInput.value.toLowerCase();
