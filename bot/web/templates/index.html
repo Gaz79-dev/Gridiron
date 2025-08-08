@@ -77,7 +77,6 @@
                 <div class="flex justify-between items-center mb-4">
                     <div>
                         <h2 class="text-xl font-semibold text-white">Step 3: Finalize and Send</h2>
-                        <!-- FIX: Add the team size counter element -->
                         <p class="text-sm text-gray-400 mt-1">
                             Team Size: <span id="team-size-counter" class="font-bold text-white">0</span>
                         </p>
@@ -96,12 +95,20 @@
                     </label>
                 </div>
                 
-                <div class="flex flex-col sm:flex-row gap-4 mt-6">
-                    <select id="channel-dropdown" class="flex-grow p-2 bg-gray-700 border border-gray-600 rounded-md"></select>
-                    <button id="send-btn" class="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-md transition duration-300">
-                        Send to Discord Channel
-                    </button>
+                <!-- FIX START: Replace single send button with two distinct buttons -->
+                <div class="border-t border-gray-700 pt-6">
+                    <div class="flex flex-col sm:flex-row gap-4">
+                        <select id="channel-dropdown" class="flex-grow p-2 bg-gray-700 border border-gray-600 rounded-md"></select>
+                        <button id="send-draft-btn" class="bg-gray-600 hover:bg-gray-700 text-white font-bold py-2 px-4 rounded-md transition duration-300">
+                            Send Draft Embed
+                        </button>
+                        <button id="finalize-btn" class="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-md transition duration-300">
+                            Finalize Squads & Learn
+                        </button>
+                    </div>
+                    <p class="text-xs text-gray-500 mt-2 text-center sm:text-left">Use 'Send Draft' for feedback. Use 'Finalize' to send the official lineup and teach the AI for future events.</p>
                 </div>
+                <!-- FIX END -->
             </section>
         </main>
     </div>
