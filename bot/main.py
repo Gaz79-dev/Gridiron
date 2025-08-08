@@ -10,9 +10,8 @@ from fastapi.middleware.cors import CORSMiddleware
 
 # Use absolute imports from the 'bot' package root
 from bot.utils.database import Database
-# --- FIX: Separated the 'auth' import from the 'routers' import ---
-from bot.api.routers import events, users, squads, stats
-# --- FIX: Alias the templates import to avoid name collision ---
+# --- FIX: Add the new 'players' router ---
+from bot.api.routers import events, users, squads, stats, players
 from bot.api.routers import templates as templates_router
 from bot.api import auth
 
@@ -68,8 +67,9 @@ app.include_router(users.router)
 app.include_router(events.router)
 app.include_router(squads.router)
 app.include_router(stats.router)
-# --- FIX: Use the aliased router ---
 app.include_router(templates_router.router)
+# --- FIX: Register the new players router ---
+app.include_router(players.router)
 
 # --- Web Page Routes ---
 @app.get("/login", tags=["HTML"], summary="Serves the login page")
