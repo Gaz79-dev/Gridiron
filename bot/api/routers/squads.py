@@ -34,6 +34,9 @@ async def update_member_role(squad_member_id: int, request: RoleUpdateRequest, d
     if new_primary_role:
         await db.update_signup_role(request.event_id, user_id, new_primary_role, new_subclass_name)
 
+    # --- FIX: Flag the event for an embed update after a role change ---
+    await db.flag_event_for_embed_update(request.event_id)
+
 @router.put("/members/{squad_member_id}/move", status_code=204)
 async def move_member_to_squad(squad_member_id: int, request: SquadMoveRequest, db: Database = Depends(get_db)):
     await db.move_squad_member(squad_member_id, request.new_squad_id)
