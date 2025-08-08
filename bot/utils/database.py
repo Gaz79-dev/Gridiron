@@ -136,7 +136,6 @@ class Database:
                     );
                 """)
                 
-                # --- FIX START: Update player_stats table for AI features ---
                 await connection.execute("""
                     CREATE TABLE IF NOT EXISTS player_stats (
                         user_id BIGINT PRIMARY KEY,
@@ -149,11 +148,9 @@ class Database:
                         role_affinities JSONB DEFAULT '{}'::jsonb
                     );
                 """)
-                # Add columns if they don't exist for graceful migration
                 await connection.execute("ALTER TABLE player_stats ADD COLUMN IF NOT EXISTS rating INT DEFAULT 50;")
                 await connection.execute("ALTER TABLE player_stats ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE;")
                 await connection.execute("ALTER TABLE player_stats ADD COLUMN IF NOT EXISTS role_affinities JSONB DEFAULT '{}'::jsonb;")
-                # --- FIX END ---
 
                 await connection.execute("""
                     CREATE TABLE IF NOT EXISTS player_event_history (
@@ -194,7 +191,7 @@ class Database:
                 """)
                 print("Database setup is complete.")
 
-    # --- FIX START: New functions for player sync and AI data management ---
+    # --- FIX START: Refactor player sync logic for scheduler use ---
     async def add_or_update_server_member(self, user_id: int):
         """Adds a new member to player_stats or reactivates them if they already exist."""
         query = """
@@ -209,15 +206,26 @@ class Database:
         async with self.pool.acquire() as connection:
             await connection.execute("UPDATE player_stats SET is_active = FALSE WHERE user_id = $1;", user_id)
 
-    async def sync_all_server_members(self, member_ids: List[int]):
-        """Syncs the entire server member list, marking missing users as inactive."""
+    async def sync_all_server_members(self, member_ids_with_role: List[int]):
+        """
+        Syncs the database with the provided list of members who have the sync role.
+        - Adds/reactivates members in the list.
+        - Deactivates members in the database who are NOT in the list.
+        """
         async with self.pool.acquire() as connection:
             async with connection.transaction():
-                # First, set all users to inactive
+                # Deactivate all users first. This handles members who lost the role.
                 await connection.execute("UPDATE player_stats SET is_active = FALSE;")
-                # Then, add/update all current members to be active
-                for user_id in member_ids:
-                    await self.add_or_update_server_member(user_id)
+                
+                # Use a prepared statement for efficiency
+                stmt = await connection.prepare("""
+                    INSERT INTO player_stats (user_id, is_active) VALUES ($1, TRUE)
+                    ON CONFLICT (user_id) DO UPDATE SET is_active = TRUE;
+                """)
+                
+                # Add or reactivate all members who currently have the role
+                await stmt.executemany([(user_id,) for user_id in member_ids_with_role])
+    # --- FIX END ---
 
     async def get_all_player_stats_for_admin(self) -> List[Dict]:
         """Gets all player stats, including inactive ones, for the admin panel."""
@@ -240,33 +248,29 @@ class Database:
                         user_id = int(member['user_id'])
                         role_name = member['assigned_role_name']
 
-                        # Fetch the current affinities
                         current_affinities_raw = await conn.fetchval(
                             "SELECT role_affinities FROM player_stats WHERE user_id = $1", user_id
                         )
                         current_affinities = json.loads(current_affinities_raw or '{}')
 
-                        # Use defaultdict for easier counting
                         squad_counts = defaultdict(int, current_affinities.get('squad_types', {}))
                         role_counts = defaultdict(int, current_affinities.get('roles', {}))
 
-                        # Increment counts
                         squad_counts[squad_type] += 1
                         role_counts[role_name] += 1
 
-                        # Prepare the new JSONB data
                         new_affinities = {
                             'squad_types': squad_counts,
                             'roles': role_counts
                         }
 
-                        # Update the database
                         await conn.execute(
                             "UPDATE player_stats SET role_affinities = $1 WHERE user_id = $2",
                             json.dumps(new_affinities), user_id
                         )
-    # --- FIX END ---
 
+    # ... (rest of the file is unchanged) ...
+    
     # --- Squad Template Functions ---
     async def create_squad_template(self, guild_id: int, template_name: str, definitions: List[Dict]) -> int:
         async with self.pool.acquire() as conn:
@@ -552,7 +556,6 @@ class Database:
             row = await connection.fetchrow(query, parent_event_id)
             return dict(row) if row else None
 
-    # --- Player Statistics Functions ---
     async def update_player_stats(self, user_id: int, old_status: Optional[str], new_status: str):
         accepted_delta = 0
         tentative_delta = 0
@@ -594,7 +597,6 @@ class Database:
             )
 
     async def get_all_player_stats(self) -> List[Dict]:
-        # --- FIX: Only return active players for the main stats page ---
         async with self.pool.acquire() as connection:
             return [dict(row) for row in await connection.fetch("SELECT * FROM player_stats WHERE is_active = TRUE;")]
 
@@ -613,7 +615,6 @@ class Database:
             records = await connection.fetch(query, event_id)
             return [record['user_id'] for record in records]
 
-    # --- Reminder Job Functions ---
     async def create_reminder_job(self, job_id: uuid.UUID, user_ids: List[int]) -> None:
         query = "INSERT INTO reminder_jobs (job_id, user_ids) VALUES ($1, $2);"
         async with self.pool.acquire() as connection:
@@ -630,7 +631,6 @@ class Database:
         async with self.pool.acquire() as connection:
             await connection.execute(query, job_id)
 
-    # --- Squad & Guild Config Functions ---
     async def force_unlock_all_events(self):
         query = "UPDATE events SET locked_by_user_id = NULL, locked_at = NULL WHERE locked_by_user_id IS NOT NULL;"
         async with self.pool.acquire() as connection:
@@ -681,7 +681,6 @@ class Database:
         async with self.pool.acquire() as conn:
             await conn.execute(query, event_id)
 
-    # --- Scheduler Functions ---
     async def get_active_events_with_threads(self) -> List[Dict]:
         query = """
             SELECT event_id, guild_id, thread_id FROM events
@@ -790,17 +789,14 @@ class Database:
             return dict(row) if row else None
 
     async def flag_event_for_embed_update(self, event_id: int):
-        """Sets a flag indicating the event embed needs to be refreshed."""
         await self.pool.execute("UPDATE events SET needs_embed_update = TRUE WHERE event_id = $1;", event_id)
 
     async def get_events_for_embed_update(self) -> List[Dict]:
-        """Gets all events that are flagged for an embed update."""
         query = "SELECT event_id, channel_id, message_id FROM events WHERE needs_embed_update = TRUE AND message_id IS NOT NULL AND deleted_at IS NULL;"
         async with self.pool.acquire() as connection:
             return [dict(row) for row in await connection.fetch(query)]
 
     async def clear_embed_update_flag(self, event_id: int):
-        """Clears the embed update flag for an event."""
         await self.pool.execute("UPDATE events SET needs_embed_update = FALSE WHERE event_id = $1;", event_id)
 
     async def get_squads_with_members(self, event_id: int) -> List[Dict]:
