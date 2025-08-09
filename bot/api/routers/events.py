@@ -8,7 +8,6 @@ from typing import List, Optional
 # Use absolute imports from the 'bot' package root
 from bot.utils.database import Database, RsvpStatus, ROLES, SUBCLASSES
 from bot.api import auth
-# --- FIX: Import the new AI squad optimizer ---
 from bot.ai import squad_optimizer
 from bot.api.dependencies import get_db
 from bot.api.models import (
@@ -27,6 +26,72 @@ router = APIRouter(
 GUILD_ID = os.getenv("GUILD_ID")
 BOT_TOKEN = os.getenv("DISCORD_TOKEN")
 LOCK_TIMEOUT_MINUTES = 15
+
+# --- FIX START: New dedicated function for sending the FINAL embed ---
+async def _send_finalized_embed(event_id: int, request: SendEmbedRequest, db: Database):
+    """
+    Sends the FINALIZED squad composition embed to a Discord channel.
+    """
+    BOT_TOKEN = os.getenv("DISCORD_TOKEN")
+    if not BOT_TOKEN: raise HTTPException(status_code=500, detail="Bot token not configured on server.")
+    url = f"https://discord.com/api/v10/channels/{request.channel_id}/messages"
+    headers = {"Authorization": f"Bot {BOT_TOKEN}"}
+
+    event_details = await db.get_event_by_id(event_id) if event_id else None
+    title_str, event_time_str = "Team Composition", ""
+    if event_details:
+        event_timestamp = int(event_details['event_time'].timestamp())
+        event_time_str = f" - <t:{event_timestamp}:F>"
+        # Use a non-draft title
+        title_str = f"Team Composition - {event_details['title']}"
+    
+    content_str, allowed_mentions = "", {"parse": ["users", "roles"]}
+    if request.mention_accepted and event_id:
+        signups = await db.get_signups_for_event(event_id)
+        accepted_ids = [s['user_id'] for s in signups if s['rsvp_status'] == RsvpStatus.ACCEPTED]
+        if accepted_ids:
+            content_str = ' '.join([f'<@{uid}>' for uid in accepted_ids])
+            allowed_mentions = {"users": [str(uid) for uid in accepted_ids]}
+
+    reserves_list = []
+    for squad in request.squads:
+        if squad.squad_type == "Reserves":
+            reserves_list = [m.display_name for m in squad.members]
+            break
+            
+    fields = []
+    for squad in request.squads:
+        if squad.squad_type == "Reserves": continue
+        member_list = []
+        for m in squad.members:
+            emoji = EMOJI_MAPPING.get(m.assigned_role_name, "❔")
+            member_line = f"{emoji} {m.display_name}"
+            if m.startup_task: member_line += f" - **{m.startup_task}**"
+            member_list.append(member_line)
+        value = "\n".join(member_list) or "Empty"
+        fields.append({"name": f"__**{squad.name}**__", "value": value, "inline": True})
+
+    embed_payload = {
+        "content": content_str,
+        "embeds": [{
+            "title": f"{title_str}{event_time_str}",
+            # Use a non-draft description
+            "description": "The following squads have been finalized for the event.",
+            "color": 15844367, 
+            "fields": fields, 
+            "footer": {"text": f"Reserves: {', '.join(reserves_list) if reserves_list else 'None'}"}
+        }],
+        "allowed_mentions": allowed_mentions
+    }
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.post(url, headers=headers, json=embed_payload)
+            response.raise_for_status()
+        except Exception as e:
+            print(f"Error sending finalized embed to Discord API: {e}")
+            raise HTTPException(status_code=502, detail="Failed to send finalized embed to Discord.")
+# --- FIX END ---
+
 
 # --- Locking Dependency ---
 async def check_event_lock(event_id: int, current_user: User = Depends(auth.get_current_admin_user), db: Database = Depends(get_db)):
@@ -183,16 +248,13 @@ async def get_event_signups(event_id: int, db: Database = Depends(get_db)):
             ))
     return roster
 
-# --- FIX START: Replace old logic with a call to the new AI optimizer ---
 @router.post("/{event_id}/build-squads", response_model=List[Squad], dependencies=[Depends(check_event_lock)])
 async def build_squads_for_event(event_id: int, request: SquadBuildRequest, db: Database = Depends(get_db)):
     try:
-        # Defer to the new AI-driven squad optimizer
         return await squad_optimizer.run_ai_draft(db, event_id, request)
     except Exception as e:
         print(f"Error during AI squad build process: {e}")
         raise HTTPException(status_code=500, detail="An internal error occurred during AI squad drafting.")
-# --- FIX END ---
 
 @router.post("/{event_id}/refresh-roster", response_model=List[Squad], dependencies=[Depends(check_event_lock)])
 async def refresh_event_roster(event_id: int, request: RosterUpdateRequest, db: Database = Depends(get_db)):
@@ -216,7 +278,7 @@ async def refresh_event_roster(event_id: int, request: RosterUpdateRequest, db: 
         await db.flag_event_for_embed_update(event_id)
     return await db.get_squads_with_members(event_id)
 
-# --- FIX START: New endpoint for finalizing squads and triggering AI learning ---
+# --- FIX START: Update endpoint to call the new finalized embed function ---
 @router.post("/{event_id}/finalize-squads", status_code=204)
 async def finalize_squads_and_learn(
     event_id: int,
@@ -227,23 +289,18 @@ async def finalize_squads_and_learn(
     """
     Sends the final squad embed and triggers the AI learning process.
     """
-    # First, send the embed (re-using the logic from the old send-embed endpoint)
-    await send_squad_embed(event_id, request, db)
+    await _send_finalized_embed(event_id, request, db)
     
-    # After sending, trigger the AI learning process
     try:
-        # Convert Pydantic models back to dictionaries for the database function
         squads_for_learning = [s.model_dump() for s in request.squads]
         await db.update_player_affinities(squads_for_learning)
         print(f"AI learning process triggered for event {event_id}.")
     except Exception as e:
         print(f"Error during AI learning process for event {event_id}: {e}")
-        # We don't raise an HTTPException here because the primary action (sending the embed) succeeded.
-        # The error is logged for maintenance.
 # --- FIX END ---
 
 @router.post("/send-draft-embed", status_code=204)
-async def send_squad_embed(
+async def send_draft_embed(
     event_id: int,
     request: SendEmbedRequest,
     db: Database = Depends(get_db),
@@ -251,7 +308,6 @@ async def send_squad_embed(
 ):
     """
     Sends a squad composition embed to a Discord channel without triggering any learning.
-    This is used for drafts and feedback.
     """
     BOT_TOKEN = os.getenv("DISCORD_TOKEN")
     if not BOT_TOKEN: raise HTTPException(status_code=500, detail="Bot token not configured on server.")
@@ -263,7 +319,9 @@ async def send_squad_embed(
     if event_details:
         event_timestamp = int(event_details['event_time'].timestamp())
         event_time_str = f" - <t:{event_timestamp}:F>"
+        # Use a DRAFT title
         title_str = f"DRAFT - {event_details['title']}"
+    
     content_str, allowed_mentions = "", {"parse": ["users", "roles"]}
     if request.mention_accepted and event_id:
         signups = await db.get_signups_for_event(event_id)
@@ -271,11 +329,13 @@ async def send_squad_embed(
         if accepted_ids:
             content_str = ' '.join([f'<@{uid}>' for uid in accepted_ids])
             allowed_mentions = {"users": [str(uid) for uid in accepted_ids]}
+
     reserves_list = []
     for squad in request.squads:
         if squad.squad_type == "Reserves":
             reserves_list = [m.display_name for m in squad.members]
             break
+            
     fields = []
     for squad in request.squads:
         if squad.squad_type == "Reserves": continue
@@ -287,9 +347,17 @@ async def send_squad_embed(
             member_list.append(member_line)
         value = "\n".join(member_list) or "Empty"
         fields.append({"name": f"__**{squad.name}**__", "value": value, "inline": True})
+
     embed_payload = {
         "content": content_str,
-        "embeds": [{"title": f"{title_str}{event_time_str}", "description": "The following draft has been prepared for feedback.", "color": 15844367, "fields": fields, "footer": {"text": f"Reserves: {', '.join(reserves_list) if reserves_list else 'None'}"}}],
+        "embeds": [{
+            "title": f"{title_str}{event_time_str}",
+            # Use a DRAFT description
+            "description": "The following draft has been prepared for feedback.",
+            "color": 15844367, 
+            "fields": fields, 
+            "footer": {"text": f"Reserves: {', '.join(reserves_list) if reserves_list else 'None'}"}
+        }],
         "allowed_mentions": allowed_mentions
     }
     async with httpx.AsyncClient() as client:
@@ -297,5 +365,5 @@ async def send_squad_embed(
             response = await client.post(url, headers=headers, json=embed_payload)
             response.raise_for_status()
         except Exception as e:
-            print(f"Error sending embed to Discord API: {e}")
-            raise HTTPException(status_code=502, detail="Failed to send embed to Discord.")
+            print(f"Error sending draft embed to Discord API: {e}")
+            raise HTTPException(status_code=502, detail="Failed to send draft embed to Discord.")
