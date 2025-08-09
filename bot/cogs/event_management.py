@@ -207,7 +207,6 @@ class RoleSelect(ui.Select):
     async def callback(self, i: discord.Interaction):
         selected_role = self.values[0]
 
-        # --- FIX: Update this dropdown to show the selection and disable it ---
         self.placeholder = f"Role: {selected_role}"
         self.disabled = True
 
@@ -277,7 +276,6 @@ class SubclassSelect(ui.Select):
     async def callback(self, i: discord.Interaction):
         subclass = self.values[0]
         
-        # --- FIX: Update this dropdown to show the selection and disable it ---
         self.placeholder = f"Class: {subclass}"
         self.disabled = True
 
@@ -1279,5 +1277,4 @@ async def setup(bot: commands.Bot):
     """Sets up the event management cog."""
     cog = EventManagement(bot, bot.db)
     await bot.add_cog(cog)
-    bot.add_view(PersistentEventView(bot.db))
-" in the document abo
+    bot.add_view(PersistentEventView(bot.d
