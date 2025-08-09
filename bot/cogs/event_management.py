@@ -50,24 +50,19 @@ CURATED_TIMEZONES = {
     "Other": ["UTC"]
 }
 
-# --- START OF CHANGE: New helper function ---
 def has_required_role(member: discord.Member) -> bool:
     """Checks if a member has one of the roles specified in .env."""
-    # Load the configured role IDs from the .env file.
     allowed_role_ids = set()
     for i in range(1, 6): # Checks for ALLOWED_ROLE_ID_1 through 5
         role_id_str = os.getenv(f"ALLOWED_ROLE_ID_{i}")
         if role_id_str and role_id_str.isdigit():
             allowed_role_ids.add(int(role_id_str))
 
-    # If no roles are configured in the .env file, deny by default for safety.
     if not allowed_role_ids:
         return False
 
-    # Check if the user has any of the allowed roles.
     user_role_ids = {role.id for role in member.roles}
     return not user_role_ids.isdisjoint(allowed_role_ids)
-# --- END OF CHANGE ---
 
 async def create_event_embed(bot: commands.Bot, event_id: int, db: Database) -> discord.Embed:
     event = await db.get_event_by_id(event_id)
@@ -128,45 +123,37 @@ async def create_event_embed(bot: commands.Bot, event_id: int, db: Database) -> 
     total_accepted = sum(len(v) for v in accepted_signups.values())
     embed.add_field(name=f"Accepted ({total_accepted})", value="\u200b", inline=False)
 
-   # Define the columns
     column_1_roles = ["Commander", "Infantry"]
     column_2_roles = ["Armour", "Pathfinders", "Artillery", "Recon"]
 
     def build_role_block(primary_role, signups):
-        """Builds the text block for a primary role and its members."""
         if not signups:
             return None
 
         block_lines = [f"__**{primary_role}**__ ({len(signups)})"]
 
-        # If the primary role (e.g., Commander) has no defined subclasses,
-        # just list the members directly.
         if primary_role not in SUBCLASSES:
             player_names = [signup['display_name'] for signup in signups]
             block_lines.extend(player_names)
             return "\n".join(block_lines)
 
-        # Otherwise, use the existing logic to group members by their subclass.
         subclass_groups = defaultdict(list)
         for signup in signups:
-            # A player's subclass is either what they selected, or "Unassigned" if they didn't.
             subclass_key = signup['subclass'] or "Unassigned"
             subclass_groups[subclass_key].append(signup['display_name'])
 
-        # Iterate through the official subclasses for this role to maintain order.
         for subclass in (SUBCLASSES.get(primary_role, []) + ["Unassigned"]):
             if players := subclass_groups.get(subclass):
                 block_lines.append(f"__**{subclass}**__ ({len(players)})")
                 block_lines.extend(players)
-                block_lines.append("") # Spacer line for readability between subclasses
+                block_lines.append("")
 
-        if len(block_lines) > 1: # If any players were added
-            if block_lines[-1] == "": block_lines.pop() # Remove last spacer
+        if len(block_lines) > 1:
+            if block_lines[-1] == "": block_lines.pop()
             return "\n".join(block_lines)
 
         return None
 
-    # Build the columns
     col1_text = []
     for role in column_1_roles:
         if block := build_role_block(role, accepted_signups.get(role)):
@@ -177,17 +164,14 @@ async def create_event_embed(bot: commands.Bot, event_id: int, db: Database) -> 
         if block := build_role_block(role, accepted_signups.get(role)):
             col2_text.append(block)
 
-    # Add columns to embed if they have content
     if col1_text:
         embed.add_field(name="\u200b", value="\n\n".join(col1_text), inline=True)
     if col2_text:
         embed.add_field(name="\u200b", value="\n\n".join(col2_text), inline=True)
 
-    # Add a spacer field if one column is populated and the other isn't, to maintain layout
     if (col1_text and not col2_text) or (col2_text and not col1_text):
         embed.add_field(name="\u200b", value="\u200b", inline=True)
 
-    # Unassigned, Tentative, and Declined remain full-width
     if unassigned_signups := accepted_signups.get("Unassigned"):
         embed.add_field(
             name=f"__**Unassigned**__ ({len(unassigned_signups)})",
@@ -210,6 +194,7 @@ async def create_event_embed(bot: commands.Bot, event_id: int, db: Database) -> 
     return embed
 
 # --- UI Classes ---
+
 class RoleSelect(ui.Select):
     def __init__(self, db: Database, event_id: int, available_roles: List[str]):
         self.db, self.event_id = db, event_id
@@ -221,9 +206,14 @@ class RoleSelect(ui.Select):
 
     async def callback(self, i: discord.Interaction):
         selected_role = self.values[0]
+
+        # --- FIX: Update this dropdown to show the selection and disable it ---
+        self.placeholder = f"Role: {selected_role}"
+        self.disabled = True
+
         if selected_role == "unassigned":
             await self.db.update_signup_role(self.event_id, i.user.id, "Unassigned", None)
-            await i.response.edit_message(content=f"Your role is set to **Unassigned** as no other roles were available.", view=None)
+            await i.response.edit_message(content=f"Your role is set to **Unassigned** as no other roles were available.", view=self.view)
             asyncio.create_task(self.view.update_original_embed())
             self.view.stop()
             return
@@ -234,7 +224,6 @@ class RoleSelect(ui.Select):
         all_subclasses = SUBCLASSES.get(self.view.role, [])
         if not all_subclasses:
             await self.db.update_signup_role(self.event_id, i.user.id, self.view.role, None)
-            for item in self.view.children: item.disabled = True
             await i.response.edit_message(content=f"Your role is confirmed as **{self.view.role}**!", view=self.view)
             self.view.stop()
             asyncio.create_task(self.view.update_original_embed())
@@ -287,8 +276,12 @@ class SubclassSelect(ui.Select):
 
     async def callback(self, i: discord.Interaction):
         subclass = self.values[0]
+        
+        # --- FIX: Update this dropdown to show the selection and disable it ---
+        self.placeholder = f"Class: {subclass}"
+        self.disabled = True
+
         await self.db.update_signup_role(self.event_id, i.user.id, self.view.role, subclass)
-        for item in self.view.children: item.disabled = True
         await i.response.edit_message(content=f"Role confirmed: **{self.view.role} ({subclass})**!", view=self.view)
         self.view.stop()
         asyncio.create_task(self.view.update_original_embed())
@@ -326,7 +319,6 @@ class NotificationTargetSelect(ui.Select):
         super().__init__(placeholder="Choose which groups to notify...", min_values=1, max_values=3, options=options)
 
     async def callback(self, interaction: discord.Interaction):
-        # Acknowledge the selection and update the parent view's state
         self.view.selected_statuses = self.values
         await interaction.response.defer()
 
@@ -335,7 +327,6 @@ class NotificationSelectView(ui.View):
         super().__init__(timeout=300)
         self.value = None
         self.select_menu = NotificationTargetSelect()
-        # Explicitly store the selected statuses, starting with the default
         self.selected_statuses: List[str] = [RsvpStatus.ACCEPTED]
         self.add_item(self.select_menu)
 
@@ -435,10 +426,8 @@ class PersistentEventView(ui.View):
             except:
                 pass
 
-    # --- START OF CHANGE: Updated button permissions ---
     @ui.button(label="Edit", style=discord.ButtonStyle.primary, custom_id="persistent_view:edit_event", row=2)
     async def edit_event_button(self, interaction: discord.Interaction, button: ui.Button):
-        # The administrator check is replaced with the role-based check.
         if not has_required_role(interaction.user):
             return await interaction.response.send_message(
                 "You do not have the required role to edit events.", ephemeral=True
@@ -461,7 +450,6 @@ class PersistentEventView(ui.View):
 
     @ui.button(label="Delete", style=discord.ButtonStyle.danger, custom_id="persistent_view:delete_event", row=2)
     async def delete_event_button(self, interaction: discord.Interaction, button: ui.Button):
-        # The administrator check is replaced with the role-based check.
         if not has_required_role(interaction.user):
             return await interaction.response.send_message(
                 "You do not have the required role to delete events.", ephemeral=True
@@ -481,7 +469,6 @@ class PersistentEventView(ui.View):
 
         await interaction.response.send_message("I've sent you a DM to confirm the deletion.", ephemeral=True)
         await event_cog.start_delete_conversation(interaction, event['event_id'])
-    # --- END OF CHANGE ---
 
 class ReminderConfirmationView(ui.View):
     def __init__(self):
@@ -610,7 +597,6 @@ class Conversation:
         self.data, self.is_finished = {}, False
 
     async def _wait_for_message(self):
-        """Waits for a message from the user in a DM channel."""
         return await self.bot.wait_for(
             'message',
             check=lambda m: m.author == self.user and isinstance(m.channel, discord.DMChannel),
@@ -618,7 +604,6 @@ class Conversation:
         )
 
     async def start_creation(self):
-        """Guides the user through creating a new event from scratch."""
         try:
             await self.user.send("Starting event creation. Type `cancel` at any time to stop.")
             steps = [
@@ -645,7 +630,6 @@ class Conversation:
             await self.cancel()
 
     async def start_editing(self):
-        """Starts the interactive editing session for an existing event."""
         if not (event_data := await self.db.get_event_by_id(self.event_id)):
             await self.user.send("Could not find the event to edit.")
             return await self.cancel()
@@ -700,7 +684,6 @@ class Conversation:
             await self.cancel()
 
     def create_summary_embed(self, edit_options: Dict) -> discord.Embed:
-        """Creates an embed summarizing the current state of the event data."""
         embed = discord.Embed(title="Event Editor", description="Current event details:", color=discord.Color.orange())
         guild = self.interaction.guild
 
@@ -900,7 +883,6 @@ class Conversation:
     async def ask_restrict_roles(self, p, dk): return await self._ask_roles(p, dk, "Restrict sign-ups to specific roles?")
 
     async def finish(self):
-        """Saves the event data to the database and updates the message."""
         if self.is_finished: return
         self.is_finished = True
         del self.cog.active_conversations[self.user.id]
@@ -920,9 +902,8 @@ class Conversation:
                 if notify_view.value:
                     select_view = NotificationSelectView()
                     select_msg = await self.user.send("Please select the RSVP groups to notify, then click Send.", view=select_view)
-                    await select_view.wait() # This now waits for the button press
+                    await select_view.wait()
 
-                    # Check if the "Send Notifications" button was clicked
                     if select_view.value is True:
                         statuses_to_notify = select_view.select_menu.values
                         if statuses_to_notify:
@@ -930,7 +911,6 @@ class Conversation:
                             user_ids_to_notify = [s['user_id'] for s in signups if s['rsvp_status'] in statuses_to_notify]
                         else:
                             await self.user.send("No RSVP groups were selected. Skipping notifications.")
-                    # This handles the "Skip" button or a timeout
                     else:
                         await self.user.send("Notification step skipped.")
 
@@ -938,7 +918,6 @@ class Conversation:
                 else:
                     await self.user.send("Okay, no notifications will be sent.")
 
-                # Update the main event embed in the channel
                 try:
                     event_for_message = self.data
                     if self.data.get('is_recurring') and not self.data.get('parent_event_id'):
@@ -960,7 +939,6 @@ class Conversation:
                     print(f"Error updating main embed: {e}")
                     await self.user.send("⚠️ Event data was updated, but I couldn't find or edit the original event message.")
 
-                # Update the thread
                 if self.data.get('thread_id'):
                     try:
                         thread = await self.bot.fetch_channel(self.data['thread_id'])
@@ -1070,7 +1048,6 @@ class EventManagement(commands.Cog):
     @app_commands.describe(event_id="The ID of the event to delete.")
     async def delete(self, interaction: discord.Interaction, event_id: int):
         if not interaction.user.guild_permissions.administrator:
-            # Check if this interaction was from a button, if so, we need to use followup
             if interaction.response.is_done():
                 await interaction.followup.send("You must be an administrator to delete events.", ephemeral=True)
             else:
@@ -1092,7 +1069,6 @@ class EventManagement(commands.Cog):
                 await interaction.response.send_message("This event has already been deleted.", ephemeral=True)
             return
 
-        # Acknowledge the command/button press if it hasn't been already
         if not interaction.response.is_done():
             await interaction.response.send_message("I've sent you a DM to confirm the deletion.", ephemeral=True)
 
@@ -1225,13 +1201,11 @@ class DeleteConversation:
     async def start(self):
         """Guides the user through deleting an event."""
         try:
-            # 1. Get event details first
             event = await self.db.get_event_by_id(self.event_id)
             if not event:
                 await self.user.send("This event could not be found in the database. It may have already been deleted.")
                 return self.finish()
 
-            # 2. Confirm deletion
             confirm_view = DeleteConfirmationView()
             msg = await self.user.send(f"Are you sure you want to delete the event **{event['title']}**? This action cannot be undone via the bot.", view=confirm_view)
             await confirm_view.wait()
@@ -1242,14 +1216,12 @@ class DeleteConversation:
 
             await msg.edit(content="Deletion confirmed. Preparing to delete assets...", view=None)
 
-            # 3. Ask about notifying attendees
             notify_view = ConfirmationView()
             notify_msg = await self.user.send("Would you like to notify accepted attendees via DM that the event has been cancelled?", view=notify_view)
             await notify_view.wait()
             should_notify = notify_view.value
             await notify_msg.edit(content="Okay, proceeding with deletion...", view=None)
 
-            # 4. Perform deletion of Discord assets
             if event.get('message_id'):
                 try:
                     channel = self.bot.get_channel(event['channel_id']) or await self.bot.fetch_channel(event['channel_id'])
@@ -1267,7 +1239,6 @@ class DeleteConversation:
                 except Exception as e:
                     await self.user.send(f"⚠️ Could not delete the event thread: {e}")
 
-            # 5. Notify users if requested
             if should_notify:
                 signups = await self.db.get_signups_for_event(self.event_id)
                 accepted_ids = [s['user_id'] for s in signups if s['rsvp_status'] == RsvpStatus.ACCEPTED]
@@ -1286,7 +1257,6 @@ class DeleteConversation:
                 else:
                     await self.user.send("No accepted attendees to notify.")
 
-            # 6. Soft-delete the event in the database
             await self.db.soft_delete_event(self.event_id)
             await self.user.send("✅ Event has been marked as deleted in the database.")
 
@@ -1310,3 +1280,4 @@ async def setup(bot: commands.Bot):
     cog = EventManagement(bot, bot.db)
     await bot.add_cog(cog)
     bot.add_view(PersistentEventView(bot.db))
+" in the document abo
