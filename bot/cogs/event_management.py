@@ -1277,4 +1277,4 @@ async def setup(bot: commands.Bot):
     """Sets up the event management cog."""
     cog = EventManagement(bot, bot.db)
     await bot.add_cog(cog)
-    bot.add_view(PersistentEventView(bot.d
+    bot.add_view(PersistentEventView(bot.db))
