@@ -191,9 +191,7 @@ class Database:
                 """)
                 print("Database setup is complete.")
 
-    # --- FIX START: Refactor player sync logic for scheduler use ---
     async def add_or_update_server_member(self, user_id: int):
-        """Adds a new member to player_stats or reactivates them if they already exist."""
         query = """
             INSERT INTO player_stats (user_id, is_active) VALUES ($1, TRUE)
             ON CONFLICT (user_id) DO UPDATE SET is_active = TRUE;
@@ -202,44 +200,31 @@ class Database:
             await connection.execute(query, user_id)
 
     async def deactivate_server_member(self, user_id: int):
-        """Marks a member as inactive in the player_stats table."""
         async with self.pool.acquire() as connection:
             await connection.execute("UPDATE player_stats SET is_active = FALSE WHERE user_id = $1;", user_id)
 
     async def sync_all_server_members(self, member_ids_with_role: List[int]):
-        """
-        Syncs the database with the provided list of members who have the sync role.
-        - Adds/reactivates members in the list.
-        - Deactivates members in the database who are NOT in the list.
-        """
         async with self.pool.acquire() as connection:
             async with connection.transaction():
-                # Deactivate all users first. This handles members who lost the role.
                 await connection.execute("UPDATE player_stats SET is_active = FALSE;")
                 
-                # Use a prepared statement for efficiency
                 stmt = await connection.prepare("""
                     INSERT INTO player_stats (user_id, is_active) VALUES ($1, TRUE)
                     ON CONFLICT (user_id) DO UPDATE SET is_active = TRUE;
                 """)
                 
-                # Add or reactivate all members who currently have the role
                 await stmt.executemany([(user_id,) for user_id in member_ids_with_role])
-    # --- FIX END ---
 
     async def get_all_player_stats_for_admin(self) -> List[Dict]:
-        """Gets all player stats, including inactive ones, for the admin panel."""
         async with self.pool.acquire() as connection:
             return [dict(row) for row in await connection.fetch("SELECT * FROM player_stats;")]
 
     async def update_player_rating(self, user_id: int, rating: int):
-        """Updates a player's manually assigned skill rating."""
         query = "UPDATE player_stats SET rating = $1 WHERE user_id = $2;"
         async with self.pool.acquire() as connection:
             await connection.execute(query, rating, user_id)
 
     async def update_player_affinities(self, finalized_squads: List[Dict]):
-        """Analyzes a finalized squad list and updates the role affinities for each player."""
         async with self.pool.acquire() as conn:
             async with conn.transaction():
                 for squad in finalized_squads:
@@ -268,10 +253,7 @@ class Database:
                             "UPDATE player_stats SET role_affinities = $1 WHERE user_id = $2",
                             json.dumps(new_affinities), user_id
                         )
-
-    # ... (rest of the file is unchanged) ...
     
-    # --- Squad Template Functions ---
     async def create_squad_template(self, guild_id: int, template_name: str, definitions: List[Dict]) -> int:
         async with self.pool.acquire() as conn:
             async with conn.transaction():
@@ -336,15 +318,12 @@ class Database:
         async with self.pool.acquire() as conn:
             await conn.execute("DELETE FROM squad_templates WHERE template_id = $1", template_id)
 
-    # --- Tentative Player Promotion Function ---
     async def promote_tentative_player(self, event_id: int, user_id: int, role_name: Optional[str], subclass_name: Optional[str]):
         async with self.pool.acquire() as connection:
             async with connection.transaction():
                 await self.set_rsvp(event_id, user_id, RsvpStatus.ACCEPTED)
                 await self.update_signup_role(event_id, user_id, role_name, subclass_name)
 
-
-    # --- User Management Functions ---
     async def get_user_by_username(self, username: str) -> Optional[Dict]:
         async with self.pool.acquire() as conn:
             row = await conn.fetchrow("SELECT * FROM users WHERE username = $1", username)
@@ -383,7 +362,6 @@ class Database:
     async def delete_user(self, user_id: int):
         async with self.pool.acquire() as conn: await conn.execute("DELETE FROM users WHERE id = $1", user_id)
 
-    # --- Event & Signup Functions ---
     async def create_event(self, guild_id: int, channel_id: int, creator_id: int, data: Dict) -> int:
         query = """
             INSERT INTO events (guild_id, channel_id, creator_id, title, description, event_time, end_time, timezone, is_recurring, recurrence_rule, mention_role_ids, restrict_to_role_ids, recreation_hours, parent_event_id)
@@ -467,8 +445,11 @@ class Database:
 
                 await self.update_player_stats(user_id, old_status, new_status)
 
-                is_log_worthy = (old_status == RsvpStatus.ACCEPTED and new_status in [RsvpStatus.TENTATIVE, RsvpStatus.DECLINED]) or \
-                                (old_status in [RsvpStatus.TENTATIVE, RsvpStatus.DECLINED, None] and new_status == RsvpStatus.ACCEPTED)
+                # --- FIX: Ensure old_status is not None before logging ---
+                is_log_worthy = old_status is not None and (
+                    (old_status == RsvpStatus.ACCEPTED and new_status in [RsvpStatus.TENTATIVE, RsvpStatus.DECLINED]) or
+                    (old_status in [RsvpStatus.TENTATIVE, RsvpStatus.DECLINED] and new_status == RsvpStatus.ACCEPTED)
+                )
 
                 if is_log_worthy:
                     await _send_rsvp_log_message(
