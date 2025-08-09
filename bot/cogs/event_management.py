@@ -903,7 +903,8 @@ class Conversation:
                     await select_view.wait()
 
                     if select_view.value is True:
-                        statuses_to_notify = select_view.select_menu.values
+                        # --- FIX: Read from the view's state, not the component's values ---
+                        statuses_to_notify = select_view.selected_statuses
                         if statuses_to_notify:
                             signups = await self.db.get_signups_for_event(self.event_id)
                             user_ids_to_notify = [s['user_id'] for s in signups if s['rsvp_status'] in statuses_to_notify]
