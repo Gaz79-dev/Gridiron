@@ -1,6 +1,7 @@
 import os
 import httpx
 import datetime
+import json
 from fastapi import APIRouter, Depends, HTTPException
 from typing import List
 
@@ -50,7 +51,21 @@ async def get_engagement_stats(db: Database = Depends(get_db)):
             if stats.get('last_signup_date'):
                 days_since = (datetime.datetime.now(datetime.timezone.utc) - stats['last_signup_date']).days
 
-            # --- FIX: Provide default values for the new required fields ---
+            # --- FIX: Handle potential None values from the DB and parse JSON strings ---
+            # This ensures that even if a DB record is missing new fields, it won't crash.
+            rating = stats.get('rating') if stats.get('rating') is not None else 50
+            is_active = stats.get('is_active') if stats.get('is_active') is not None else True
+            
+            role_affinities_raw = stats.get('role_affinities', {})
+            role_affinities = {}
+            if isinstance(role_affinities_raw, str):
+                try:
+                    role_affinities = json.loads(role_affinities_raw)
+                except json.JSONDecodeError:
+                    role_affinities = {} # Default to empty dict if parsing fails
+            elif isinstance(role_affinities_raw, dict):
+                role_affinities = role_affinities_raw
+
             player_stats_list.append(PlayerStats(
                 user_id=str(user_id),
                 display_name=display_name,
@@ -59,9 +74,9 @@ async def get_engagement_stats(db: Database = Depends(get_db)):
                 declined_count=stats.get('declined_count', 0),
                 last_signup_date=stats.get('last_signup_date'),
                 days_since_last_signup=days_since,
-                rating=stats.get('rating', 50),  # Default to 50 if not present
-                is_active=stats.get('is_active', True), # Default to True if not present
-                role_affinities=stats.get('role_affinities', {}) # Default to empty dict
+                rating=rating,
+                is_active=is_active,
+                role_affinities=role_affinities
             ))
             
     return player_stats_list
