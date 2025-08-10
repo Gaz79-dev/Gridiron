@@ -24,7 +24,6 @@ class Scheduler(commands.Cog):
         self.sync_event_threads.start()
         self.process_tentatives.start()
         self.update_event_embeds.start()
-        # --- FIX: Start the new player sync task ---
         self.sync_player_database.start()
 
     def cog_unload(self):
@@ -37,10 +36,8 @@ class Scheduler(commands.Cog):
         self.sync_event_threads.cancel()
         self.process_tentatives.cancel()
         self.update_event_embeds.cancel()
-        # --- FIX: Cancel the new player sync task ---
         self.sync_player_database.cancel()
 
-    # --- FIX START: New background task to sync players with a specific role ---
     @tasks.loop(minutes=10)
     async def sync_player_database(self):
         """Periodically syncs the player database with members of a specific role."""
@@ -69,7 +66,6 @@ class Scheduler(commands.Cog):
             print(f"[Player Sync] Could not find role with ID {role_id} in guild {guild.name}. Skipping sync.")
             return
 
-        # Get all non-bot members who have the specified role
         member_ids_with_role = [member.id for member in role.members if not member.bot]
 
         if not member_ids_with_role:
@@ -81,8 +77,6 @@ class Scheduler(commands.Cog):
         except Exception as e:
             print(f"[Player Sync] FATAL ERROR during database sync operation: {e}")
             traceback.print_exc()
-
-    # --- FIX END ---
 
     @tasks.loop(seconds=15)
     async def update_event_embeds(self):
@@ -294,6 +288,7 @@ class Scheduler(commands.Cog):
             print(f"  [Process:{event_id}] FAILED: An unexpected error occurred. The event will be re-attempted later.")
             traceback.print_exc()
 
+    # --- FIX START: Refactor recurring event logic for reliability ---
     @tasks.loop(minutes=5)
     async def recreate_recurring_events(self):
         """Checks if a recurring event's last occurrence has finished and creates the next one."""
@@ -318,33 +313,47 @@ class Scheduler(commands.Cog):
 
     async def process_event_recreation(self, parent_event: dict):
         """Creates the next occurrence of a recurring event if the last one is finished."""
-        now = datetime.datetime.now(pytz.utc)
-        latest_child = await self.db.get_latest_child_event(parent_event['event_id'])
-
-        if not latest_child:
-            recreation_window = parent_event['event_time'] - datetime.timedelta(hours=parent_event.get('recreation_hours', 168))
-            if now < recreation_window:
-                return
-        else:
-            if latest_child['end_time'] > now:
-                return
-
-        print(f"Recreating event for parent ID {parent_event['event_id']}.")
-
+        now_utc = datetime.datetime.now(pytz.utc)
+        parent_id = parent_event['event_id']
+        
+        # 1. Find the most recent child event that was created for this parent
+        latest_child = await self.db.get_latest_child_event(parent_id)
+        
+        # 2. Determine the time basis for creating the next event
+        # If a child exists, use its start time. Otherwise, use the parent's time.
         basis_time = latest_child['event_time'] if latest_child else parent_event['event_time']
+        
+        # 3. Calculate when the next event *should* start
         next_start_time = self.calculate_next_occurrence(basis_time, parent_event['recurrence_rule'])
-        if not next_start_time: return
+        if not next_start_time:
+            return
 
+        # 4. Check if the next event has already been created or if it's too soon
+        if latest_child and latest_child['event_time'] >= next_start_time:
+            # A child for this (or a future) period already exists. Do nothing.
+            return
+            
+        # 5. Check if the creation window has been reached.
+        # This prevents events from being created too far in advance.
+        creation_window_start = next_start_time - datetime.timedelta(hours=parent_event.get('recreation_hours', 168))
+        if now_utc < creation_window_start:
+            # It's not time to create the next event yet.
+            return
+
+        print(f"Recreating event for parent ID {parent_id}.")
+
+        # 6. Prepare data for the new child event
         child_data = dict(parent_event)
         duration = parent_event['end_time'] - parent_event['event_time']
         child_data['event_time'] = next_start_time
         child_data['end_time'] = next_start_time + duration
         child_data['is_recurring'] = False
-        child_data['parent_event_id'] = parent_event['event_id']
-
+        child_data['parent_event_id'] = parent_id
+        
         target_channel_id = latest_child['channel_id'] if latest_child else parent_event['channel_id']
         child_data['channel_id'] = target_channel_id
 
+        # 7. Create and post the new event
         try:
             child_id = await self.db.create_event(
                 parent_event['guild_id'], target_channel_id, parent_event['creator_id'], child_data
@@ -358,12 +367,12 @@ class Scheduler(commands.Cog):
 
             msg = await target_channel.send(content=content, embed=embed, view=view)
             await self.db.update_event_message_id(child_id, msg.id)
-            await self.db.update_last_recreated_at(parent_event['event_id'])
             print(f"Successfully created new recurring child event. New child ID: {child_id}")
 
         except Exception as e:
-            print(f"Failed to process recreation for parent event {parent_event['event_id']}: {e}")
+            print(f"Failed to process recreation for parent event {parent_id}: {e}")
             traceback.print_exc()
+    # --- FIX END ---
 
     @tasks.loop(time=datetime.time(hour=0, minute=5, tzinfo=pytz.utc))
     async def purge_deleted_events(self):
@@ -418,7 +427,6 @@ class Scheduler(commands.Cog):
     @cleanup_finished_events.before_loop
     @purge_deleted_events.before_loop
     @update_event_embeds.before_loop
-    # --- FIX: Add the new sync task to the before_loop wait ---
     @sync_player_database.before_loop
     async def before_tasks(self):
         """Waits until the bot is fully logged in and ready before starting loops."""
