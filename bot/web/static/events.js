@@ -63,18 +63,20 @@ document.addEventListener('DOMContentLoaded', () => {
                 tr.className = 'border-b border-gray-700';
 
                 const nextEventTime = new Date(event.event_time).toLocaleString();
-                // --- FIX: Correctly display recurrence rule and last created time ---
                 const recurrence = event.recurrence_rule ? `${event.recurrence_rule.charAt(0).toUpperCase() + event.recurrence_rule.slice(1)}` : 'N/A';
                 const lastCreated = event.last_recreated_at ? new Date(event.last_recreated_at).toLocaleString() : 'N/A';
 
+                // --- FIX: Add Delete button ---
                 tr.innerHTML = `
                     <td class="px-6 py-4">${event.title}</td>
                     <td class="px-6 py-4">${nextEventTime}</td>
                     <td class="px-6 py-4">${recurrence}</td>
                     <td class="px-6 py-4">${lastCreated}</td>
                     <td class="px-6 py-4">
-                        <button class="edit-btn text-blue-400 hover:text-blue-600" 
+                        <button class="edit-btn text-blue-400 hover:text-blue-600 mr-2" 
                                 data-event-id="${event.event_id}">Edit</button>
+                        <button class="delete-btn text-red-500 hover:text-red-700" 
+                                data-event-id="${event.event_id}">Delete</button>
                     </td>
                 `;
                 recurringEventsBody.appendChild(tr);
@@ -152,13 +154,26 @@ document.addEventListener('DOMContentLoaded', () => {
                 populateTimezoneDropdown();
                 document.getElementById('edit-timezone').value = event.timezone;
                 
-                // --- FIX: Pre-populate recurrence fields ---
                 document.getElementById('edit-recurrence-rule').value = event.recurrence_rule || 'weekly';
                 document.getElementById('edit-recreation-hours').value = event.recreation_hours || 168;
 
                 modal.classList.remove('hidden');
             } catch (error) {
                 alert(`Error: ${error.message}`);
+            }
+        } 
+        // --- FIX: Add event listener for the delete button ---
+        else if (e.target.classList.contains('delete-btn')) {
+            const eventId = e.target.dataset.eventId;
+            if (confirm('Are you sure you want to delete this recurring event template? This will stop it from creating new events.')) {
+                try {
+                    const response = await fetch(`/api/events/${eventId}`, { method: 'DELETE', headers });
+                    if (!response.ok) throw new Error('Failed to delete event template');
+                    await loadRecurringEvents();
+                    await loadDeletedEvents();
+                } catch (error) {
+                    alert(`Error: ${error.message}`);
+                }
             }
         }
     });
@@ -171,6 +186,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     const response = await fetch(`/api/events/${eventId}/restore`, { method: 'POST', headers });
                     if (!response.ok) throw new Error('Failed to restore event');
                     await loadDeletedEvents();
+                    await loadRecurringEvents();
                 } catch (error) {
                     alert(`Error: ${error.message}`);
                 }
