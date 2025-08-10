@@ -39,142 +39,150 @@ document.addEventListener('DOMContentLoaded', () => {
     viewRecurringBtn.addEventListener('click', () => {
         recurringView.classList.remove('hidden');
         deletedView.classList.add('hidden');
-        viewRecurringBtn.classList.add('bg-gray-700', 'text-white');
-        viewDeletedBtn.classList.remove('bg-gray-700', 'text-white');
+        viewRecurringBtn.classList.replace('bg-gray-700', 'bg-blue-600');
+        viewDeletedBtn.classList.replace('bg-blue-600', 'bg-gray-700');
     });
 
     viewDeletedBtn.addEventListener('click', () => {
-        deletedView.classList.remove('hidden');
         recurringView.classList.add('hidden');
-        viewDeletedBtn.classList.add('bg-gray-700', 'text-white');
-        viewRecurringBtn.classList.remove('bg-gray-700', 'text-white');
+        deletedView.classList.remove('hidden');
+        viewDeletedBtn.classList.replace('bg-gray-700', 'bg-blue-600');
+        viewRecurringBtn.classList.replace('bg-blue-600', 'bg-gray-700');
     });
 
-    // --- DATA FETCHING AND RENDERING ---
-
-    const formatDate = (dateString) => {
-        if (!dateString) return 'N/A';
-        return new Date(dateString).toLocaleString('en-GB', {
-            day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit'
-        });
-    };
-    
+    // --- DATA LOADING ---
     const loadRecurringEvents = async () => {
         try {
             const response = await fetch('/api/events/recurring', { headers });
-            if (!response.ok) throw new Error('Failed to fetch recurring events.');
+            if (!response.ok) throw new Error('Failed to load recurring events');
             const events = await response.json();
             
             recurringEventsBody.innerHTML = '';
             events.forEach(event => {
                 const tr = document.createElement('tr');
                 tr.className = 'border-b border-gray-700';
+
+                const nextEventTime = new Date(event.event_time).toLocaleString();
+                // --- FIX: Correctly display recurrence rule and last created time ---
+                const recurrence = event.recurrence_rule ? `${event.recurrence_rule.charAt(0).toUpperCase() + event.recurrence_rule.slice(1)}` : 'N/A';
+                const lastCreated = event.last_recreated_at ? new Date(event.last_recreated_at).toLocaleString() : 'N/A';
+
                 tr.innerHTML = `
                     <td class="px-6 py-4">${event.title}</td>
-                    <td class="px-6 py-4 capitalize">${event.recurrence_rule || 'N/A'}</td>
-                    <td class="px-6 py-4">${formatDate(event.last_recreated_at)}</td>
-                    <td class="px-6 py-4 space-x-2">
-                        <button class="edit-btn text-blue-400 hover:text-blue-600" data-id="${event.event_id}">Edit</button>
-                        <button class="delete-btn text-red-500 hover:text-red-700" data-id="${event.event_id}">Delete</button>
+                    <td class="px-6 py-4">${nextEventTime}</td>
+                    <td class="px-6 py-4">${recurrence}</td>
+                    <td class="px-6 py-4">${lastCreated}</td>
+                    <td class="px-6 py-4">
+                        <button class="edit-btn text-blue-400 hover:text-blue-600" 
+                                data-event-id="${event.event_id}">Edit</button>
                     </td>
                 `;
                 recurringEventsBody.appendChild(tr);
             });
         } catch (error) {
-            recurringEventsBody.innerHTML = `<tr><td colspan="4" class="text-center p-4 text-red-400">${error.message}</td></tr>`;
+            recurringEventsBody.innerHTML = `<tr><td colspan="5" class="text-center p-4 text-red-400">${error.message}</td></tr>`;
         }
     };
-    
+
     const loadDeletedEvents = async () => {
         try {
             const response = await fetch('/api/events/deleted', { headers });
-            if (!response.ok) throw new Error('Failed to fetch deleted events.');
+            if (!response.ok) throw new Error('Failed to load deleted events');
             const events = await response.json();
             
             deletedEventsBody.innerHTML = '';
             events.forEach(event => {
                 const tr = document.createElement('tr');
                 tr.className = 'border-b border-gray-700';
+                const eventTime = new Date(event.event_time).toLocaleString();
+                const deletedAt = new Date(event.deleted_at).toLocaleString();
+
                 tr.innerHTML = `
-                    <td class="px-6 py-4 font-mono">${event.event_id}</td>
                     <td class="px-6 py-4">${event.title}</td>
-                    <td class="px-6 py-4">${formatDate(event.deleted_at)}</td>
+                    <td class="px-6 py-4">${eventTime}</td>
+                    <td class="px-6 py-4">${deletedAt}</td>
+                    <td class="px-6 py-4">
+                        <button class="restore-btn text-green-400 hover:text-green-600" data-event-id="${event.event_id}">Restore</button>
+                    </td>
                 `;
                 deletedEventsBody.appendChild(tr);
             });
         } catch (error) {
-            deletedEventsBody.innerHTML = `<tr><td colspan="3" class="text-center p-4 text-red-400">${error.message}</td></tr>`;
+            deletedEventsBody.innerHTML = `<tr><td colspan="4" class="text-center p-4 text-red-400">${error.message}</td></tr>`;
         }
     };
-    
-    // --- MODAL AND FORM LOGIC ---
-    
-    // Function to convert UTC ISO string to local datetime-local input format
-    const toLocalISOString = (dateString) => {
-        if (!dateString) return '';
-        const date = new Date(dateString);
-        const tzOffset = date.getTimezoneOffset() * 60000;
-        const localISOTime = (new Date(date - tzOffset)).toISOString().slice(0, 16);
-        return localISOTime;
+
+    // --- MODAL AND FORM HANDLING ---
+    const populateTimezoneDropdown = () => {
+        const select = document.getElementById('edit-timezone');
+        select.innerHTML = '';
+        for (const region in CURATED_TIMEZONES) {
+            const optgroup = document.createElement('optgroup');
+            optgroup.label = region;
+            CURATED_TIMEZONES[region].forEach(tz => {
+                const option = document.createElement('option');
+                option.value = tz;
+                option.textContent = tz;
+                optgroup.appendChild(option);
+            });
+            select.appendChild(optgroup);
+        }
+    };
+
+    const formatDateForInput = (date) => {
+        if (!date) return '';
+        const d = new Date(date);
+        return new Date(d.getTime() - (d.getTimezoneOffset() * 60000)).toISOString().slice(0, 16);
     };
 
     recurringEventsBody.addEventListener('click', async (e) => {
         if (e.target.classList.contains('edit-btn')) {
-            const eventId = e.target.dataset.id;
+            const eventId = e.target.dataset.eventId;
             try {
                 const response = await fetch(`/api/events/${eventId}`, { headers });
-                if (!response.ok) throw new Error('Could not fetch event details.');
+                if (!response.ok) throw new Error('Failed to fetch event details');
                 const event = await response.json();
-                
-                // Populate the form
+
                 editEventIdInput.value = event.event_id;
                 document.getElementById('edit-title').value = event.title;
                 document.getElementById('edit-description').value = event.description || '';
-                document.getElementById('edit-event-time').value = toLocalISOString(event.event_time);
-                document.getElementById('edit-end-time').value = toLocalISOString(event.end_time);
-
-                // --- New logic to populate timezone dropdown ---
-                const timezoneSelect = document.getElementById('edit-timezone');
-                timezoneSelect.innerHTML = ''; // Clear previous options
-                for (const region in CURATED_TIMEZONES) {
-                    const optgroup = document.createElement('optgroup');
-                    optgroup.label = region;
-                    CURATED_TIMEZONES[region].forEach(tz => {
-                        const option = document.createElement('option');
-                        option.value = tz;
-                        option.textContent = tz;
-                        if (event.timezone === tz) {
-                            option.selected = true;
-                        }
-                        optgroup.appendChild(option);
-                    });
-                    timezoneSelect.appendChild(optgroup);
-                }
+                document.getElementById('edit-event-time').value = formatDateForInput(event.event_time);
+                document.getElementById('edit-end-time').value = formatDateForInput(event.end_time);
                 
-                document.getElementById('edit-recurrence-rule').value = event.recurrence_rule;
-                document.getElementById('edit-recreation-hours').value = event.recreation_hours;
+                populateTimezoneDropdown();
+                document.getElementById('edit-timezone').value = event.timezone;
+                
+                // --- FIX: Pre-populate recurrence fields ---
+                document.getElementById('edit-recurrence-rule').value = event.recurrence_rule || 'weekly';
+                document.getElementById('edit-recreation-hours').value = event.recreation_hours || 168;
 
                 modal.classList.remove('hidden');
             } catch (error) {
-                alert(error.message);
+                alert(`Error: ${error.message}`);
             }
         }
-        
-        if (e.target.classList.contains('delete-btn')) {
-            const eventId = e.target.dataset.id;
-            alert(`To permanently delete this recurring series, please use the Discord command:\n\n/event delete event_id:${eventId}`);
+    });
+
+    deletedEventsBody.addEventListener('click', async (e) => {
+        if (e.target.classList.contains('restore-btn')) {
+            const eventId = e.target.dataset.eventId;
+            if (confirm('Are you sure you want to restore this event? It will be re-posted to its original channel.')) {
+                try {
+                    const response = await fetch(`/api/events/${eventId}/restore`, { method: 'POST', headers });
+                    if (!response.ok) throw new Error('Failed to restore event');
+                    await loadDeletedEvents();
+                } catch (error) {
+                    alert(`Error: ${error.message}`);
+                }
+            }
         }
     });
-    
-    modalCancelBtn.addEventListener('click', () => {
-        modal.classList.add('hidden');
-    });
-    
+
+    modalCancelBtn.addEventListener('click', () => modal.classList.add('hidden'));
+
     editEventForm.addEventListener('submit', async (e) => {
         e.preventDefault();
         const eventId = editEventIdInput.value;
-        
-        // FastAPI needs ISO 8601 format with timezone info
         const eventTime = new Date(document.getElementById('edit-event-time').value).toISOString();
         const endTime = new Date(document.getElementById('edit-end-time').value).toISOString();
 
@@ -184,10 +192,9 @@ document.addEventListener('DOMContentLoaded', () => {
             event_time: eventTime,
             end_time: endTime,
             timezone: document.getElementById('edit-timezone').value,
-            is_recurring: true, // It must be recurring to be on this page
+            is_recurring: true,
             recurrence_rule: document.getElementById('edit-recurrence-rule').value,
             recreation_hours: parseInt(document.getElementById('edit-recreation-hours').value, 10),
-            // The API doesn't support changing roles via this form for now.
             mention_role_ids: [],
             restrict_to_role_ids: []
         };
@@ -203,7 +210,7 @@ document.addEventListener('DOMContentLoaded', () => {
                  throw new Error(errorData.detail || 'Failed to save changes.');
             }
             modal.classList.add('hidden');
-            await loadRecurringEvents(); // Refresh the table
+            await loadRecurringEvents();
         } catch (error) {
             alert(`Error: ${error.message}`);
         }
