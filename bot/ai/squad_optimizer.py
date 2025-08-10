@@ -12,8 +12,8 @@ from bot.api.models import SquadBuildRequest
 CLASS_LIMITS = {
     "Officer": 1, "Medic": 1, "Support": 1, "Anti-Tank": 1,
     "Machine Gunner": 1, "Automatic Rifleman": 1, "Assault": 1, "Engineer": 1,
-    "Spotter": 1, "Sniper": 1, "Tank Commander": 1,
-    "Rifleman": 99, "Crewman": 99, "Commander": 1,
+    "Spotter": 1, "Sniper": 1, "Tank Commander": 1, "Commander": 1,
+    "Rifleman": 99, "Crewman": 99,
 }
 
 # The order in which roles should be prioritized when filling squads.
@@ -76,21 +76,19 @@ async def run_ai_draft(db: Database, event_id: int, request: SquadBuildRequest) 
     player_stats_records = await db.get_all_player_stats_for_admin()
     player_stats_map = {str(p['user_id']): p for p in player_stats_records}
 
-    # --- FIX START: Pre-filter players into pools based on their chosen sign-up role ---
+    # 2. PLAYER POOLS: Pre-filter players into pools based on their chosen sign-up role
     player_pools = defaultdict(list)
     for signup in signups:
         if signup['rsvp_status'] == RsvpStatus.ACCEPTED:
-            # The key is the primary role they signed up for (e.g., "Infantry", "Commander")
             pool_key = signup.get('role_name') or "Unassigned"
             player_pools[pool_key].append(dict(signup))
-    # --- FIX END ---
 
-    # 2. SQUAD DEFINITION: Build the list of squads to be filled
+    # 3. SQUAD DEFINITION: Build the list of squads to be filled from the template
     template = await db.get_squad_template_by_id(request.template_id)
     if not template:
         raise ValueError("Squad template not found.")
     
-    squad_counts, squads_to_fill = {}, []
+    squad_counts, squads_to_fill_templates = {}, []
     numeric_group_index = 1
     for definition in template['definitions']:
         squad_name = definition['squad_name']
@@ -100,33 +98,42 @@ async def run_ai_draft(db: Database, event_id: int, request: SquadBuildRequest) 
 
         for _ in range(count):
             full_squad_name = get_squad_iteration(squad_name, squad_counts, convention, group_index_for_naming)
-            squads_to_fill.append({
+            squads_to_fill_templates.append({
                 'name': full_squad_name,
                 'squad_type': definition['squad_type'],
-                'source_pool': definition['source_rsvp_pool'], # This is the crucial link
-                'members': [],
-                'class_counts': defaultdict(int)
+                'source_pool': definition['source_rsvp_pool'],
             })
         
         if convention == 'numeric':
             numeric_group_index += 1
 
-    # 3. DRAFTING PHASE: Fill squads using rule-based pools and AI optimization
-    unplaced_players = []
-
-    for squad in squads_to_fill:
-        # --- FIX: The AI now ONLY considers players from the correct sign-up pool ---
-        eligible_players = player_pools[squad['source_pool']]
+    # 4. DRAFTING PHASE: Fill squads using rule-based pools and AI optimization
+    finalized_squads = []
+    
+    for squad_template in squads_to_fill_templates:
+        squad = {
+            'name': squad_template['name'],
+            'squad_type': squad_template['squad_type'],
+            'members': [], # Will store dicts of {'player_data': ..., 'assigned_role': ...}
+            'class_counts': defaultdict(int)
+        }
+        
+        # HARD RULE: Only consider players from the correct sign-up pool for this squad
+        eligible_players = player_pools[squad_template['source_pool']]
         
         squad_size = 1 if squad['squad_type'] == "Command" else \
                      3 if squad['squad_type'] == "Armour" else \
                      2 if squad['squad_type'] in ["Recon", "Artillery"] else 6
 
-        # For Command squads, the role is fixed
+        # Define the roles needed for this squad type, in order of priority
         if squad['squad_type'] == "Command":
             roles_to_fill = ["Commander"]
-        else:
-            roles_to_fill = [role for role in ROLE_PRIORITY if CLASS_LIMITS.get(role, 0) > 0]
+        elif squad['squad_type'] == "Armour":
+            roles_to_fill = ["Tank Commander", "Crewman"]
+        elif squad['squad_type'] == "Recon":
+            roles_to_fill = ["Spotter", "Sniper"]
+        else: # Infantry, Arty, Pathfinders etc. use the standard priority
+            roles_to_fill = ROLE_PRIORITY
 
         for role in roles_to_fill:
             if len(squad['members']) >= squad_size:
@@ -140,14 +147,6 @@ async def run_ai_draft(db: Database, event_id: int, request: SquadBuildRequest) 
             # Find the best available player from the ELIGIBLE pool for this specific role
             for player in eligible_players:
                 player_stats = player_stats_map.get(str(player['user_id']), {})
-                # The player's sign-up subclass is also considered for suitability
-                player_subclass = player.get('subclass_name')
-                
-                # If the role requires a specific subclass, check if the player has it
-                if role in ["Officer", "Medic", "Support", "Anti-Tank", "etc."] and player_subclass != role:
-                    # This logic can be refined, but for now, we assume a match is preferred
-                    pass
-
                 score = _calculate_suitability_score(player_stats, squad['squad_type'], role)
                 
                 if score > highest_score:
@@ -155,34 +154,28 @@ async def run_ai_draft(db: Database, event_id: int, request: SquadBuildRequest) 
                     best_player = player
             
             if best_player:
-                squad['members'].append(best_player)
+                squad['members'].append({'player_data': best_player, 'assigned_role': role})
                 squad['class_counts'][role] += 1
                 eligible_players.remove(best_player)
         
-        # Add any players from this pool who weren't placed to the final unplaced list
-        unplaced_players.extend(eligible_players)
+        finalized_squads.append(squad)
 
-    # 4. CLEANUP: Assign all remaining players to a "Reserves" squad
+    # 5. CLEANUP: Assign all remaining (unplaced) players to a "Reserves" squad
+    unplaced_players = [p for pool in player_pools.values() for p in pool]
     reserves_squad = {
         'name': "Reserves",
         'squad_type': "Reserves",
-        'members': unplaced_players,
-        'class_counts': defaultdict(int)
+        'members': [{'player_data': p, 'assigned_role': p.get('subclass_name') or p.get('role_name') or 'Unassigned'} for p in unplaced_players],
     }
-    squads_to_fill.append(reserves_squad)
+    finalized_squads.append(reserves_squad)
 
-    # 5. FINALIZATION: Write the newly created squads and members to the database
-    for squad_data in squads_to_fill:
+    # 6. FINALIZATION: Write the newly created squads and members to the database
+    for squad_data in finalized_squads:
         squad_id = await db.create_squad(event_id, squad_data['name'], squad_data['squad_type'])
-        for member in squad_data['members']:
-            # Find which role this member filled in the squad
-            assigned_role = 'Unassigned'
-            for m in squad_data['members']:
-                if m['user_id'] == member['user_id']:
-                    # This logic needs to be more robust to find the actual assigned role
-                    # For now, we fall back to their signed-up role
-                    assigned_role = member.get('subclass_name') or member.get('role_name', 'Unassigned')
-                    break
-            await db.add_squad_member(squad_id, member['user_id'], assigned_role)
+        for member_info in squad_data['members']:
+            player = member_info['player_data']
+            assigned_role = member_info['assigned_role']
+            await db.add_squad_member(squad_id, player['user_id'], assigned_role)
 
+    # Return the final state from the database, which includes display names
     return await db.get_squads_with_members(event_id)
