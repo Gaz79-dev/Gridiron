@@ -288,7 +288,7 @@ class Scheduler(commands.Cog):
             print(f"  [Process:{event_id}] FAILED: An unexpected error occurred. The event will be re-attempted later.")
             traceback.print_exc()
 
-    # --- FIX START: Refactor recurring event logic for reliability ---
+    # --- FIX START: Refactored recurring event logic for reliability ---
     @tasks.loop(minutes=5)
     async def recreate_recurring_events(self):
         """Checks if a recurring event's last occurrence has finished and creates the next one."""
@@ -312,37 +312,36 @@ class Scheduler(commands.Cog):
         return None
 
     async def process_event_recreation(self, parent_event: dict):
-        """Creates the next occurrence of a recurring event if the last one is finished."""
+        """Creates the next occurrence of a recurring event if the conditions are met."""
         now_utc = datetime.datetime.now(pytz.utc)
         parent_id = parent_event['event_id']
         
-        # 1. Find the most recent child event that was created for this parent
         latest_child = await self.db.get_latest_child_event(parent_id)
         
-        # 2. Determine the time basis for creating the next event
-        # If a child exists, use its start time. Otherwise, use the parent's time.
-        basis_time = latest_child['event_time'] if latest_child else parent_event['event_time']
-        
-        # 3. Calculate when the next event *should* start
-        next_start_time = self.calculate_next_occurrence(basis_time, parent_event['recurrence_rule'])
+        next_start_time = None
+        if latest_child:
+            # If a child exists, the next event is calculated from its start time.
+            basis_time = latest_child['event_time']
+            next_start_time = self.calculate_next_occurrence(basis_time, parent_event['recurrence_rule'])
+        else:
+            # If no child exists, the "next" event is the very first one, based on the parent's time.
+            next_start_time = parent_event['event_time']
+
         if not next_start_time:
             return
 
-        # 4. Check if the next event has already been created or if it's too soon
+        # Prevent duplicate creation if a child for the next period already exists.
         if latest_child and latest_child['event_time'] >= next_start_time:
-            # A child for this (or a future) period already exists. Do nothing.
             return
-            
-        # 5. Check if the creation window has been reached.
-        # This prevents events from being created too far in advance.
-        creation_window_start = next_start_time - datetime.timedelta(hours=parent_event.get('recreation_hours', 168))
+
+        # Check if we are within the creation window for the upcoming event.
+        recreation_hours = parent_event.get('recreation_hours', 168)
+        creation_window_start = next_start_time - datetime.timedelta(hours=recreation_hours)
         if now_utc < creation_window_start:
-            # It's not time to create the next event yet.
             return
 
         print(f"Recreating event for parent ID {parent_id}.")
 
-        # 6. Prepare data for the new child event
         child_data = dict(parent_event)
         duration = parent_event['end_time'] - parent_event['event_time']
         child_data['event_time'] = next_start_time
@@ -353,7 +352,6 @@ class Scheduler(commands.Cog):
         target_channel_id = latest_child['channel_id'] if latest_child else parent_event['channel_id']
         child_data['channel_id'] = target_channel_id
 
-        # 7. Create and post the new event
         try:
             child_id = await self.db.create_event(
                 parent_event['guild_id'], target_channel_id, parent_event['creator_id'], child_data
