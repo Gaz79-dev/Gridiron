@@ -25,60 +25,49 @@
     </header>
 
     <main class="container mx-auto px-6 py-8">
-
-        <div class="mb-4 border-b border-gray-700">
-            <nav class="flex space-x-4" aria-label="Tabs">
-                <button id="view-recurring-btn" class="text-white bg-gray-700 px-3 py-2 font-medium text-sm rounded-t-md">
-                    Recurring Templates
-                </button>
-                <button id="view-deleted-btn" class="text-gray-400 hover:text-white px-3 py-2 font-medium text-sm rounded-t-md">
-                    Deleted Events
-                </button>
-            </nav>
+        <div class="mb-4">
+            <button id="view-recurring-btn" class="bg-blue-600 text-white font-bold py-2 px-4 rounded-l-md">Recurring Events</button>
+            <button id="view-deleted-btn" class="bg-gray-700 text-white font-bold py-2 px-4 rounded-r-md">Deleted Events</button>
         </div>
 
-        <section id="recurring-events-view">
-            <div class="bg-gray-800 p-6 rounded-lg shadow-md">
-                <h2 class="text-xl font-semibold mb-4 text-white">Recurring Event Templates</h2>
-                <div class="overflow-x-auto">
-                    <table class="min-w-full">
-                        <thead>
-                            <tr class="border-b border-gray-700">
-                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase">Title</th>
-                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase">Recurrence</th>
-                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase">Last Created</th>
-                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase">Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody id="recurring-events-body"></tbody>
-                    </table>
-                </div>
+        <section id="recurring-events-view" class="bg-gray-800 p-6 rounded-lg shadow-md">
+            <h2 class="text-xl font-semibold text-white mb-4">Recurring Event Templates</h2>
+            <div class="overflow-x-auto">
+                <table class="min-w-full">
+                    <thead>
+                        <tr class="border-b border-gray-700">
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Title</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Next Event Time</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Recurrence</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Last Created</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="recurring-events-body"></tbody>
+                </table>
             </div>
         </section>
 
-        <section id="deleted-events-view" class="hidden">
-            <div class="bg-gray-800 p-6 rounded-lg shadow-md">
-                <h2 class="text-xl font-semibold mb-4 text-white">View-Only Deleted Events</h2>
-                <p class="text-sm text-gray-400 mb-4">Find the ID of an accidentally deleted event here, then use the `/event restore` command in Discord.</p>
-                <div class="overflow-x-auto">
-                    <table class="min-w-full">
-                        <thead>
-                            <tr class="border-b border-gray-700">
-                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase">Event ID</th>
-                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase">Title</th>
-                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase">Deleted At</th>
-                            </tr>
-                        </thead>
-                        <tbody id="deleted-events-body"></tbody>
-                    </table>
-                </div>
+        <section id="deleted-events-view" class="hidden bg-gray-800 p-6 rounded-lg shadow-md">
+            <h2 class="text-xl font-semibold text-white mb-4">Deleted Events</h2>
+            <div class="overflow-x-auto">
+                <table class="min-w-full">
+                    <thead>
+                        <tr class="border-b border-gray-700">
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Title</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Original Event Time</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Deleted At</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="deleted-events-body"></tbody>
+                </table>
             </div>
         </section>
-
     </main>
-    
+
     <div id="edit-event-modal" class="hidden fixed inset-0 bg-gray-900 bg-opacity-75 flex items-center justify-center z-50">
-        <div class="bg-gray-800 p-8 rounded-lg shadow-xl w-full max-w-3xl max-h-screen overflow-y-auto">
+        <div class="bg-gray-800 p-8 rounded-lg shadow-xl w-full max-w-lg">
             <h2 class="text-xl font-semibold mb-4 text-white">Edit Recurring Event Template</h2>
             <form id="edit-event-form" class="space-y-4">
                 <input type="hidden" id="edit-event-id">
@@ -87,27 +76,26 @@
                     <label for="edit-title" class="block text-sm font-medium">Title</label>
                     <input type="text" id="edit-title" required class="mt-1 block w-full bg-gray-700 border-gray-600 rounded-md p-2">
                 </div>
-                
+
                 <div>
                     <label for="edit-description" class="block text-sm font-medium">Description</label>
                     <textarea id="edit-description" rows="4" class="mt-1 block w-full bg-gray-700 border-gray-600 rounded-md p-2"></textarea>
                 </div>
-                
+
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
-                        <label for="edit-event-time" class="block text-sm font-medium">Template Start Date & Time</label>
+                        <label for="edit-event-time" class="block text-sm font-medium">Next Event Start Time</label>
                         <input type="datetime-local" id="edit-event-time" required class="mt-1 block w-full bg-gray-700 border-gray-600 rounded-md p-2">
                     </div>
-                     <div>
-                        <label for="edit-end-time" class="block text-sm font-medium">Template End Date & Time</label>
+                    <div>
+                        <label for="edit-end-time" class="block text-sm font-medium">Next Event End Time</label>
                         <input type="datetime-local" id="edit-end-time" required class="mt-1 block w-full bg-gray-700 border-gray-600 rounded-md p-2">
                     </div>
                 </div>
 
                 <div>
                     <label for="edit-timezone" class="block text-sm font-medium">Timezone</label>
-                    <select id="edit-timezone" required class="mt-1 block w-full bg-gray-700 border-gray-600 rounded-md p-2">
-                        </select>
+                    <select id="edit-timezone" required class="mt-1 block w-full bg-gray-700 border-gray-600 rounded-md p-2"></select>
                 </div>
 
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
