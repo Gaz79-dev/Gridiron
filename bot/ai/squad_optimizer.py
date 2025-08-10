@@ -76,6 +76,18 @@ async def run_ai_draft(db: Database, event_id: int, request: SquadBuildRequest) 
     player_stats_records = await db.get_all_player_stats_for_admin()
     player_stats_map = {str(p['user_id']): p for p in player_stats_records}
 
+    # --- FIX: Ensure role_affinities is always a dictionary ---
+    for pid, stats in player_stats_map.items():
+        affinities_raw = stats.get('role_affinities')
+        if isinstance(affinities_raw, str):
+            try:
+                stats['role_affinities'] = json.loads(affinities_raw)
+            except json.JSONDecodeError:
+                stats['role_affinities'] = {} # Default to empty if parsing fails
+        elif affinities_raw is None:
+            stats['role_affinities'] = {}
+    # --- FIX END ---
+
     # 2. PLAYER POOLS: Pre-filter players into pools based on their chosen sign-up role
     player_pools = defaultdict(list)
     for signup in signups:
@@ -114,25 +126,23 @@ async def run_ai_draft(db: Database, event_id: int, request: SquadBuildRequest) 
         squad = {
             'name': squad_template['name'],
             'squad_type': squad_template['squad_type'],
-            'members': [], # Will store dicts of {'player_data': ..., 'assigned_role': ...}
+            'members': [],
             'class_counts': defaultdict(int)
         }
         
-        # HARD RULE: Only consider players from the correct sign-up pool for this squad
         eligible_players = player_pools[squad_template['source_pool']]
         
         squad_size = 1 if squad['squad_type'] == "Command" else \
                      3 if squad['squad_type'] == "Armour" else \
                      2 if squad['squad_type'] in ["Recon", "Artillery"] else 6
 
-        # Define the roles needed for this squad type, in order of priority
         if squad['squad_type'] == "Command":
             roles_to_fill = ["Commander"]
         elif squad['squad_type'] == "Armour":
             roles_to_fill = ["Tank Commander", "Crewman"]
         elif squad['squad_type'] == "Recon":
             roles_to_fill = ["Spotter", "Sniper"]
-        else: # Infantry, Arty, Pathfinders etc. use the standard priority
+        else:
             roles_to_fill = ROLE_PRIORITY
 
         for role in roles_to_fill:
@@ -144,7 +154,6 @@ async def run_ai_draft(db: Database, event_id: int, request: SquadBuildRequest) 
             best_player = None
             highest_score = -1
 
-            # Find the best available player from the ELIGIBLE pool for this specific role
             for player in eligible_players:
                 player_stats = player_stats_map.get(str(player['user_id']), {})
                 score = _calculate_suitability_score(player_stats, squad['squad_type'], role)
@@ -160,7 +169,7 @@ async def run_ai_draft(db: Database, event_id: int, request: SquadBuildRequest) 
         
         finalized_squads.append(squad)
 
-    # 5. CLEANUP: Assign all remaining (unplaced) players to a "Reserves" squad
+    # 5. CLEANUP: Assign all remaining players to a "Reserves" squad
     unplaced_players = [p for pool in player_pools.values() for p in pool]
     reserves_squad = {
         'name': "Reserves",
@@ -177,5 +186,4 @@ async def run_ai_draft(db: Database, event_id: int, request: SquadBuildRequest) 
             assigned_role = member_info['assigned_role']
             await db.add_squad_member(squad_id, player['user_id'], assigned_role)
 
-    # Return the final state from the database, which includes display names
     return await db.get_squads_with_members(event_id)
