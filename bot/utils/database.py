@@ -151,6 +151,9 @@ class Database:
                 await connection.execute("ALTER TABLE player_stats ADD COLUMN IF NOT EXISTS rating INT DEFAULT 50;")
                 await connection.execute("ALTER TABLE player_stats ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE;")
                 await connection.execute("ALTER TABLE player_stats ADD COLUMN IF NOT EXISTS role_affinities JSONB DEFAULT '{}'::jsonb;")
+                # --- FIX: Add new columns for game ID linking and name caching ---
+                await connection.execute("ALTER TABLE player_stats ADD COLUMN IF NOT EXISTS game_player_id TEXT;")
+                await connection.execute("ALTER TABLE player_stats ADD COLUMN IF NOT EXISTS display_name VARCHAR(255);")
 
                 await connection.execute("""
                     CREATE TABLE IF NOT EXISTS player_event_history (
@@ -189,8 +192,132 @@ class Database:
                         source_rsvp_pool VARCHAR(50) NOT NULL
                     );
                 """)
+                
+                # --- FIX START: New tables for match history and uploads ---
+                await connection.execute("""
+                    CREATE TABLE IF NOT EXISTS match_uploads (
+                        match_id VARCHAR(255) PRIMARY KEY,
+                        event_name VARCHAR(255) NOT NULL,
+                        event_date DATE NOT NULL,
+                        uploaded_at TIMESTAMP WITH TIME ZONE DEFAULT (NOW() AT TIME ZONE 'utc'),
+                        uploaded_by_user_id INT REFERENCES users(id) ON DELETE SET NULL
+                    );
+                """)
+                
+                await connection.execute("""
+                    CREATE TABLE IF NOT EXISTS match_history (
+                        match_history_id SERIAL PRIMARY KEY,
+                        match_id VARCHAR(255) REFERENCES match_uploads(match_id) ON DELETE CASCADE,
+                        game_player_id TEXT NOT NULL,
+                        discord_user_id BIGINT,
+                        player_name VARCHAR(255),
+                        kills INT,
+                        deaths INT,
+                        kd FLOAT,
+                        combat_effectiveness INT,
+                        support_score INT,
+                        defensive_score INT,
+                        offensive_score INT
+                    );
+                """)
+                # --- FIX END ---
+                
                 print("Database setup is complete.")
 
+    # --- FIX START: New functions for match stats and player management ---
+    async def get_full_player_export_data(self) -> List[Dict]:
+        """Gathers all active player stats and their complete event history for CSV export."""
+        query = """
+            SELECT
+                ps.user_id,
+                ps.display_name,
+                ps.accepted_count,
+                ps.tentative_count,
+                ps.declined_count,
+                ps.last_signup_date,
+                ps.rating,
+                COALESCE(
+                    (SELECT jsonb_agg(peh.* ORDER BY peh.event_time DESC)
+                     FROM player_event_history peh
+                     WHERE peh.user_id = ps.user_id),
+                    '[]'::jsonb
+                ) as event_history
+            FROM player_stats ps
+            WHERE ps.is_active = TRUE;
+        """
+        async with self.pool.acquire() as connection:
+            records = await connection.fetch(query)
+            return [dict(row) for row in records]
+
+    async def update_player_game_id(self, user_id: int, game_player_id: str):
+        """Updates a player's in-game ID for linking stats."""
+        async with self.pool.acquire() as connection:
+            await connection.execute(
+                "UPDATE player_stats SET game_player_id = $1 WHERE user_id = $2;",
+                game_player_id, user_id
+            )
+
+    async def cache_player_display_names(self, member_data: List[Dict]):
+        """Updates the cached display names for a list of members."""
+        async with self.pool.acquire() as connection:
+            await connection.executemany(
+                "UPDATE player_stats SET display_name = $1 WHERE user_id = $2;",
+                [(m['name'], m['id']) for m in member_data]
+            )
+
+    async def check_match_exists(self, match_id: str) -> bool:
+        """Checks if a match with the given signature has already been uploaded."""
+        async with self.pool.acquire() as connection:
+            return await connection.fetchval(
+                "SELECT EXISTS (SELECT 1 FROM match_uploads WHERE match_id = $1);", match_id
+            )
+
+    async def insert_match_data(self, match_id: str, event_name: str, event_date: datetime.date, uploader_id: int, match_stats: List[Dict]):
+        """Inserts a new match and all its player stats into the database."""
+        async with self.pool.acquire() as conn:
+            async with conn.transaction():
+                # Link Discord IDs where possible
+                game_id_to_discord_id = {
+                    row['game_player_id']: row['user_id']
+                    for row in await conn.fetch("SELECT user_id, game_player_id FROM player_stats WHERE game_player_id IS NOT NULL;")
+                }
+
+                # Create the main upload record
+                await conn.execute(
+                    "INSERT INTO match_uploads (match_id, event_name, event_date, uploaded_by_user_id) VALUES ($1, $2, $3, $4);",
+                    match_id, event_name, event_date, uploader_id
+                )
+
+                # Prepare the data for insertion
+                records_to_insert = []
+                for row in match_stats:
+                    game_player_id = row.get("Player ID")
+                    records_to_insert.append((
+                        match_id,
+                        game_player_id,
+                        game_id_to_discord_id.get(game_player_id),
+                        row.get("Name"),
+                        row.get("Kills"),
+                        row.get("Deaths"),
+                        row.get("K/D"),
+                        row.get("Combat Effectiveness"),
+                        row.get("Support Points"),
+                        row.get("Defensive Points"),
+                        row.get("Offensive Points")
+                    ))
+
+                # Insert all player stats for this match
+                await conn.copy_records_to_table(
+                    'match_history',
+                    records=records_to_insert,
+                    columns=[
+                        'match_id', 'game_player_id', 'discord_user_id', 'player_name',
+                        'kills', 'deaths', 'kd', 'combat_effectiveness', 'support_score',
+                        'defensive_score', 'offensive_score'
+                    ]
+                )
+    # --- FIX END ---
+    
     async def add_or_update_server_member(self, user_id: int):
         query = """
             INSERT INTO player_stats (user_id, is_active) VALUES ($1, TRUE)
@@ -445,7 +572,6 @@ class Database:
 
                 await self.update_player_stats(user_id, old_status, new_status)
 
-                # --- FIX: Ensure old_status is not None before logging ---
                 is_log_worthy = old_status is not None and (
                     (old_status == RsvpStatus.ACCEPTED and new_status in [RsvpStatus.TENTATIVE, RsvpStatus.DECLINED]) or
                     (old_status in [RsvpStatus.TENTATIVE, RsvpStatus.DECLINED] and new_status == RsvpStatus.ACCEPTED)
@@ -746,7 +872,7 @@ class Database:
             await conn.execute("DELETE FROM events WHERE event_id = $1", event_id)
 
     async def get_events_for_recreation(self) -> List[dict]:
-        query = "SELECT * FROM events WHERE is_recurring = TRUE AND deleted_at IS NULL;"
+        query = "SELECT * FROM events WHERE is_recurring = TRUE AND parent_event_id IS NULL AND deleted_at IS NULL;"
         async with self.pool.acquire() as connection:
             return [dict(row) for row in await connection.fetch(query)]
 
