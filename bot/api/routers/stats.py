@@ -10,7 +10,7 @@ from typing import List
 from bot.utils.database import Database
 from bot.api import auth
 from bot.api.dependencies import get_db
-from bot.api.models import PlayerStats, AcceptedEvent, MatchUpload, Leaderboard, LeaderboardPlayer
+from bot.api.models import PlayerStats, AcceptedEvent, MatchUpload, Leaderboard, LeaderboardPlayer, User
 
 router = APIRouter(
     prefix="/api/stats",
@@ -29,7 +29,7 @@ async def upload_match_stats(
     event_date: datetime.date = Form(...),
     file: UploadFile = File(...),
     db: Database = Depends(get_db),
-    current_user: auth.User = Depends(auth.get_current_admin_user)
+    current_user: User = Depends(auth.get_current_admin_user)
 ):
     """
     Uploads a match stats CSV, processes it, and stores it in the database.
