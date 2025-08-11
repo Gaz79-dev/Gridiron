@@ -1020,5 +1020,3 @@ class Database:
 
     async def close(self):
         if self.pool: await self.pool.close(); print("Database connection pool closed.")
-" in the canvas and I'm asking a follow up question about it.
-I'm looking to add functionality to the database to be able to add new roles and subclasses. Please can you add this functional
