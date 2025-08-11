@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gridiron - Match Stats</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .leaderboard-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 1.5rem;
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-gray-300 font-sans">
+
+    <header class="bg-gray-800 shadow-lg">
+        <nav class="container mx-auto px-6 py-4 flex justify-between items-center">
+            <div class="flex items-center">
+                <img src="/static/logo.jpg" alt="Gridiron Logo" class="h-8 w-8 mr-3">
+                <h1 class="text-2xl font-bold text-white">Match Stats</h1>
+            </div>
+            <div>
+                <a href="/" class="text-gray-300 hover:text-white px-3 py-2 rounded-md text-sm font-medium">Squad Builder</a>
+                <a href="/players" class="text-gray-300 hover:text-white px-3 py-2 rounded-md text-sm font-medium">Players</a>
+                <a href="/events" class="text-gray-300 hover:text-white px-3 py-2 rounded-md text-sm font-medium">Events</a>
+                <a href="/admin" id="admin-link" class="text-gray-300 hover:text-white px-3 py-2 rounded-md text-sm font-medium">Admin</a>
+                <button id="logout-btn" class="text-gray-300 hover:text-white px-3 py-2 rounded-md text-sm font-medium">Logout</button>
+            </div>
+        </nav>
+    </header>
+
+    <main class="container mx-auto px-6 py-8">
+
+        <!-- Match Stats Upload Section -->
+        <section class="bg-gray-800 p-6 rounded-lg shadow-md mb-8">
+            <h2 class="text-xl font-semibold text-white mb-4">Upload Match Stats</h2>
+            <form id="upload-stats-form" class="space-y-4">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                        <label for="event-name" class="block text-sm font-medium">Event Name</label>
+                        <input type="text" id="event-name" required class="mt-1 block w-full bg-gray-700 border-gray-600 rounded-md p-2">
+                    </div>
+                    <div>
+                        <label for="event-date" class="block text-sm font-medium">Event Date</label>
+                        <input type="date" id="event-date" required class="mt-1 block w-full bg-gray-700 border-gray-600 rounded-md p-2">
+                    </div>
+                </div>
+                <div>
+                    <label for="csv-file" class="block text-sm font-medium">Match Stats CSV File</label>
+                    <input type="file" id="csv-file" accept=".csv" required class="mt-1 block w-full text-sm text-gray-400 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-blue-600 file:text-white hover:file:bg-blue-700">
+                </div>
+                <button type="submit" id="upload-btn" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-md">
+                    Upload Stats
+                </button>
+            </form>
+        </section>
+
+        <!-- Leaderboards Section -->
+        <section class="bg-gray-800 p-6 rounded-lg shadow-md mb-8">
+            <div class="flex justify-between items-center mb-4">
+                 <h2 class="text-xl font-semibold text-white">Performance Leaderboards</h2>
+                 <button id="export-stats-btn" class="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-md text-sm">
+                    Export All Stats
+                </button>
+            </div>
+           
+            <div id="leaderboards-container" class="leaderboard-grid">
+                <!-- Leaderboards will be injected here by stats.js -->
+            </div>
+        </section>
+
+    </main>
+
+    <script src="/static/auth.js"></script>
+    <script src="/static/stats.js"></script>
+</body>
+</html>
