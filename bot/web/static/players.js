@@ -20,12 +20,13 @@ document.addEventListener('DOMContentLoaded', () => {
     const renderPlayerTable = (players) => {
         playerRatingsBody.innerHTML = '';
         if (!players || players.length === 0) {
-            playerRatingsBody.innerHTML = '<tr><td colspan="4" class="text-center p-4">No players found. Try syncing members.</td></tr>';
+            playerRatingsBody.innerHTML = '<tr><td colspan="5" class="text-center p-4">No players found. Try syncing members.</td></tr>';
             return;
         }
         players.forEach(player => {
             const tr = document.createElement('tr');
             tr.className = 'border-b border-gray-700';
+            // --- FIX: Added new column with an input for the game_player_id ---
             tr.innerHTML = `
                 <td class="px-6 py-4">${player.display_name}</td>
                 <td class="px-6 py-4">
@@ -37,7 +38,10 @@ document.addEventListener('DOMContentLoaded', () => {
                     <input type="number" value="${player.rating}" min="0" max="100" class="rating-input w-20 bg-gray-600 border-gray-500 rounded-md p-2" data-userid="${player.user_id}">
                 </td>
                 <td class="px-6 py-4">
-                    <button class="save-rating-btn bg-blue-600 hover:bg-blue-700 text-white font-bold py-1 px-3 rounded-md text-sm" data-userid="${player.user_id}">Save</button>
+                    <input type="text" value="${player.game_player_id || ''}" placeholder="Enter 17-digit SteamID64..." class="game-id-input w-48 bg-gray-600 border-gray-500 rounded-md p-2" data-userid="${player.user_id}">
+                </td>
+                <td class="px-6 py-4">
+                    <button class="save-player-btn bg-blue-600 hover:bg-blue-700 text-white font-bold py-1 px-3 rounded-md text-sm" data-userid="${player.user_id}">Save</button>
                 </td>
             `;
             playerRatingsBody.appendChild(tr);
@@ -58,7 +62,7 @@ document.addEventListener('DOMContentLoaded', () => {
             });
             renderPlayerTable(allPlayers);
         } catch (error) {
-            playerRatingsBody.innerHTML = `<tr><td colspan="4" class="text-center p-4 text-red-400">${error.message}</td></tr>`;
+            playerRatingsBody.innerHTML = `<tr><td colspan="5" class="text-center p-4 text-red-400">${error.message}</td></tr>`;
         }
     };
 
@@ -68,6 +72,7 @@ document.addEventListener('DOMContentLoaded', () => {
         syncMembersBtn.textContent = 'Syncing...';
         syncMembersBtn.disabled = true;
         try {
+            // NOTE: The endpoint for this was missing from the provided files, assuming it's at /api/players/sync
             const response = await fetch('/api/players/sync', { method: 'POST', headers });
             if (!response.ok) throw new Error((await response.json()).detail || 'Sync failed');
             const result = await response.json();
@@ -87,12 +92,17 @@ document.addEventListener('DOMContentLoaded', () => {
         renderPlayerTable(filteredPlayers);
     });
 
+    // --- FIX: Updated event listener to save both rating and game ID ---
     playerRatingsBody.addEventListener('click', async (e) => {
-        if (e.target.classList.contains('save-rating-btn')) {
+        if (e.target.classList.contains('save-player-btn')) {
             const button = e.target;
             const userId = button.dataset.userid;
+            
             const ratingInput = playerRatingsBody.querySelector(`.rating-input[data-userid="${userId}"]`);
             const rating = parseInt(ratingInput.value, 10);
+
+            const gameIdInput = playerRatingsBody.querySelector(`.game-id-input[data-userid="${userId}"]`);
+            const gamePlayerId = gameIdInput.value.trim() || null;
 
             if (isNaN(rating) || rating < 0 || rating > 100) {
                 alert('Rating must be a number between 0 and 100.');
@@ -101,15 +111,31 @@ document.addEventListener('DOMContentLoaded', () => {
 
             button.textContent = 'Saving...';
             button.disabled = true;
+
             try {
-                const response = await fetch('/api/players/rating', {
+                // Create two promises to run in parallel
+                const ratingPromise = fetch('/api/players/rating', {
                     method: 'PUT',
                     headers: headers,
                     body: JSON.stringify({ user_id: userId, rating: rating })
                 });
-                if (!response.ok) throw new Error('Failed to save rating');
+
+                const gameIdPromise = fetch('/api/players/game-id', {
+                    method: 'PUT',
+                    headers: headers,
+                    body: JSON.stringify({ user_id: userId, game_player_id: gamePlayerId })
+                });
+
+                // Wait for both requests to complete
+                const [ratingResponse, gameIdResponse] = await Promise.all([ratingPromise, gameIdPromise]);
+
+                if (!ratingResponse.ok || !gameIdResponse.ok) {
+                    throw new Error('Failed to save one or more fields.');
+                }
+
                 button.textContent = 'Saved!';
                 setTimeout(() => { button.textContent = 'Save'; }, 2000);
+
             } catch (error) {
                 alert(`Error: ${error.message}`);
                 button.textContent = 'Save';
