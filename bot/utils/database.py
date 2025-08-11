@@ -3,7 +3,7 @@ import os
 import datetime
 import json
 import httpx
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Any
 import uuid
 from collections import defaultdict
 
@@ -22,6 +22,27 @@ class RsvpStatus:
     ACCEPTED = "Accepted"
     TENTATIVE = "Tentative"
     DECLINED = "Declined"
+
+# --- FIX START: Helper function to safely convert CSV strings to numbers ---
+def _safe_int(value: Any) -> Optional[int]:
+    """Safely converts a value to an integer, returning None if conversion fails."""
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (ValueError, TypeError):
+        return None
+
+def _safe_float(value: Any) -> Optional[float]:
+    """Safely converts a value to a float, returning None if conversion fails."""
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (ValueError, TypeError):
+        return None
+# --- FIX END ---
+
 
 async def _send_rsvp_log_message(user_id: int, event_title: str, old_status: str, new_status: str):
     log_channel_id = os.getenv("EVENT_LOG_CHANNEL_ID")
@@ -151,7 +172,6 @@ class Database:
                 await connection.execute("ALTER TABLE player_stats ADD COLUMN IF NOT EXISTS rating INT DEFAULT 50;")
                 await connection.execute("ALTER TABLE player_stats ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE;")
                 await connection.execute("ALTER TABLE player_stats ADD COLUMN IF NOT EXISTS role_affinities JSONB DEFAULT '{}'::jsonb;")
-                # --- FIX: Add new columns for game ID linking and name caching ---
                 await connection.execute("ALTER TABLE player_stats ADD COLUMN IF NOT EXISTS game_player_id TEXT;")
                 await connection.execute("ALTER TABLE player_stats ADD COLUMN IF NOT EXISTS display_name VARCHAR(255);")
 
@@ -193,7 +213,6 @@ class Database:
                     );
                 """)
                 
-                # --- FIX START: New tables for match history and uploads ---
                 await connection.execute("""
                     CREATE TABLE IF NOT EXISTS match_uploads (
                         match_id VARCHAR(255) PRIMARY KEY,
@@ -220,11 +239,9 @@ class Database:
                         offensive_score INT
                     );
                 """)
-                # --- FIX END ---
                 
                 print("Database setup is complete.")
 
-    # --- FIX START: New functions for match stats and player management ---
     async def get_full_player_export_data(self) -> List[Dict]:
         """Gathers all active player stats and their complete event history for CSV export."""
         query = """
@@ -292,18 +309,19 @@ class Database:
                 records_to_insert = []
                 for row in match_stats:
                     game_player_id = row.get("Player ID")
+                    # --- FIX: Convert all numeric string values from CSV to their correct types ---
                     records_to_insert.append((
                         match_id,
                         game_player_id,
                         game_id_to_discord_id.get(game_player_id),
                         row.get("Name"),
-                        row.get("Kills"),
-                        row.get("Deaths"),
-                        row.get("K/D"),
-                        row.get("Combat Effectiveness"),
-                        row.get("Support Points"),
-                        row.get("Defensive Points"),
-                        row.get("Offensive Points")
+                        _safe_int(row.get("Kills")),
+                        _safe_int(row.get("Deaths")),
+                        _safe_float(row.get("K/D")),
+                        _safe_int(row.get("Combat Effectiveness")),
+                        _safe_int(row.get("Support Points")),
+                        _safe_int(row.get("Defensive Points")),
+                        _safe_int(row.get("Offensive Points"))
                     ))
 
                 # Insert all player stats for this match
@@ -316,7 +334,6 @@ class Database:
                         'defensive_score', 'offensive_score'
                     ]
                 )
-    # --- FIX END ---
     
     async def add_or_update_server_member(self, user_id: int):
         query = """
