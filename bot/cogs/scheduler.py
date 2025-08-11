@@ -25,6 +25,8 @@ class Scheduler(commands.Cog):
         self.process_tentatives.start()
         self.update_event_embeds.start()
         self.sync_player_database.start()
+        # --- FIX: Start the new name caching task ---
+        self.cache_player_names.start()
 
     def cog_unload(self):
         """Cleanly cancels all tasks when the cog is unloaded."""
@@ -37,6 +39,51 @@ class Scheduler(commands.Cog):
         self.process_tentatives.cancel()
         self.update_event_embeds.cancel()
         self.sync_player_database.cancel()
+        # --- FIX: Cancel the new name caching task ---
+        self.cache_player_names.cancel()
+
+    # --- FIX START: New background task to cache player display names ---
+    @tasks.loop(minutes=10)
+    async def cache_player_names(self):
+        """Periodically fetches and caches the display names of all active players."""
+        print("\n[Scheduler] Running cache_player_names loop...")
+        guild_id_str = os.getenv("GUILD_ID")
+        if not guild_id_str:
+            print("[Name Cache] GUILD_ID not set. Skipping name cache.")
+            return
+
+        guild = self.bot.get_guild(int(guild_id_str))
+        if not guild:
+            print(f"[Name Cache] Could not find guild with ID {guild_id_str}. Skipping.")
+            return
+
+        try:
+            active_players = await self.db.get_all_player_stats()
+            if not active_players:
+                print("[Name Cache] No active players in the database to cache.")
+                return
+
+            member_data_to_cache = []
+            for player in active_players:
+                try:
+                    member = guild.get_member(player['user_id']) or await guild.fetch_member(player['user_id'])
+                    if member:
+                        member_data_to_cache.append({
+                            'id': member.id,
+                            'name': member.display_name
+                        })
+                except discord.NotFound:
+                    # If member left, their name won't be updated, which is fine.
+                    continue
+            
+            if member_data_to_cache:
+                await self.db.cache_player_display_names(member_data_to_cache)
+                print(f"[Name Cache] Successfully cached {len(member_data_to_cache)} player names.")
+
+        except Exception as e:
+            print(f"[Name Cache] FATAL ERROR during name caching: {e}")
+            traceback.print_exc()
+    # --- FIX END ---
 
     @tasks.loop(minutes=10)
     async def sync_player_database(self):
@@ -288,7 +335,6 @@ class Scheduler(commands.Cog):
             print(f"  [Process:{event_id}] FAILED: An unexpected error occurred. The event will be re-attempted later.")
             traceback.print_exc()
 
-    # --- FIX START: Refactored recurring event logic for greater reliability ---
     @tasks.loop(minutes=5)
     async def recreate_recurring_events(self):
         """Checks if a recurring event's last occurrence has finished and creates the next one."""
@@ -318,29 +364,22 @@ class Scheduler(commands.Cog):
         
         latest_child = await self.db.get_latest_child_event(parent_id)
         
-        # Determine the correct start time for the *next* event.
         if latest_child:
-            # If a child exists, the next event is calculated from its start time.
             basis_time = latest_child['event_time']
             next_start_time = self.calculate_next_occurrence(basis_time, parent_event['recurrence_rule'])
         else:
-            # If no child exists, the first event is based on the parent's time.
             basis_time = parent_event['event_time']
             next_start_time = basis_time
 
         if not next_start_time:
             return
 
-        # If the calculated next start time is in the past, fast-forward until it's in the future.
-        # This handles cases where the bot was offline and missed several cycles.
         while next_start_time < now_utc:
             next_start_time = self.calculate_next_occurrence(next_start_time, parent_event['recurrence_rule'])
 
-        # Prevent duplicate creation if a child for this future period already exists.
         if latest_child and latest_child['event_time'] >= next_start_time:
             return
             
-        # Check if we are within the creation window for the upcoming event.
         recreation_hours = parent_event.get('recreation_hours', 168)
         creation_window_start = next_start_time - datetime.timedelta(hours=recreation_hours)
         if now_utc < creation_window_start:
@@ -348,7 +387,6 @@ class Scheduler(commands.Cog):
 
         print(f"Recreating event for parent ID {parent_id}.")
 
-        # Prepare data for the new child event
         child_data = dict(parent_event)
         duration = parent_event['end_time'] - parent_event['event_time']
         child_data['event_time'] = next_start_time
@@ -377,7 +415,6 @@ class Scheduler(commands.Cog):
         except Exception as e:
             print(f"Failed to process recreation for parent event {parent_id}: {e}")
             traceback.print_exc()
-    # --- FIX END ---
 
     @tasks.loop(time=datetime.time(hour=0, minute=5, tzinfo=pytz.utc))
     async def purge_deleted_events(self):
@@ -433,6 +470,8 @@ class Scheduler(commands.Cog):
     @purge_deleted_events.before_loop
     @update_event_embeds.before_loop
     @sync_player_database.before_loop
+    # --- FIX: Add the new name caching task to the before_loop wait ---
+    @cache_player_names.before_loop
     async def before_tasks(self):
         """Waits until the bot is fully logged in and ready before starting loops."""
         print("[Scheduler Tasks] Waiting for bot to be ready...")
