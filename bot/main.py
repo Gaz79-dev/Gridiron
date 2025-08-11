@@ -10,7 +10,6 @@ from fastapi.middleware.cors import CORSMiddleware
 
 # Use absolute imports from the 'bot' package root
 from bot.utils.database import Database
-# --- FIX: Import the new 'players' router ---
 from bot.api.routers import events, users, squads, stats, players
 from bot.api.routers import templates as templates_router
 from bot.api import auth
@@ -31,9 +30,7 @@ async def lifespan(app: FastAPI):
     db_instance = Database()
     await db_instance.connect()
     
-    # Store the database connection in the app's state
     app.state.db = db_instance
-    # Explicitly set the bot to None, as it runs in a separate process
     app.state.bot = None 
     
     yield
@@ -68,7 +65,6 @@ app.include_router(events.router)
 app.include_router(squads.router)
 app.include_router(stats.router)
 app.include_router(templates_router.router)
-# --- FIX: Register the new players router ---
 app.include_router(players.router)
 
 # --- Web Page Routes ---
@@ -84,19 +80,24 @@ async def main_page(request: Request):
 async def admin_page(request: Request):
     return templates.TemplateResponse("admin.html", {"request": request})
 
-@app.get("/stats", tags=["HTML"], summary="Serves the engagement stats page")
-async def stats_page(request: Request):
-    return templates.TemplateResponse("stats.html", {"request": request})
+# --- FIX START: Rename old stats page to engagement and add new stats page ---
+@app.get("/engagement", tags=["HTML"], summary="Serves the engagement stats page")
+async def engagement_page(request: Request):
+    return templates.TemplateResponse("engagement.html", {"request": request})
 
-@app.get("/stats/player/{user_id}", tags=["HTML"], summary="Serves the player detail page")
+@app.get("/engagement/player/{user_id}", tags=["HTML"], summary="Serves the player detail page")
 async def player_detail_page(request: Request, user_id: int):
     return templates.TemplateResponse("player_detail.html", {"request": request, "user_id": user_id})
+
+@app.get("/stats", tags=["HTML"], summary="Serves the new match stats and leaderboards page")
+async def stats_page(request: Request):
+    return templates.TemplateResponse("stats.html", {"request": request})
+# --- FIX END ---
 
 @app.get("/events", tags=["HTML"], summary="Serves the event management page")
 async def events_page(request: Request):
     return templates.TemplateResponse("events.html", {"request": request})
 
-# --- FIX: Add the new route for the players page ---
 @app.get("/players", tags=["HTML"], summary="Serves the player ratings page")
 async def players_page(request: Request):
     return templates.TemplateResponse("players.html", {"request": request})
