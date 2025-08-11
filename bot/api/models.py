@@ -1,6 +1,6 @@
 from pydantic import BaseModel, Field, ConfigDict
 from typing import Optional, List, Dict
-from datetime import datetime
+from datetime import datetime, date
 
 # --- Token Models ---
 class Token(BaseModel):
@@ -123,7 +123,7 @@ class SquadTemplateCreate(BaseModel):
     template_name: str
     definitions: List[SquadTemplateDefinition]
 
-# --- Player Statistics Models (Updated for AI) ---
+# --- Player Statistics Models (Updated for AI & Stats) ---
 
 class PlayerStats(BaseModel):
     user_id: str
@@ -133,10 +133,11 @@ class PlayerStats(BaseModel):
     declined_count: int
     last_signup_date: Optional[datetime] = None
     days_since_last_signup: Optional[int] = None
-    # --- FIX: Add new AI-related fields ---
     rating: int
     is_active: bool
     role_affinities: Optional[Dict] = None
+    # --- FIX: Add new field for game ID ---
+    game_player_id: Optional[str] = None
 
 class AcceptedEvent(BaseModel):
     event_title: str
@@ -156,10 +157,9 @@ class EventUpdate(BaseModel):
     mention_role_ids: List[int] = []
     restrict_to_role_ids: List[int] = []
 
-# --- FIX START: New models for the Admin Rating Panel ---
 class PlayerRatingUpdate(BaseModel):
     user_id: str
-    rating: int = Field(..., ge=0, le=100) # Rating must be between 0 and 100
+    rating: int = Field(..., ge=0, le=100)
 
 class PlayerAdminInfo(BaseModel):
     """Model for displaying players in the admin rating panel."""
@@ -167,4 +167,26 @@ class PlayerAdminInfo(BaseModel):
     display_name: str
     rating: int
     is_active: bool
+    # --- FIX: Add new field for game ID ---
+    game_player_id: Optional[str] = None
+
+# --- FIX START: New models for Match Stats feature ---
+class PlayerGameIdUpdate(BaseModel):
+    user_id: str
+    game_player_id: Optional[str] = None
+
+class MatchUpload(BaseModel):
+    event_name: str
+    event_date: date
+    file_timestamp: str
+
+class LeaderboardPlayer(BaseModel):
+    player_name: str
+    discord_user_id: Optional[str] = None
+    total_value: int
+
+class Leaderboard(BaseModel):
+    kills: List[LeaderboardPlayer]
+    combat_effectiveness: List[LeaderboardPlayer]
+    support_score: List[LeaderboardPlayer]
 # --- FIX END ---
