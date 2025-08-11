@@ -7,7 +7,7 @@ from typing import List
 from bot.utils.database import Database
 from bot.api import auth
 from bot.api.dependencies import get_db
-from bot.api.models import PlayerAdminInfo, PlayerGameIdUpdate
+from bot.api.models import PlayerAdminInfo, PlayerGameIdUpdate, PlayerRatingUpdate
 
 router = APIRouter(
     prefix="/api/players",
@@ -40,6 +40,20 @@ async def get_all_players_for_admin(db: Database = Depends(get_db)):
             
     return player_list
 
+# --- FIX START: Added the missing endpoint for updating player ratings ---
+@router.put("/rating", status_code=204)
+async def update_player_rating(update_data: PlayerRatingUpdate, db: Database = Depends(get_db)):
+    """
+    Updates a player's skill rating.
+    """
+    try:
+        user_id_int = int(update_data.user_id)
+        await db.update_player_rating(user_id_int, update_data.rating)
+    except Exception as e:
+        print(f"Error updating player rating: {e}")
+        raise HTTPException(status_code=500, detail="Failed to update rating in database.")
+# --- FIX END ---
+
 @router.put("/game-id", status_code=204)
 async def update_player_game_id(update_data: PlayerGameIdUpdate, db: Database = Depends(get_db)):
     """
@@ -51,3 +65,4 @@ async def update_player_game_id(update_data: PlayerGameIdUpdate, db: Database = 
     except Exception as e:
         print(f"Error updating player game ID: {e}")
         raise HTTPException(status_code=500, detail="Failed to update game ID in database.")
+
