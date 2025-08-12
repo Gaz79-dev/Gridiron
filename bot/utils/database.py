@@ -245,42 +245,37 @@ class Database:
     # --- New function to calculate leaderboards from match history ---
     async def calculate_leaderboards(self) -> Dict[str, List[Dict]]:
         """
-        Calculates leaderboards by counting how many times each registered clan player
-        appears in the Top 10 for a given stat in each match.
+        Calculates leaderboards by finding the top 10 clan players within each match
+        and counting their appearances.
         """
         async with self.pool.acquire() as conn:
             
+            # This query filters for clan players first, then ranks them.
             base_query = """
-                WITH UniversalRank AS (
+                WITH ClanPlayerStats AS (
                     SELECT
-                        match_id,
-                        game_player_id,
-                        RANK() OVER (PARTITION BY match_id ORDER BY {stat_column} DESC) as rank
-                    FROM
-                        match_history
-                    WHERE
-                        {stat_column} IS NOT NULL
-                ),
-                ClanTop10 AS (
-                    SELECT
-                        ur.match_id,
+                        mh.match_id,
                         ps.display_name,
-                        ps.user_id as discord_user_id
+                        ps.user_id,
+                        mh.{stat_column},
+                        RANK() OVER (PARTITION BY mh.match_id ORDER BY mh.{stat_column} DESC) as rank
                     FROM
-                        UniversalRank ur
+                        match_history mh
                     INNER JOIN
-                        player_stats ps ON ur.game_player_id = ps.game_player_id
+                        player_stats ps ON mh.game_player_id = ps.game_player_id
                     WHERE
-                        ur.rank <= 10
+                        mh.{stat_column} IS NOT NULL
                 )
                 SELECT
-                    ct.display_name AS player_name,
-                    ct.discord_user_id::text AS discord_user_id,
-                    COUNT(ct.match_id) AS total_value
+                    cps.display_name AS player_name,
+                    cps.user_id::text AS discord_user_id,
+                    COUNT(cps.match_id) AS total_value
                 FROM
-                    ClanTop10 ct
+                    ClanPlayerStats cps
+                WHERE
+                    cps.rank <= 10
                 GROUP BY
-                    ct.display_name, ct.discord_user_id
+                    cps.display_name, cps.user_id
                 ORDER BY
                     total_value DESC
                 LIMIT 10;
@@ -290,7 +285,6 @@ class Database:
             kills_records = await conn.fetch(base_query.format(stat_column='kills'))
             combat_records = await conn.fetch(base_query.format(stat_column='combat_effectiveness'))
             support_records = await conn.fetch(base_query.format(stat_column='support_score'))
-            # --- ADD THESE TWO QUERIES ---
             offensive_records = await conn.fetch(base_query.format(stat_column='offensive_score'))
             defensive_records = await conn.fetch(base_query.format(stat_column='defensive_score'))
     
@@ -298,7 +292,6 @@ class Database:
                 "kills": [dict(r) for r in kills_records],
                 "combat_effectiveness": [dict(r) for r in combat_records],
                 "support_score": [dict(r) for r in support_records],
-                # --- ADD THESE TWO LINES TO THE RETURN DICTIONARY ---
                 "offensive_score": [dict(r) for r in offensive_records],
                 "defensive_score": [dict(r) for r in defensive_records]
             }
