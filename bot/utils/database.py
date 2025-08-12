@@ -244,52 +244,52 @@ class Database:
 
     # --- New function to calculate leaderboards from match history ---
     async def calculate_leaderboards(self) -> Dict[str, List[Dict]]:
-    """
-    Calculates leaderboards by counting how many times each registered clan player
-    appears in the Top 10 for a given stat in each match.
-    """
-    async with self.pool.acquire() as conn:
-        
-        # This updated query now JOINS with player_stats to filter for clan members
-        base_query = """
-            WITH RankedStats AS (
-                SELECT
-                    mh.match_id,
-                    ps.display_name, -- Use the canonical display name from player_stats
-                    ps.user_id AS discord_user_id, -- Use the canonical user_id
-                    RANK() OVER (PARTITION BY mh.match_id ORDER BY mh.{stat_column} DESC) as rank
-                FROM
-                    match_history mh
-                INNER JOIN -- This join filters for players registered in your database
-                    player_stats ps ON mh.game_player_id = ps.game_player_id
-                WHERE
-                    mh.{stat_column} IS NOT NULL
-            )
-            SELECT
-                rs.display_name AS player_name, -- Alias to match the Pydantic model
-                rs.discord_user_id,
-                COUNT(rs.match_id) AS total_value
-            FROM
-                RankedStats rs
-            WHERE
-                rs.rank <= 10
-            GROUP BY
-                rs.display_name, rs.discord_user_id
-            ORDER BY
-                total_value DESC
-            LIMIT 10;
         """
-        
-        # Execute the query for each leaderboard category
-        kills_records = await conn.fetch(base_query.format(stat_column='kills'))
-        combat_records = await conn.fetch(base_query.format(stat_column='combat_effectiveness'))
-        support_records = await conn.fetch(base_query.format(stat_column='support_score'))
+        Calculates leaderboards by counting how many times each registered clan player
+        appears in the Top 10 for a given stat in each match.
+        """
+        async with self.pool.acquire() as conn:
+            
+            # This updated query now JOINS with player_stats to filter for clan members
+            base_query = """
+                WITH RankedStats AS (
+                    SELECT
+                        mh.match_id,
+                        ps.display_name, -- Use the canonical display name from player_stats
+                        ps.user_id AS discord_user_id, -- Use the canonical user_id
+                        RANK() OVER (PARTITION BY mh.match_id ORDER BY mh.{stat_column} DESC) as rank
+                    FROM
+                        match_history mh
+                    INNER JOIN -- This join filters for players registered in your database
+                        player_stats ps ON mh.game_player_id = ps.game_player_id
+                    WHERE
+                        mh.{stat_column} IS NOT NULL
+                )
+                SELECT
+                    rs.display_name AS player_name, -- Alias to match the Pydantic model
+                    rs.discord_user_id,
+                    COUNT(rs.match_id) AS total_value
+                FROM
+                    RankedStats rs
+                WHERE
+                    rs.rank <= 10
+                GROUP BY
+                    rs.display_name, rs.discord_user_id
+                ORDER BY
+                    total_value DESC
+                LIMIT 10;
+            """
+            
+            # Execute the query for each leaderboard category
+            kills_records = await conn.fetch(base_query.format(stat_column='kills'))
+            combat_records = await conn.fetch(base_query.format(stat_column='combat_effectiveness'))
+            support_records = await conn.fetch(base_query.format(stat_column='support_score'))
 
-        return {
-            "kills": [dict(r) for r in kills_records],
-            "combat_effectiveness": [dict(r) for r in combat_records],
-            "support_score": [dict(r) for r in support_records]
-        }
+            return {
+                "kills": [dict(r) for r in kills_records],
+                "combat_effectiveness": [dict(r) for r in combat_records],
+                "support_score": [dict(r) for r in support_records]
+            }
 
     async def get_full_player_export_data(self) -> List[Dict]:
         """Gathers all active player stats and their complete event history for CSV export."""
