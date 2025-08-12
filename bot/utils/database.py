@@ -7,11 +7,23 @@ from typing import List, Optional, Dict, Any
 import uuid
 from collections import defaultdict
 
+# Static Definitions
+ROLES = ["Commander", "Infantry", "Armour", "Recon", "Pathfinders", "Artillery"]
+SUBCLASSES = {
+    "Infantry": ["Anti-Tank", "Assault", "Automatic Rifleman", "Engineer", "Machine Gunner", "Medic", "Officer", "Rifleman", "Support"],
+    "Armour": ["Tank Commander", "Crewman"],
+    "Recon": ["Spotter", "Sniper"],
+    "Pathfinders": ["Anti-Tank", "Assault", "Automatic Rifleman", "Engineer", "Machine Gunner", "Medic", "Officer", "Rifleman", "Support"],
+    "Artillery": ["Anti-Tank", "Assault", "Automatic Rifleman", "Engineer", "Machine Gunner", "Medic", "Officer", "Rifleman", "Support"]
+}
+RESTRICTED_ROLES = ["Commander", "Recon", "Officer", "Tank Commander", "Pathfinders", "Artillery"]
+
 class RsvpStatus:
     ACCEPTED = "Accepted"
     TENTATIVE = "Tentative"
     DECLINED = "Declined"
 
+# --- FIX START: Helper function to safely convert CSV strings to numbers ---
 def _safe_int(value: Any) -> Optional[int]:
     """Safely converts a value to an integer, returning None if conversion fails."""
     if value is None:
@@ -29,6 +41,8 @@ def _safe_float(value: Any) -> Optional[float]:
         return float(value)
     except (ValueError, TypeError):
         return None
+# --- FIX END ---
+
 
 async def _send_rsvp_log_message(user_id: int, event_title: str, old_status: str, new_status: str):
     log_channel_id = os.getenv("EVENT_LOG_CHANNEL_ID")
@@ -225,121 +239,42 @@ class Database:
                         offensive_score INT
                     );
                 """)
-
-                await connection.execute("""
-                    CREATE TABLE IF NOT EXISTS roles (
-                        role_id SERIAL PRIMARY KEY,
-                        name VARCHAR(100) UNIQUE NOT NULL,
-                        is_restricted BOOLEAN DEFAULT FALSE
-                    );
-                """)
-                await connection.execute("""
-                    CREATE TABLE IF NOT EXISTS subclasses (
-                        subclass_id SERIAL PRIMARY KEY,
-                        name VARCHAR(100) UNIQUE NOT NULL,
-                        parent_role_id INT NOT NULL REFERENCES roles(role_id) ON DELETE CASCADE
-                    );
-                """)
-                await self._populate_initial_roles(connection)
                 
                 print("Database setup is complete.")
 
-    async def _populate_initial_roles(self, connection):
-        """Populates the roles and subclasses tables if they are empty."""
-        role_count = await connection.fetchval("SELECT COUNT(*) FROM roles;")
-        if role_count > 0:
-            return
-
-        print("Performing first-time population of roles and subclasses...")
-
-        default_roles = ["Commander", "Infantry", "Armour", "Recon", "Pathfinders", "Artillery"]
-        default_subclasses = {
-            "Infantry": ["Anti-Tank", "Assault", "Automatic Rifleman", "Engineer", "Machine Gunner", "Medic", "Officer", "Rifleman", "Support"],
-            "Armour": ["Tank Commander", "Crewman"],
-            "Recon": ["Spotter", "Sniper"],
-            "Pathfinders": ["Anti-Tank", "Assault", "Automatic Rifleman", "Engineer", "Machine Gunner", "Medic", "Officer", "Rifleman", "Support"],
-            "Artillery": ["Anti-Tank", "Assault", "Automatic Rifleman", "Engineer", "Machine Gunner", "Medic", "Officer", "Rifleman", "Support"]
-        }
-        default_restricted_roles = ["Commander", "Recon", "Officer", "Tank Commander", "Pathfinders", "Artillery"]
-
-        role_name_to_id = {}
-        for role_name in default_roles:
-            is_restricted = role_name in default_restricted_roles
-            role_id = await connection.fetchval(
-                "INSERT INTO roles (name, is_restricted) VALUES ($1, $2) RETURNING role_id;",
-                role_name, is_restricted
-            )
-            role_name_to_id[role_name] = role_id
-
-        for parent_role_name, subclasses_list in default_subclasses.items():
-            parent_role_id = role_name_to_id.get(parent_role_name)
-            if parent_role_id:
-                for subclass_name in subclasses_list:
-                    await connection.execute(
-                        "INSERT INTO subclasses (name, parent_role_id) VALUES ($1, $2) ON CONFLICT (name) DO NOTHING;",
-                        subclass_name, parent_role_id
-                    )
-        print("Default roles and subclasses have been populated.")
-
-    # --- FIX START: Rewrote the leaderboard query to count Top 10 appearances ---
+    # --- FIX START: New function to calculate leaderboards from match history ---
     async def calculate_leaderboards(self) -> Dict[str, List[Dict]]:
         """
-        Calculates leaderboards based on the number of times a player
-        appears in the top 10 for a stat in each match.
+        Calculates the top 10 players for key statistics from the match_history table.
         """
         async with self.pool.acquire() as conn:
+            # Base query to aggregate stats by player
             base_query = """
-                WITH RankedPlayers AS (
-                    -- Step 1: Rank players within each match for the specific stat
-                    SELECT
-                        game_player_id,
-                        RANK() OVER(PARTITION BY match_id ORDER BY {stat_column} DESC) as rank
-                    FROM
-                        match_history
-                    WHERE
-                        {stat_column} IS NOT NULL AND game_player_id IS NOT NULL AND game_player_id != ''
-                ),
-                TopTenCounts AS (
-                    -- Step 2: Count how many times each player ranked in the top 10
-                    SELECT
-                        game_player_id,
-                        COUNT(*) as total_value
-                    FROM
-                        RankedPlayers
-                    WHERE
-                        rank <= 10
-                    GROUP BY
-                        game_player_id
-                )
-                -- Step 3: Join to get player names and format the final output
                 SELECT
-                    COALESCE(ps.display_name, (SELECT MAX(mh.player_name) FROM match_history mh WHERE mh.game_player_id = ttc.game_player_id)) as player_name,
-                    ps.user_id as discord_user_id,
-                    ttc.total_value
+                    player_name,
+                    discord_user_id,
+                    SUM({stat_column}) as total_value
                 FROM
-                    TopTenCounts ttc
-                LEFT JOIN
-                    player_stats ps ON ttc.game_player_id = ps.game_player_id
+                    match_history
+                WHERE
+                    {stat_column} IS NOT NULL
+                GROUP BY
+                    player_name, discord_user_id
                 ORDER BY
-                    ttc.total_value DESC
+                    total_value DESC
                 LIMIT 10;
             """
             
-            stat_columns = {
-                "kills": "kills",
-                "combat_effectiveness": "combat_effectiveness",
-                "support_score": "support_score",
-                "defensive_score": "defensive_score",
-                "offensive_score": "offensive_score"
-            }
-            
-            results = {}
-            for key, column in stat_columns.items():
-                query = base_query.format(stat_column=column)
-                records = await conn.fetch(query)
-                results[key] = [dict(r) for r in records]
+            # Execute queries for each leaderboard category
+            kills_records = await conn.fetch(base_query.format(stat_column='kills'))
+            combat_records = await conn.fetch(base_query.format(stat_column='combat_effectiveness'))
+            support_records = await conn.fetch(base_query.format(stat_column='support_score'))
 
-            return results
+            return {
+                "kills": [dict(r) for r in kills_records],
+                "combat_effectiveness": [dict(r) for r in combat_records],
+                "support_score": [dict(r) for r in support_records]
+            }
     # --- FIX END ---
 
     async def get_full_player_export_data(self) -> List[Dict]:
@@ -393,19 +328,23 @@ class Database:
         """Inserts a new match and all its player stats into the database."""
         async with self.pool.acquire() as conn:
             async with conn.transaction():
+                # Link Discord IDs where possible
                 game_id_to_discord_id = {
                     row['game_player_id']: row['user_id']
                     for row in await conn.fetch("SELECT user_id, game_player_id FROM player_stats WHERE game_player_id IS NOT NULL;")
                 }
 
+                # Create the main upload record
                 await conn.execute(
                     "INSERT INTO match_uploads (match_id, event_name, event_date, uploaded_by_user_id) VALUES ($1, $2, $3, $4);",
                     match_id, event_name, event_date, uploader_id
                 )
 
+                # Prepare the data for insertion
                 records_to_insert = []
                 for row in match_stats:
                     game_player_id = row.get("Player ID")
+                    # --- FIX: Convert all numeric string values from CSV to their correct types ---
                     records_to_insert.append((
                         match_id,
                         game_player_id,
@@ -420,6 +359,7 @@ class Database:
                         _safe_int(row.get("Offensive Points"))
                     ))
 
+                # Insert all player stats for this match
                 await conn.copy_records_to_table(
                     'match_history',
                     records=records_to_insert,
@@ -856,55 +796,7 @@ class Database:
             await connection.execute(query)
 
     async def get_all_roles_and_subclasses(self) -> Dict:
-        """Fetches all roles and their associated subclasses from the database."""
-        async with self.pool.acquire() as conn:
-            roles_records = await conn.fetch("SELECT name, is_restricted FROM roles ORDER BY role_id;")
-            subclasses_records = await conn.fetch("""
-                SELECT s.name as subclass_name, r.name as parent_role_name
-                FROM subclasses s
-                JOIN roles r ON s.parent_role_id = r.role_id;
-            """)
-
-            roles = [r['name'] for r in roles_records]
-            restricted_roles = [r['name'] for r in roles_records if r['is_restricted']]
-            
-            subclasses = defaultdict(list)
-            for record in subclasses_records:
-                subclasses[record['parent_role_name']].append(record['subclass_name'])
-
-            return {
-                "roles": roles,
-                "subclasses": dict(subclasses),
-                "restricted_roles": restricted_roles
-            }
-    
-    async def add_role(self, name: str, is_restricted: bool):
-        """Adds a new primary role to the database."""
-        async with self.pool.acquire() as conn:
-            await conn.execute(
-                "INSERT INTO roles (name, is_restricted) VALUES ($1, $2) ON CONFLICT (name) DO NOTHING;",
-                name, is_restricted
-            )
-
-    async def add_subclass(self, name: str, parent_role_name: str):
-        """Adds a new subclass to a parent role."""
-        async with self.pool.acquire() as conn:
-            parent_role_id = await conn.fetchval("SELECT role_id FROM roles WHERE name = $1;", parent_role_name)
-            if parent_role_id:
-                await conn.execute(
-                    "INSERT INTO subclasses (name, parent_role_id) VALUES ($1, $2) ON CONFLICT (name) DO NOTHING;",
-                    name, parent_role_id
-                )
-
-    async def delete_role(self, name: str):
-        """Deletes a primary role. Subclasses are deleted by cascade."""
-        async with self.pool.acquire() as conn:
-            await conn.execute("DELETE FROM roles WHERE name = $1;", name)
-
-    async def delete_subclass(self, name: str):
-        """Deletes a subclass."""
-        async with self.pool.acquire() as conn:
-            await conn.execute("DELETE FROM subclasses WHERE name = $1;", name)
+        return {"roles": ROLES, "subclasses": SUBCLASSES}
 
     async def create_squad(self, event_id: int, name: str, squad_type: str) -> int:
         async with self.pool.acquire() as connection:
