@@ -66,7 +66,9 @@ document.addEventListener('DOMContentLoaded', () => {
             leaderboardsContainer.innerHTML = ''; // Clear previous data
             renderLeaderboard('Top 10 Kills', data.kills);
             renderLeaderboard('Top 10 Combat Effectiveness', data.combat_effectiveness);
-            renderLeaderboard('Top 10 Support Score', data.support_score);
+            renderLeaderboard('Top 10 Offensive Points', data.offensive_score);
+            renderLeaderboard('Top 10 Defensive Points', data.defensive_score);
+            renderLeaderboard('Top 10 Support Points', data.support_score);
 
         } catch (error) {
             leaderboardsContainer.innerHTML = `<p class="text-red-400 col-span-full">${error.message}</p>`;
