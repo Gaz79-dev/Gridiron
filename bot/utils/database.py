@@ -793,10 +793,6 @@ class Database:
                 last_signup_date_val
             )
 
-    async def get_all_player_stats(self) -> List[Dict]:
-        async with self.pool.acquire() as connection:
-            return [dict(row) for row in await connection.fetch("SELECT * FROM player_stats WHERE is_active = TRUE;")]
-
     async def get_accepted_events_for_user(self, user_id: int) -> List[Dict]:
         query = """
             SELECT event_title, event_time, role_name, subclass_name
