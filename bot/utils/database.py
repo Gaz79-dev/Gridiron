@@ -250,9 +250,6 @@ class Database:
         """
         async with self.pool.acquire() as conn:
             
-            # This query now uses two steps (CTEs) to ensure correct logic.
-            # 1. UniversalRank: Ranks ALL players in each match.
-            # 2. ClanTop10: Filters the universal top 10 to find clan members.
             base_query = """
                 WITH UniversalRank AS (
                     SELECT
@@ -293,11 +290,17 @@ class Database:
             kills_records = await conn.fetch(base_query.format(stat_column='kills'))
             combat_records = await conn.fetch(base_query.format(stat_column='combat_effectiveness'))
             support_records = await conn.fetch(base_query.format(stat_column='support_score'))
+            # --- ADD THESE TWO QUERIES ---
+            offensive_records = await conn.fetch(base_query.format(stat_column='offensive_score'))
+            defensive_records = await conn.fetch(base_query.format(stat_column='defensive_score'))
     
             return {
                 "kills": [dict(r) for r in kills_records],
                 "combat_effectiveness": [dict(r) for r in combat_records],
-                "support_score": [dict(r) for r in support_records]
+                "support_score": [dict(r) for r in support_records],
+                # --- ADD THESE TWO LINES TO THE RETURN DICTIONARY ---
+                "offensive_score": [dict(r) for r in offensive_records],
+                "defensive_score": [dict(r) for r in defensive_records]
             }
 
     async def get_full_player_export_data(self) -> List[Dict]:
