@@ -250,30 +250,40 @@ class Database:
         """
         async with self.pool.acquire() as conn:
             
+            # This query now uses two steps (CTEs) to ensure correct logic.
+            # 1. UniversalRank: Ranks ALL players in each match.
+            # 2. ClanTop10: Filters the universal top 10 to find clan members.
             base_query = """
-                WITH RankedStats AS (
+                WITH UniversalRank AS (
                     SELECT
-                        mh.match_id,
-                        ps.display_name, 
-                        ps.user_id AS discord_user_id, 
-                        RANK() OVER (PARTITION BY mh.match_id ORDER BY mh.{stat_column} DESC) as rank
+                        match_id,
+                        game_player_id,
+                        RANK() OVER (PARTITION BY match_id ORDER BY {stat_column} DESC) as rank
                     FROM
-                        match_history mh
-                    INNER JOIN
-                        player_stats ps ON mh.game_player_id = ps.game_player_id
+                        match_history
                     WHERE
-                        mh.{stat_column} IS NOT NULL
+                        {stat_column} IS NOT NULL
+                ),
+                ClanTop10 AS (
+                    SELECT
+                        ur.match_id,
+                        ps.display_name,
+                        ps.user_id as discord_user_id
+                    FROM
+                        UniversalRank ur
+                    INNER JOIN
+                        player_stats ps ON ur.game_player_id = ps.game_player_id
+                    WHERE
+                        ur.rank <= 10
                 )
                 SELECT
-                    rs.display_name AS player_name,
-                    rs.discord_user_id::text AS discord_user_id, -- This is the only line that has changed
-                    COUNT(rs.match_id) AS total_value
+                    ct.display_name AS player_name,
+                    ct.discord_user_id::text AS discord_user_id,
+                    COUNT(ct.match_id) AS total_value
                 FROM
-                    RankedStats rs
-                WHERE
-                    rs.rank <= 10
+                    ClanTop10 ct
                 GROUP BY
-                    rs.display_name, rs.discord_user_id
+                    ct.display_name, ct.discord_user_id
                 ORDER BY
                     total_value DESC
                 LIMIT 10;
