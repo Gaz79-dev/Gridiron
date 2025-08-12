@@ -136,6 +136,7 @@ class PlayerStats(BaseModel):
     rating: int
     is_active: bool
     role_affinities: Optional[Dict] = None
+    # --- FIX: Add new field for game ID ---
     game_player_id: Optional[str] = None
 
 class AcceptedEvent(BaseModel):
@@ -166,6 +167,7 @@ class PlayerAdminInfo(BaseModel):
     display_name: str
     rating: int
     is_active: bool
+    # --- FIX: Add new field for game ID ---
     game_player_id: Optional[str] = None
 
 # --- FIX START: New models for Match Stats feature ---
@@ -187,7 +189,4 @@ class Leaderboard(BaseModel):
     kills: List[LeaderboardPlayer]
     combat_effectiveness: List[LeaderboardPlayer]
     support_score: List[LeaderboardPlayer]
-    # --- FIX: Add new leaderboards ---
-    offensive_score: List[LeaderboardPlayer]
-    defensive_score: List[LeaderboardPlayer]
 # --- FIX END ---
