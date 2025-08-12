@@ -21,36 +21,99 @@ document.addEventListener('DOMContentLoaded', () => {
         "Other": ["UTC"]
     };
 
-    // Page sections and buttons
+    // --- Page sections and buttons ---
+    // NEW: Add selectors for the upcoming events view
+    const upcomingView = document.getElementById('upcoming-events-view');
     const recurringView = document.getElementById('recurring-events-view');
     const deletedView = document.getElementById('deleted-events-view');
+    const viewUpcomingBtn = document.getElementById('view-upcoming-btn');
     const viewRecurringBtn = document.getElementById('view-recurring-btn');
     const viewDeletedBtn = document.getElementById('view-deleted-btn');
+    const upcomingEventsBody = document.getElementById('upcoming-events-body');
     const recurringEventsBody = document.getElementById('recurring-events-body');
     const deletedEventsBody = document.getElementById('deleted-events-body');
     
-    // Modal elements
+    // --- Modal elements ---
     const modal = document.getElementById('edit-event-modal');
     const modalCancelBtn = document.getElementById('modal-cancel-btn');
     const editEventForm = document.getElementById('edit-event-form');
     const editEventIdInput = document.getElementById('edit-event-id');
 
     // --- VIEW TOGGLING ---
+    // NEW: Add event listener for the upcoming events button and update all listeners
+    viewUpcomingBtn.addEventListener('click', () => {
+        upcomingView.classList.remove('hidden');
+        recurringView.classList.add('hidden');
+        deletedView.classList.add('hidden');
+        viewUpcomingBtn.classList.replace('bg-gray-700', 'bg-blue-600');
+        viewRecurringBtn.classList.replace('bg-blue-600', 'bg-gray-700');
+        viewDeletedBtn.classList.replace('bg-blue-600', 'bg-gray-700');
+    });
+
     viewRecurringBtn.addEventListener('click', () => {
+        upcomingView.classList.add('hidden');
         recurringView.classList.remove('hidden');
         deletedView.classList.add('hidden');
+        viewUpcomingBtn.classList.replace('bg-blue-600', 'bg-gray-700');
         viewRecurringBtn.classList.replace('bg-gray-700', 'bg-blue-600');
         viewDeletedBtn.classList.replace('bg-blue-600', 'bg-gray-700');
     });
 
     viewDeletedBtn.addEventListener('click', () => {
+        upcomingView.classList.add('hidden');
         recurringView.classList.add('hidden');
         deletedView.classList.remove('hidden');
-        viewDeletedBtn.classList.replace('bg-gray-700', 'bg-blue-600');
+        viewUpcomingBtn.classList.replace('bg-blue-600', 'bg-gray-700');
         viewRecurringBtn.classList.replace('bg-blue-600', 'bg-gray-700');
+        viewDeletedBtn.classList.replace('bg-gray-700', 'bg-blue-600');
     });
 
     // --- DATA LOADING ---
+    // NEW: Function to load upcoming events
+    const loadUpcomingEvents = async () => {
+        try {
+            const response = await fetch('/api/events', { headers });
+            if (!response.ok) throw new Error('Failed to load upcoming events');
+            const events = await response.json();
+            
+            upcomingEventsBody.innerHTML = '';
+            events.forEach(event => {
+                const tr = document.createElement('tr');
+                tr.className = 'border-b border-gray-700';
+
+                const eventTime = new Date(event.event_time);
+                const endTime = event.end_time ? new Date(event.end_time) : new Date(eventTime.getTime() + 2 * 60 * 60 * 1000);
+                const now = new Date();
+
+                let statusText = '';
+                let statusClass = '';
+                if (now > endTime) {
+                    statusText = 'Finished';
+                    statusClass = 'bg-gray-700 text-gray-300';
+                } else if (now >= eventTime && now <= endTime) {
+                    statusText = 'Active';
+                    statusClass = 'bg-green-900 text-green-300';
+                } else {
+                    statusText = 'Upcoming';
+                    statusClass = 'bg-blue-900 text-blue-300';
+                }
+
+                tr.innerHTML = `
+                    <td class="px-6 py-4">${event.title}</td>
+                    <td class="px-6 py-4">${eventTime.toLocaleString()}</td>
+                    <td class="px-6 py-4">
+                        <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${statusClass}">
+                            ${statusText}
+                        </span>
+                    </td>
+                `;
+                upcomingEventsBody.appendChild(tr);
+            });
+        } catch (error) {
+            upcomingEventsBody.innerHTML = `<tr><td colspan="3" class="text-center p-4 text-red-400">${error.message}</td></tr>`;
+        }
+    };
+
     const loadRecurringEvents = async () => {
         try {
             const response = await fetch('/api/events/recurring', { headers });
@@ -65,8 +128,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 const nextEventTime = new Date(event.event_time).toLocaleString();
                 const recurrence = event.recurrence_rule ? `${event.recurrence_rule.charAt(0).toUpperCase() + event.recurrence_rule.slice(1)}` : 'N/A';
                 const lastCreated = event.last_recreated_at ? new Date(event.last_recreated_at).toLocaleString() : 'N/A';
-
-                // --- FIX: Add Delete button ---
                 tr.innerHTML = `
                     <td class="px-6 py-4">${event.title}</td>
                     <td class="px-6 py-4">${nextEventTime}</td>
@@ -162,7 +223,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 alert(`Error: ${error.message}`);
             }
         } 
-        // --- FIX: Add event listener for the delete button ---
         else if (e.target.classList.contains('delete-btn')) {
             const eventId = e.target.dataset.eventId;
             if (confirm('Are you sure you want to delete this recurring event template? This will stop it from creating new events.')) {
@@ -233,6 +293,8 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     // --- INITIALIZATION ---
+    // NEW: Load upcoming events on page load
+    loadUpcomingEvents();
     loadRecurringEvents();
     loadDeletedEvents();
 });
