@@ -250,24 +250,23 @@ class Database:
         """
         async with self.pool.acquire() as conn:
             
-            # This updated query now JOINS with player_stats to filter for clan members
             base_query = """
                 WITH RankedStats AS (
                     SELECT
                         mh.match_id,
-                        ps.display_name, -- Use the canonical display name from player_stats
-                        ps.user_id AS discord_user_id, -- Use the canonical user_id
+                        ps.display_name, 
+                        ps.user_id AS discord_user_id, 
                         RANK() OVER (PARTITION BY mh.match_id ORDER BY mh.{stat_column} DESC) as rank
                     FROM
                         match_history mh
-                    INNER JOIN -- This join filters for players registered in your database
+                    INNER JOIN
                         player_stats ps ON mh.game_player_id = ps.game_player_id
                     WHERE
                         mh.{stat_column} IS NOT NULL
                 )
                 SELECT
-                    rs.display_name AS player_name, -- Alias to match the Pydantic model
-                    rs.discord_user_id,
+                    rs.display_name AS player_name,
+                    rs.discord_user_id::text AS discord_user_id, -- This is the only line that has changed
                     COUNT(rs.match_id) AS total_value
                 FROM
                     RankedStats rs
@@ -284,7 +283,7 @@ class Database:
             kills_records = await conn.fetch(base_query.format(stat_column='kills'))
             combat_records = await conn.fetch(base_query.format(stat_column='combat_effectiveness'))
             support_records = await conn.fetch(base_query.format(stat_column='support_score'))
-
+    
             return {
                 "kills": [dict(r) for r in kills_records],
                 "combat_effectiveness": [dict(r) for r in combat_records],
