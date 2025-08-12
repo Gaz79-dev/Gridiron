@@ -413,9 +413,15 @@ class Database:
                 
                 await stmt.executemany([(user_id,) for user_id in member_ids_with_role])
 
-    async def get_all_player_stats(self) -> List[Dict]:
-        # This query now calculates the days since last signup directly in the database.
-        query = """
+    async def get_all_player_stats(self, include_inactive: bool = False) -> List[Dict]:
+        """
+        Fetches all player stats. If include_inactive is False, only gets active players.
+        Calculates days_since_last_signup directly in the database for performance.
+        """
+        # Dynamically add the WHERE clause unless we want to include inactive players
+        where_clause = "" if include_inactive else "WHERE is_active = TRUE"
+
+        query = f"""
             SELECT
                 *,
                 CASE
@@ -425,7 +431,7 @@ class Database:
                 END AS days_since_last_signup
             FROM
                 player_stats
-            WHERE is_active = TRUE;
+            {where_clause};
         """
         async with self.pool.acquire() as connection:
             return [dict(row) for row in await connection.fetch(query)]
