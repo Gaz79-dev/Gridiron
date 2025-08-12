@@ -21,11 +21,12 @@ async def get_all_players_for_admin(db: Database = Depends(get_db)):
     Retrieves all players for the admin rating panel, using cached display names
     for fast loading.
     """
-    player_stats = await db.get_all_player_stats_for_admin()
+    # This line is the only one that changes in this file
+    player_stats = await db.get_all_player_stats(include_inactive=True)
+    
     player_list = []
 
     for stats in player_stats:
-        # --- FIX: Use the cached display name from the database ---
         display_name = stats.get('display_name') or f"User ID: {stats['user_id']}"
         if not stats.get('is_active'):
             display_name = f"[Inactive] {display_name}"
