@@ -5,6 +5,7 @@ document.addEventListener('DOMContentLoaded', () => {
         return;
     }
 
+    // This script is only for the stats.html page.
     const uploadForm = document.getElementById('upload-stats-form');
     if (!uploadForm) {
         return;
@@ -12,9 +13,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const headers = { 'Authorization': `Bearer ${token}` };
     
+    // --- Element Selectors ---
     const leaderboardsContainer = document.getElementById('leaderboards-container');
     const exportStatsBtn = document.getElementById('export-stats-btn');
     const uploadBtn = document.getElementById('upload-btn');
+
+    // --- Functions ---
 
     const renderLeaderboard = (title, data) => {
         const boardDiv = document.createElement('div');
@@ -26,7 +30,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 tableRows += `
                     <tr class="border-b border-gray-600">
                         <td class="py-2 px-3 text-sm">${index + 1}</td>
-                        <td class="py-2 px-3 text-sm">${player.player_name || 'Unknown'}</td>
+                        <td class="py-2 px-3 text-sm">${player.player_name}</td>
                         <td class="py-2 px-3 text-sm font-bold text-right">${player.total_value}</td>
                     </tr>
                 `;
@@ -42,7 +46,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     <tr class="border-b border-gray-500">
                         <th class="py-2 px-3 text-left text-xs font-medium uppercase">#</th>
                         <th class="py-2 px-3 text-left text-xs font-medium uppercase">Player</th>
-                        <th class="py-2 px-3 text-right text-xs font-medium uppercase">Top 10s</th>
+                        <th class="py-2 px-3 text-right text-xs font-medium uppercase">Total</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -59,18 +63,17 @@ document.addEventListener('DOMContentLoaded', () => {
             if (!response.ok) throw new Error('Failed to load leaderboards');
             const data = await response.json();
             
-            leaderboardsContainer.innerHTML = '';
-            // --- FIX: Render all five leaderboards ---
-            renderLeaderboard('Top 10 Finishes: Kills', data.kills);
-            renderLeaderboard('Top 10 Finishes: Combat Effectiveness', data.combat_effectiveness);
-            renderLeaderboard('Top 10 Finishes: Offensive Score', data.offensive_score);
-            renderLeaderboard('Top 10 Finishes: Defensive Score', data.defensive_score);
-            renderLeaderboard('Top 10 Finishes: Support Score', data.support_score);
+            leaderboardsContainer.innerHTML = ''; // Clear previous data
+            renderLeaderboard('Top 10 Kills', data.kills);
+            renderLeaderboard('Top 10 Combat Effectiveness', data.combat_effectiveness);
+            renderLeaderboard('Top 10 Support Score', data.support_score);
 
         } catch (error) {
             leaderboardsContainer.innerHTML = `<p class="text-red-400 col-span-full">${error.message}</p>`;
         }
     };
+
+    // --- Event Listeners ---
 
     uploadForm.addEventListener('submit', async (e) => {
         e.preventDefault();
@@ -95,7 +98,7 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
             const response = await fetch('/api/stats/upload', {
                 method: 'POST',
-                headers: { 'Authorization': `Bearer ${token}` },
+                headers: { 'Authorization': `Bearer ${token}` }, // No Content-Type, browser sets it for FormData
                 body: formData
             });
 
@@ -107,7 +110,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const result = await response.json();
             alert(result.message);
             uploadForm.reset();
-            await loadLeaderboards();
+            await loadLeaderboards(); // Refresh leaderboards after successful upload
 
         } catch (error) {
             alert(`Error: ${error.message}`);
@@ -138,5 +141,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
+    // --- Initial Load ---
     loadLeaderboards();
 });
