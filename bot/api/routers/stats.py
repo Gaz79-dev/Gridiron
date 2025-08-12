@@ -11,6 +11,7 @@ from bot.utils.database import Database
 from bot.api import auth
 from bot.api.dependencies import get_db
 from bot.api.models import PlayerStats, AcceptedEvent, MatchUpload, Leaderboard, LeaderboardPlayer, User
+from dateutil.parser import parse as parse_datetime
 
 router = APIRouter(
     prefix="/api/stats",
@@ -130,9 +131,12 @@ async def export_player_stats_to_csv(db: Database = Depends(get_db)):
         
         if player['event_history']:
             for event in player['event_history']:
+                # This is the line we are fixing
+                event_time_str = parse_datetime(event.get('event_time')).strftime('%Y-%m-%d %H:%M:%S') if event.get('event_time') else 'N/A'
+                
                 event_row = base_row + [
                     event.get('event_title', 'N/A'),
-                    event.get('event_time').strftime('%Y-%m-%d %H:%M:%S') if event.get('event_time') else 'N/A',
+                    event_time_str,
                     event.get('role_name', 'N/A'),
                     event.get('subclass_name', 'N/A')
                 ]
