@@ -89,24 +89,14 @@ async def upload_match_stats(
 
     return {"message": "Match stats uploaded successfully.", "match_id": match_id}
 
-
 @router.get("/leaderboards", response_model=Leaderboard)
 async def get_leaderboards(db: Database = Depends(get_db)):
     """
     Calculates and returns the Top 10 leaderboards for various stats.
     """
-    # This is a placeholder for a more complex database query.
-    # For now, we'll simulate the data structure.
-    # In a real implementation, you'd have a db function to calculate this.
-    
-    # This is a simplified example. A real implementation would involve complex SQL queries.
-    # For now, we return empty lists to avoid breaking the UI.
-    return Leaderboard(
-        kills=[],
-        combat_effectiveness=[],
-        support_score=[]
-    )
-
+    # This now correctly calls the database function.
+    leaderboard_data = await db.calculate_leaderboards()
+    return Leaderboard(**leaderboard_data)
 
 @router.get("/export")
 async def export_player_stats_to_csv(db: Database = Depends(get_db)):
