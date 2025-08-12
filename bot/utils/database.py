@@ -251,6 +251,7 @@ class Database:
         async with self.pool.acquire() as conn:
             
             # This query filters for clan players first, then ranks them.
+            # The final "LIMIT 10" has been removed to show all ranked players.
             base_query = """
                 WITH ClanPlayerStats AS (
                     SELECT
@@ -277,8 +278,7 @@ class Database:
                 GROUP BY
                     cps.display_name, cps.user_id
                 ORDER BY
-                    total_value DESC
-                LIMIT 10;
+                    total_value DESC;
             """
             
             # Execute the query for each leaderboard category
