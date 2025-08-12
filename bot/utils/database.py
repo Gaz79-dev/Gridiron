@@ -242,30 +242,44 @@ class Database:
                 
                 print("Database setup is complete.")
 
-    # --- FIX START: New function to calculate leaderboards from match history ---
+    # --- New function to calculate leaderboards from match history ---
     async def calculate_leaderboards(self) -> Dict[str, List[Dict]]:
         """
-        Calculates the top 10 players for key statistics from the match_history table.
+        Calculates leaderboards by counting how many times each player
+        appears in the Top 10 for a given stat in each match.
         """
         async with self.pool.acquire() as conn:
-            # Base query to aggregate stats by player
+            
+            # This query is the core of the new logic.
+            # It ranks players within each match_id, then counts their top 10 appearances.
             base_query = """
+                WITH RankedStats AS (
+                    SELECT
+                        match_id,
+                        player_name,
+                        discord_user_id,
+                        RANK() OVER (PARTITION BY match_id ORDER BY {stat_column} DESC) as rank
+                    FROM
+                        match_history
+                    WHERE
+                        {stat_column} IS NOT NULL AND player_name IS NOT NULL
+                )
                 SELECT
-                    player_name,
-                    discord_user_id,
-                    SUM({stat_column}) as total_value
+                    rs.player_name,
+                    rs.discord_user_id,
+                    COUNT(rs.match_id) AS total_value
                 FROM
-                    match_history
+                    RankedStats rs
                 WHERE
-                    {stat_column} IS NOT NULL
+                    rs.rank <= 10
                 GROUP BY
-                    player_name, discord_user_id
+                    rs.player_name, rs.discord_user_id
                 ORDER BY
                     total_value DESC
                 LIMIT 10;
             """
             
-            # Execute queries for each leaderboard category
+            # Execute the query for each leaderboard category
             kills_records = await conn.fetch(base_query.format(stat_column='kills'))
             combat_records = await conn.fetch(base_query.format(stat_column='combat_effectiveness'))
             support_records = await conn.fetch(base_query.format(stat_column='support_score'))
@@ -275,7 +289,6 @@ class Database:
                 "combat_effectiveness": [dict(r) for r in combat_records],
                 "support_score": [dict(r) for r in support_records]
             }
-    # --- FIX END ---
 
     async def get_full_player_export_data(self) -> List[Dict]:
         """Gathers all active player stats and their complete event history for CSV export."""
