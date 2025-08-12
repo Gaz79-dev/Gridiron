@@ -27,19 +27,11 @@ BOT_TOKEN = os.getenv("DISCORD_TOKEN")
 @router.get("/engagement", response_model=List[PlayerStats])
 async def get_engagement_stats(db: Database = Depends(get_db)):
     """
-    Retrieves player engagement statistics, including calculating
-    the days since their last signup.
+    Retrieves player engagement statistics, with calculations
+    already performed by the database.
     """
-    stats_records = await db.get_all_player_stats()
-    stats_list = []
-    for record in stats_records:
-        player_stats = dict(record)
-        if last_signup := player_stats.get('last_signup_date'):
-            player_stats['days_since_last_signup'] = (datetime.datetime.now(datetime.timezone.utc) - last_signup).days
-        else:
-            player_stats['days_since_last_signup'] = None
-        stats_list.append(player_stats)
-    return stats_list
+    # The Python loop is no longer needed, as the DB handles the calculation.
+    return await db.get_all_player_stats()
 
 @router.get("/player/{user_id}/accepted-events", response_model=List[AcceptedEvent])
 async def get_player_accepted_events(user_id: int, db: Database = Depends(get_db)):
