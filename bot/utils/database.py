@@ -413,9 +413,22 @@ class Database:
                 
                 await stmt.executemany([(user_id,) for user_id in member_ids_with_role])
 
-    async def get_all_player_stats_for_admin(self) -> List[Dict]:
+    async def get_all_player_stats(self) -> List[Dict]:
+        # This query now calculates the days since last signup directly in the database.
+        query = """
+            SELECT
+                *,
+                CASE
+                    WHEN last_signup_date IS NOT NULL
+                    THEN EXTRACT(DAY FROM (NOW() AT TIME ZONE 'utc' - last_signup_date))
+                    ELSE NULL
+                END AS days_since_last_signup
+            FROM
+                player_stats
+            WHERE is_active = TRUE;
+        """
         async with self.pool.acquire() as connection:
-            return [dict(row) for row in await connection.fetch("SELECT * FROM player_stats;")]
+            return [dict(row) for row in await connection.fetch(query)]
 
     async def update_player_rating(self, user_id: int, rating: int):
         query = "UPDATE player_stats SET rating = $1 WHERE user_id = $2;"
