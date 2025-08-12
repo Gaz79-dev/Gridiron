@@ -189,4 +189,6 @@ class Leaderboard(BaseModel):
     kills: List[LeaderboardPlayer]
     combat_effectiveness: List[LeaderboardPlayer]
     support_score: List[LeaderboardPlayer]
+    offensive_score: List[LeaderboardPlayer]
+    defensive_score: List[LeaderboardPlayer]
 # --- FIX END ---
