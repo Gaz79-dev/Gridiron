@@ -188,6 +188,20 @@ async def update_event_details(event_id: int, event_data: EventUpdate, db: Datab
     await db.update_event(event_id, event_data.model_dump())
     return await get_event_details(event_id, db)
 
+@router.delete("/{event_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(auth.get_current_admin_user)])
+async def delete_event(event_id: int, db: Database = Depends(get_db)):
+    """
+    Permanently deletes an event from the database.
+    This is typically used for removing recurring parent templates.
+    """
+    # First, check if the event exists to avoid errors
+    event_to_delete = await db.get_event_by_id(event_id, include_deleted=True)
+    if not event_to_delete:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found")
+    
+    await db.delete_event(event_id)
+    return
+
 @router.get("/{event_id}/lock-status", response_model=EventLockStatus)
 async def get_lock_status(event_id: int, db: Database = Depends(get_db)):
     lock_info = await db.get_event_lock_status(event_id)
