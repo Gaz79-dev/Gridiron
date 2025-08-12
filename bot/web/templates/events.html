@@ -27,11 +27,28 @@
 
     <main class="container mx-auto px-6 py-8">
         <div class="mb-4">
-            <button id="view-recurring-btn" class="bg-blue-600 text-white font-bold py-2 px-4 rounded-l-md">Recurring Events</button>
+            <button id="view-upcoming-btn" class="bg-blue-600 text-white font-bold py-2 px-4 rounded-l-md">Upcoming Events</button>
+            <button id="view-recurring-btn" class="bg-gray-700 text-white font-bold py-2 px-4">Recurring Events</button>
             <button id="view-deleted-btn" class="bg-gray-700 text-white font-bold py-2 px-4 rounded-r-md">Deleted Events</button>
         </div>
 
-        <section id="recurring-events-view" class="bg-gray-800 p-6 rounded-lg shadow-md">
+        <section id="upcoming-events-view" class="bg-gray-800 p-6 rounded-lg shadow-md">
+            <h2 class="text-xl font-semibold text-white mb-4">Upcoming & Recent Events</h2>
+            <div class="overflow-x-auto">
+                <table class="min-w-full">
+                    <thead>
+                        <tr class="border-b border-gray-700">
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Title</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Event Time</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Status</th>
+                        </tr>
+                    </thead>
+                    <tbody id="upcoming-events-body"></tbody>
+                </table>
+            </div>
+        </section>
+
+        <section id="recurring-events-view" class="hidden bg-gray-800 p-6 rounded-lg shadow-md">
             <h2 class="text-xl font-semibold text-white mb-4">Recurring Event Templates</h2>
             <div class="overflow-x-auto">
                 <table class="min-w-full">
