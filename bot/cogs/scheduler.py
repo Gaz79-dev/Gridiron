@@ -87,40 +87,53 @@ class Scheduler(commands.Cog):
 
     @tasks.loop(minutes=10)
     async def sync_player_database(self):
-        """Periodically syncs the player database with members of a specific role."""
+        """
+        Periodically and efficiently syncs the player database with members of a specific role.
+        """
         print("\n[Scheduler] Running sync_player_database loop...")
         guild_id_str = os.getenv("GUILD_ID")
         role_id_str = os.getenv("PLAYER_SYNC_ROLE_ID")
 
         if not guild_id_str or not role_id_str:
-            print("[Player Sync] GUILD_ID or PLAYER_SYNC_ROLE_ID not set in .env. Skipping sync.")
+            print("[Player Sync] GUILD_ID or PLAYER_SYNC_ROLE_ID not set. Skipping sync.")
             return
 
         try:
-            guild_id = int(guild_id_str)
-            role_id = int(role_id_str)
+            guild_id, role_id = int(guild_id_str), int(role_id_str)
         except ValueError:
             print("[Player Sync] GUILD_ID or PLAYER_SYNC_ROLE_ID is not a valid integer. Skipping sync.")
             return
-            
+
         guild = self.bot.get_guild(guild_id)
-        if not guild:
-            print(f"[Player Sync] Could not find guild with ID {guild_id}. Skipping sync.")
-            return
-
-        role = guild.get_role(role_id)
+        role = guild.get_role(role_id) if guild else None
         if not role:
-            print(f"[Player Sync] Could not find role with ID {role_id} in guild {guild.name}. Skipping sync.")
+            print(f"[Player Sync] Could not find guild or role. Skipping sync.")
             return
 
-        member_ids_with_role = [member.id for member in role.members if not member.bot]
-
-        if not member_ids_with_role:
-            print("[Player Sync] No members found with the specified role. Syncing with an empty list.")
-        
         try:
-            await self.db.sync_all_server_members(member_ids_with_role)
-            print(f"[Player Sync] Successfully synced {len(member_ids_with_role)} members from role '{role.name}'.")
+            # Step 1: Get the list of members who SHOULD be active from Discord
+            member_ids_with_role = {member.id for member in role.members if not member.bot}
+
+            # Step 2: Get the list of players who ARE CURRENTLY active in the DB
+            currently_active_players = await self.db.get_all_player_stats(include_inactive=False)
+            currently_active_ids = {player['user_id'] for player in currently_active_players}
+
+            # Step 3: Calculate who needs to be changed
+            ids_to_activate = list(member_ids_with_role - currently_active_ids)
+            ids_to_deactivate = list(currently_active_ids - member_ids_with_role)
+
+            # Step 4: Perform small, targeted updates
+            if ids_to_activate:
+                await self.db.update_member_active_status(ids_to_activate, True)
+                print(f"[Player Sync] Activated {len(ids_to_activate)} new member(s).")
+
+            if ids_to_deactivate:
+                await self.db.update_member_active_status(ids_to_deactivate, False)
+                print(f"[Player Sync] Deactivated {len(ids_to_deactivate)} member(s).")
+
+            if not ids_to_activate and not ids_to_deactivate:
+                print("[Player Sync] No changes to player active status needed.")
+
         except Exception as e:
             print(f"[Player Sync] FATAL ERROR during database sync operation: {e}")
             traceback.print_exc()
