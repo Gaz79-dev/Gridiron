@@ -21,10 +21,40 @@ router = APIRouter(
 @router.get("/engagement", response_model=List[PlayerStats])
 async def get_engagement_stats(db: Database = Depends(get_db)):
     """
-    Retrieves player engagement statistics by calculating them directly
-    from the source signup data for maximum accuracy and performance.
+    DIAGNOSTIC VERSION: Returns hardcoded data to test the API endpoint.
     """
-    return await db.get_engagement_stats()
+    print("--- RUNNING DIAGNOSTIC GET_ENGAGEMENT_STATS ---") # Add this print statement
+    
+    # Return a hardcoded list of players to bypass the database
+    fake_player_data = [
+        {
+            "user_id": "12345",
+            "display_name": "Test Player 1",
+            "accepted_count": 10,
+            "tentative_count": 5,
+            "declined_count": 2,
+            "last_signup_date": datetime.datetime.now(datetime.timezone.utc),
+            "days_since_last_signup": 0,
+            "rating": 75,
+            "is_active": True,
+            "role_affinities": {},
+            "game_player_id": "76561197960287930"
+        },
+        {
+            "user_id": "67890",
+            "display_name": "Test Player 2",
+            "accepted_count": 20,
+            "tentative_count": 1,
+            "declined_count": 8,
+            "last_signup_date": datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=10),
+            "days_since_last_signup": 10,
+            "rating": 80,
+            "is_active": True,
+            "role_affinities": {},
+            "game_player_id": "76561197960287931"
+        }
+    ]
+    return fake_player_data
 
 @router.get("/player/{user_id}/accepted-events", response_model=List[AcceptedEvent])
 async def get_player_accepted_events(user_id: int, db: Database = Depends(get_db)):
