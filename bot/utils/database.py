@@ -239,6 +239,8 @@ class Database:
                         offensive_score INT
                     );
                 """)
+
+                await connection.execute("CREATE INDEX IF NOT EXISTS idx_signups_user_id ON signups(user_id);")
                 
                 print("Database setup is complete.")
 
@@ -413,25 +415,47 @@ class Database:
                 
                 await stmt.executemany([(user_id,) for user_id in member_ids_with_role])
 
-    async def get_all_player_stats(self, include_inactive: bool = False) -> List[Dict]:
+    async def get_all_players_for_admin_panel(self) -> List[Dict]:
         """
-        Fetches all player stats. If include_inactive is False, only gets active players.
-        Calculates days_since_last_signup directly in the database for performance.
+        Fetches all player data (active and inactive) for the Players page.
+        This is a simple, fast query.
         """
-        # Dynamically add the WHERE clause unless we want to include inactive players
-        where_clause = "" if include_inactive else "WHERE is_active = TRUE"
+        query = "SELECT * FROM player_stats ORDER BY display_name;"
+        async with self.pool.acquire() as connection:
+            return [dict(row) for row in await connection.fetch(query)]
 
-        query = f"""
+    async def get_engagement_stats(self) -> List[Dict]:
+        """
+        Calculates engagement stats by aggregating raw signup data on the fly.
+        This query is optimized by the index on signups(user_id).
+        """
+        query = """
             SELECT
-                *,
+                ps.user_id,
+                ps.display_name,
+                ps.rating,
+                ps.is_active,
+                ps.last_signup_date,
+                ps.role_affinities,
+                ps.game_player_id,
+                COUNT(s.signup_id) FILTER (WHERE s.rsvp_status = 'Accepted') AS accepted_count,
+                COUNT(s.signup_id) FILTER (WHERE s.rsvp_status = 'Tentative') AS tentative_count,
+                COUNT(s.signup_id) FILTER (WHERE s.rsvp_status = 'Declined') AS declined_count,
                 CASE
-                    WHEN last_signup_date IS NOT NULL
-                    THEN EXTRACT(DAY FROM (NOW() AT TIME ZONE 'utc' - last_signup_date))
+                    WHEN ps.last_signup_date IS NOT NULL
+                    THEN EXTRACT(DAY FROM (NOW() AT TIME ZONE 'utc' - ps.last_signup_date))
                     ELSE NULL
                 END AS days_since_last_signup
             FROM
-                player_stats
-            {where_clause};
+                player_stats ps
+            LEFT JOIN
+                signups s ON ps.user_id = s.user_id
+            WHERE
+                ps.is_active = TRUE
+            GROUP BY
+                ps.user_id
+            ORDER BY
+                ps.display_name;
         """
         async with self.pool.acquire() as connection:
             return [dict(row) for row in await connection.fetch(query)]
