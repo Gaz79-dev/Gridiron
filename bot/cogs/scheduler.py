@@ -116,9 +116,9 @@ class Scheduler(commands.Cog):
             member_ids_with_role = {member.id for member in role.members if not member.bot}
 
             # Step 2: Get the list of players who ARE CURRENTLY active in the DB
-            # --- THIS LINE IS THE FIX ---
             currently_active_players = await self.db.get_engagement_stats()
-            currently_active_ids = {player['user_id'] for player in currently_active_players}
+            # --- THIS IS THE LINE THAT FIXES THE ERROR ---
+            currently_active_ids = {int(player['user_id']) for player in currently_active_players}
 
             # Step 3: Calculate who needs to be changed
             ids_to_activate = list(member_ids_with_role - currently_active_ids)
