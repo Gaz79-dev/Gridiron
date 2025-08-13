@@ -299,24 +299,45 @@ class Database:
             }
 
     async def get_full_player_export_data(self) -> List[Dict]:
-        """Gathers all active player stats and their complete event history for CSV export."""
+        """
+        Gathers all active player stats and their complete event history for CSV export,
+        calculating RSVP counts on the fly for accuracy.
+        """
+        # This query is now aligned with the performant Engagement page query
         query = """
+            WITH SignupCounts AS (
+                SELECT
+                    user_id,
+                    COUNT(*) FILTER (WHERE rsvp_status = 'Accepted') AS accepted_count,
+                    COUNT(*) FILTER (WHERE rsvp_status = 'Tentative') AS tentative_count,
+                    COUNT(*) FILTER (WHERE rsvp_status = 'Declined') AS declined_count
+                FROM
+                    signups
+                GROUP BY
+                    user_id
+            )
             SELECT
                 ps.user_id,
                 ps.display_name,
-                ps.accepted_count,
-                ps.tentative_count,
-                ps.declined_count,
                 ps.last_signup_date,
                 ps.rating,
+                COALESCE(sc.accepted_count, 0) AS accepted_count,
+                COALESCE(sc.tentative_count, 0) AS tentative_count,
+                COALESCE(sc.declined_count, 0) AS declined_count,
                 COALESCE(
                     (SELECT jsonb_agg(peh.* ORDER BY peh.event_time DESC)
                      FROM player_event_history peh
                      WHERE peh.user_id = ps.user_id),
                     '[]'::jsonb
                 ) as event_history
-            FROM player_stats ps
-            WHERE ps.is_active = TRUE;
+            FROM
+                player_stats ps
+            LEFT JOIN
+                SignupCounts sc ON ps.user_id = sc.user_id
+            WHERE
+                ps.is_active = TRUE
+            ORDER BY
+                ps.display_name;
         """
         async with self.pool.acquire() as connection:
             records = await connection.fetch(query)
