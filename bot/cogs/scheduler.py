@@ -42,7 +42,8 @@ class Scheduler(commands.Cog):
         # --- FIX: Cancel the new name caching task ---
         self.cache_player_names.cancel()
 
-    # --- FIX START: New background task to cache player display names ---
+    # In bot/cogs/scheduler.py
+
     @tasks.loop(minutes=10)
     async def cache_player_names(self):
         """Periodically fetches and caches the display names of all active players."""
@@ -58,7 +59,8 @@ class Scheduler(commands.Cog):
             return
 
         try:
-            active_players = await self.db.get_all_player_stats()
+            # --- THIS LINE IS THE FIX ---
+            active_players = await self.db.get_engagement_stats()
             if not active_players:
                 print("[Name Cache] No active players in the database to cache.")
                 return
@@ -83,7 +85,6 @@ class Scheduler(commands.Cog):
         except Exception as e:
             print(f"[Name Cache] FATAL ERROR during name caching: {e}")
             traceback.print_exc()
-    # --- FIX END ---
 
     @tasks.loop(minutes=10)
     async def sync_player_database(self):
@@ -115,7 +116,8 @@ class Scheduler(commands.Cog):
             member_ids_with_role = {member.id for member in role.members if not member.bot}
 
             # Step 2: Get the list of players who ARE CURRENTLY active in the DB
-            currently_active_players = await self.db.get_all_player_stats(include_inactive=False)
+            # --- THIS LINE IS THE FIX ---
+            currently_active_players = await self.db.get_engagement_stats()
             currently_active_ids = {player['user_id'] for player in currently_active_players}
 
             # Step 3: Calculate who needs to be changed
@@ -137,7 +139,7 @@ class Scheduler(commands.Cog):
         except Exception as e:
             print(f"[Player Sync] FATAL ERROR during database sync operation: {e}")
             traceback.print_exc()
-
+    
     @tasks.loop(seconds=15)
     async def update_event_embeds(self):
         """
