@@ -21,22 +21,32 @@ load_dotenv()
 BASE_DIR = Path(__file__).resolve().parent
 
 # --- App State & Lifespan for the Web Server ---
+# bot/main.py
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
     Handles application startup and shutdown events for the web server.
     """
-    print("Web server startup...")
+    print("Web server starting up...")
     db_instance = Database()
-    await db_instance.connect()
+    try:
+        # This connect call is crucial as it sets up the JSONB decoder
+        await db_instance.connect()
+        app.state.db = db_instance
+        print("Database connection successful for web server.")
+    except Exception as e:
+        print(f"FATAL: Database connection failed for web server: {e}")
+        app.state.db = None
     
-    app.state.db = db_instance
+    # The bot instance is managed separately by its own process
     app.state.bot = None 
     
     yield
     
-    print("Web server shutdown...")
-    await db_instance.close()
+    print("Web server shutting down...")
+    if app.state.db:
+        await app.state.db.close()
 
 # --- FastAPI App Setup ---
 app = FastAPI(lifespan=lifespan)
