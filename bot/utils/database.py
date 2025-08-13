@@ -463,7 +463,7 @@ class Database:
                     user_id
             )
             SELECT
-                ps.user_id::text AS user_id, -- Cast to string to match Pydantic model
+                ps.user_id::text AS user_id,
                 ps.display_name,
                 ps.rating,
                 ps.is_active,
@@ -488,7 +488,27 @@ class Database:
                 ps.display_name;
         """
         async with self.pool.acquire() as connection:
-            return [dict(row) for row in await connection.fetch(query)]
+            records = await connection.fetch(query)
+
+            # --- START: NEW MANUAL PARSING LOGIC ---
+            processed_records = []
+            for record in records:
+                # Create a mutable copy of the immutable database record
+                processed_record = dict(record)
+                
+                # Check if role_affinities exists and is a string
+                if 'role_affinities' in processed_record and isinstance(processed_record['role_affinities'], str):
+                    try:
+                        # Manually parse the JSON string into a dictionary
+                        processed_record['role_affinities'] = json.loads(processed_record['role_affinities'])
+                    except json.JSONDecodeError:
+                        # If the string is not valid JSON, default to an empty dictionary
+                        processed_record['role_affinities'] = {}
+                
+                processed_records.append(processed_record)
+                
+            return processed_records
+            # --- END: NEW MANUAL PARSING LOGIC ---
 
     async def update_member_active_status(self, user_ids: List[int], is_active: bool):
         """
