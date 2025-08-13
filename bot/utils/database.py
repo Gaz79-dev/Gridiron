@@ -469,6 +469,17 @@ class Database:
         async with self.pool.acquire() as connection:
             return [dict(row) for row in await connection.fetch(query)]
 
+    async def update_member_active_status(self, user_ids: List[int], is_active: bool):
+        """
+        Performs a targeted update to set the is_active flag for a specific list of user IDs.
+        """
+        if not user_ids:
+            return
+        
+        query = "UPDATE player_stats SET is_active = $1 WHERE user_id = ANY($2::bigint[]);"
+        async with self.pool.acquire() as connection:
+            await connection.execute(query, is_active, user_ids)
+
     async def update_player_rating(self, user_id: int, rating: int):
         query = "UPDATE player_stats SET rating = $1 WHERE user_id = $2;"
         async with self.pool.acquire() as connection:
