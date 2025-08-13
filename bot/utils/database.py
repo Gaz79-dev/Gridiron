@@ -442,7 +442,7 @@ class Database:
                     user_id
             )
             SELECT
-                ps.user_id,
+                ps.user_id::text AS user_id, -- Cast to string to match Pydantic model
                 ps.display_name,
                 ps.rating,
                 ps.is_active,
