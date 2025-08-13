@@ -426,10 +426,21 @@ class Database:
 
     async def get_engagement_stats(self) -> List[Dict]:
         """
-        Calculates engagement stats by aggregating raw signup data on the fly.
-        This query is optimized by the index on signups(user_id).
+        Calculates engagement stats by aggregating raw signup data and joining it
+        to the full list of active players.
         """
         query = """
+            WITH SignupCounts AS (
+                SELECT
+                    user_id,
+                    COUNT(*) FILTER (WHERE rsvp_status = 'Accepted') AS accepted_count,
+                    COUNT(*) FILTER (WHERE rsvp_status = 'Tentative') AS tentative_count,
+                    COUNT(*) FILTER (WHERE rsvp_status = 'Declined') AS declined_count
+                FROM
+                    signups
+                GROUP BY
+                    user_id
+            )
             SELECT
                 ps.user_id,
                 ps.display_name,
@@ -438,9 +449,9 @@ class Database:
                 ps.last_signup_date,
                 ps.role_affinities,
                 ps.game_player_id,
-                COUNT(s.signup_id) FILTER (WHERE s.rsvp_status = 'Accepted') AS accepted_count,
-                COUNT(s.signup_id) FILTER (WHERE s.rsvp_status = 'Tentative') AS tentative_count,
-                COUNT(s.signup_id) FILTER (WHERE s.rsvp_status = 'Declined') AS declined_count,
+                COALESCE(sc.accepted_count, 0) AS accepted_count,
+                COALESCE(sc.tentative_count, 0) AS tentative_count,
+                COALESCE(sc.declined_count, 0) AS declined_count,
                 CASE
                     WHEN ps.last_signup_date IS NOT NULL
                     THEN EXTRACT(DAY FROM (NOW() AT TIME ZONE 'utc' - ps.last_signup_date))
@@ -449,11 +460,9 @@ class Database:
             FROM
                 player_stats ps
             LEFT JOIN
-                signups s ON ps.user_id = s.user_id
+                SignupCounts sc ON ps.user_id = sc.user_id
             WHERE
                 ps.is_active = TRUE
-            GROUP BY
-                ps.user_id
             ORDER BY
                 ps.display_name;
         """
