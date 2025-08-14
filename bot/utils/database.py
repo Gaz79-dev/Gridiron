@@ -1,3 +1,4 @@
+
 import asyncpg
 import os
 import datetime
@@ -570,12 +571,8 @@ class Database:
                         (template_id, squad_name, default_count, squad_type, naming_convention, source_rsvp_pool)
                         VALUES ($1, $2, $3, $4, $5, $6)
                         """,
-                        template_id,
-                        defi.squad_name,         # Changed to dot notation
-                        defi.default_count,      # Changed to dot notation
-                        defi.squad_type,         # Changed to dot notation
-                        defi.naming_convention,  # Changed to dot notation
-                        defi.source_rsvp_pool    # Changed to dot notation
+                        template_id, defi['squad_name'], defi['default_count'], defi['squad_type'],
+                        defi['naming_convention'], defi['source_rsvp_pool']
                     )
                 return template_id
 
@@ -594,12 +591,8 @@ class Database:
                         (template_id, squad_name, default_count, squad_type, naming_convention, source_rsvp_pool)
                         VALUES ($1, $2, $3, $4, $5, $6)
                         """,
-                        template_id,
-                        defi.squad_name,         # Changed to dot notation
-                        defi.default_count,      # Changed to dot notation
-                        defi.squad_type,         # Changed to dot notation
-                        defi.naming_convention,  # Changed to dot notation
-                        defi.source_rsvp_pool    # Changed to dot notation
+                        template_id, defi['squad_name'], defi['default_count'], defi['squad_type'],
+                        defi['naming_convention'], defi['source_rsvp_pool']
                     )
 
     async def get_squad_template_by_id(self, template_id: int) -> Optional[Dict]:
@@ -795,26 +788,7 @@ class Database:
             return [dict(row) for row in await connection.fetch(query)]
 
     async def get_signups_for_event(self, event_id: int) -> List[Dict]:
-        """
-        Gets all signups for an event and joins with player_stats to get the cached
-        display name for each user, avoiding slow, repeated API calls.
-        """
-        query = """
-            SELECT
-                s.user_id::text AS user_id, -- Cast to string to match Pydantic model
-                s.role_name,
-                s.subclass_name,
-                s.rsvp_status,
-                COALESCE(ps.display_name, s.user_id::text) AS display_name
-            FROM
-                signups s
-            LEFT JOIN
-                player_stats ps ON s.user_id = ps.user_id
-            WHERE
-                s.event_id = $1
-            ORDER BY
-                s.role_name, s.subclass_name;
-        """
+        query = "SELECT * FROM signups WHERE event_id = $1 ORDER BY role_name, subclass_name;"
         async with self.pool.acquire() as conn:
             return [dict(row) for row in await conn.fetch(query, event_id)]
 
