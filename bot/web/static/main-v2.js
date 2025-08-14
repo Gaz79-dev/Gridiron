@@ -595,20 +595,34 @@ document.addEventListener('DOMContentLoaded', () => {
                 onEnd: async (evt) => {
                     const memberId = evt.item.dataset.memberId;
                     const newSquadId = evt.to.dataset.squadId;
+                    const oldSquadId = evt.from.dataset.squadId;
+
                     try {
-                        const response = await fetch(`/api/squads/members/${memberId}/move`, {
+                        // Case 1: Player was moved to a DIFFERENT squad
+                        if (oldSquadId !== newSquadId) {
+                            const response = await fetch(`/api/squads/members/${memberId}/move`, {
+                                method: 'PUT', headers: { ...headers, 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ new_squad_id: parseInt(newSquadId) })
+                            });
+                            if (await handleApiError(response)) throw new Error('Move failed on server');
+                        }
+
+                        // Case 2: Player was re-ordered WITHIN THE SAME squad (or moved to a new one)
+                        // In both cases, we must update the order of the destination squad.
+                        const memberItems = evt.to.querySelectorAll('.member-item');
+                        const orderedMemberIds = Array.from(memberItems).map(item => parseInt(item.dataset.memberId));
+
+                        const reorderResponse = await fetch(`/api/squads/${newSquadId}/reorder`, {
                             method: 'PUT', headers: { ...headers, 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ new_squad_id: parseInt(newSquadId) })
+                            body: JSON.stringify({ ordered_member_ids: orderedMemberIds })
                         });
-                        if (await handleApiError(response)) throw new Error('Move failed on server');
+                        if (await handleApiError(reorderResponse)) throw new Error('Reorder failed on server');
+
                     } catch (err) {
                         console.error("Drag-and-drop error:", err);
-                        alert("Error: Could not move member. " + err.message);
+                        alert("Error: Could not save squad changes. " + err.message);
+                        // NOTE: You might want to refresh the UI here to show the server state
                     }
                 }
             });
         });
-        workshopSection.classList.remove('hidden');
-        loadChannels();
-    }
-});
