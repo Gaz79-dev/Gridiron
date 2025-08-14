@@ -92,21 +92,32 @@ async def run_ai_draft(db: Database, event_id: int, request: SquadBuildRequest) 
         raise ValueError("Squad template not found.")
 
     # 2. CALCULATE THE DESIRED SQUAD LAYOUT IN THE CORRECT ORDER
-    desired_squad_names = [] # Use a list to preserve order
+    desired_squad_names = []
     squad_definitions_map = {}
     
-    for i, definition in enumerate(template['definitions']):
+    # --- START: THIS IS THE FIX ---
+    # Initialize a dedicated counter for numeric groups
+    numeric_group_index = 1
+    
+    for definition in template['definitions']:
         base_name = definition['squad_name']
         convention = definition['naming_convention']
-        group_index = i + 1 
+        
+        # Determine the correct group index to use for this specific type
+        group_index_for_naming = numeric_group_index if convention == 'numeric' else 0
         
         squad_definitions_map[base_name] = definition
         
         existing_names_for_type = [name for name in desired_squad_names if name.startswith(base_name)]
         for _ in range(request.squad_counts.get(base_name, 0)):
-            new_name = get_squad_iteration(base_name, existing_names_for_type, convention, group_index)
+            new_name = get_squad_iteration(base_name, existing_names_for_type, convention, group_index_for_naming)
             desired_squad_names.append(new_name)
             existing_names_for_type.append(new_name)
+        
+        # Only increment the counter if the type we just processed uses numeric naming
+        if convention == 'numeric':
+            numeric_group_index += 1
+    # --- END: THIS IS THE FIX ---
             
     # 3. RECONCILE: Preserve existing squads and identify players who need a new home
     new_squads_map = {}
@@ -147,7 +158,6 @@ async def run_ai_draft(db: Database, event_id: int, request: SquadBuildRequest) 
     # 5. COMMIT CHANGES TO DATABASE
     await db.delete_squads_for_event(event_id)
     
-    # Create the squads in the desired order (no alphabetical sort)
     for squad_name in desired_squad_names:
         base_name = re.split(r' \(\d', squad_name)[0].strip()
         definition = squad_definitions_map.get(base_name)
