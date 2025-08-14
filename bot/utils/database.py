@@ -156,6 +156,7 @@ class Database:
                         UNIQUE(squad_id, user_id)
                     );
                 """)
+                await connection.execute("ALTER TABLE squad_members ADD COLUMN IF NOT EXISTS position INT NOT NULL DEFAULT 0;")
                 
                 await connection.execute("""
                     CREATE TABLE IF NOT EXISTS player_stats (
@@ -350,6 +351,29 @@ class Database:
                 "UPDATE player_stats SET game_player_id = $1 WHERE user_id = $2;",
                 game_player_id, user_id
             )
+
+    # In database.py
+
+    async def update_squad_member_order(self, squad_id: int, ordered_member_ids: List[int]):
+        """
+        Updates the position for all members of a squad based on a new sorted list of their IDs.
+        """
+        if not ordered_member_ids:
+            return
+
+        # Build the CASE statement for the UPDATE query
+        case_statement = "CASE squad_member_id "
+        for index, member_id in enumerate(ordered_member_ids):
+            case_statement += f"WHEN {member_id} THEN {index} "
+        case_statement += "END"
+
+        query = f"""
+            UPDATE squad_members
+            SET position = {case_statement}
+            WHERE squad_id = $1 AND squad_member_id = ANY($2::int[]);
+        """
+        async with self.pool.acquire() as connection:
+            await connection.execute(query, squad_id, ordered_member_ids)
 
     async def cache_player_display_names(self, member_data: List[Dict]):
         """Updates the cached display names for a list of members."""
@@ -1155,7 +1179,7 @@ class Database:
                                'assigned_role_name', sm.assigned_role_name,
                                'startup_task', sm.startup_task,
                                'display_name', COALESCE(ps.display_name, sm.user_id::text)
-                            ) ORDER BY sm.squad_member_id
+                            ) ORDER BY sm.position, sm.squad_member_id
                         ) FILTER (WHERE sm.squad_member_id IS NOT NULL),
                         '[]'
                     ) as members
