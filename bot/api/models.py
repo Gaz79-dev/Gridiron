@@ -191,4 +191,7 @@ class Leaderboard(BaseModel):
     support_score: List[LeaderboardPlayer]
     offensive_score: List[LeaderboardPlayer]
     defensive_score: List[LeaderboardPlayer]
+
+class SquadReorderRequest(BaseModel):
+    ordered_member_ids: List[int]
 # --- FIX END ---
