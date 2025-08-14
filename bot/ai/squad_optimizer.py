@@ -108,7 +108,6 @@ async def run_ai_draft(db: Database, event_id: int, request: SquadBuildRequest) 
 
     # 3. DRAFTING PHASE: Place players based on their chosen class
     unplaced_players = []
-    # Sort all players by role priority to place key roles first
     all_players_sorted = sorted(
         [p for pool in player_pools.values() for p in pool],
         key=lambda p: ROLE_PRIORITY.index(p.get('subclass_name')) if p.get('subclass_name') in ROLE_PRIORITY else 99
@@ -116,24 +115,21 @@ async def run_ai_draft(db: Database, event_id: int, request: SquadBuildRequest) 
 
     for player in all_players_sorted:
         player_placed = False
-        player_class = player.get('subclass_name') or "Rifleman" # Default to Rifleman if no subclass
+        player_class = player.get('subclass_name') or "Rifleman"
         
-        # Find a squad that needs this player
         for squad in squads_to_fill:
-            # Check if player is from the right RSVP pool and the squad isn't full
             squad_size = 6 if squad['squad_type'] == "Infantry" else 3 if squad['squad_type'] == "Armour" else 2
             if player.get('role_name') == squad['source_pool'] and len(squad['members']) < squad_size:
-                # Check if the class slot is available in this squad
                 if squad['class_counts'][player_class] < CLASS_LIMITS.get(player_class, 99):
                     squad['members'].append({'player_data': player, 'assigned_role': player_class})
                     squad['class_counts'][player_class] += 1
                     player_placed = True
-                    break # Move to the next player
+                    break
         
         if not player_placed:
             unplaced_players.append(player)
             
-    # 4. FINALIZATION: Write the squads to the database
+    # 4. FINALIZATION: Write the main squads to the database
     for squad_data in squads_to_fill:
         squad_id = await db.create_squad(event_id, squad_data['name'], squad_data['squad_type'])
         for member_info in squad_data['members']:
@@ -141,11 +137,15 @@ async def run_ai_draft(db: Database, event_id: int, request: SquadBuildRequest) 
             assigned_role = member_info['assigned_role']
             await db.add_squad_member(squad_id, int(player['user_id']), assigned_role)
     
-    # 5. RESERVES: Add any unplaced players to the reserves squad
+    # --- START: THIS IS THE FIX ---
+    # Always create the reserves squad in the database so it's visible.
+    reserves_id = await db.create_squad(event_id, "Reserves", "Reserves")
+    
+    # If there are any unplaced players, add them to the squad we just created.
     if unplaced_players:
-        reserves_id = await db.create_squad(event_id, "Reserves", "Reserves")
         for player in unplaced_players:
             role = player.get('subclass_name') or player.get('role_name') or 'Unassigned'
             await db.add_squad_member(reserves_id, int(player['user_id']), role)
+    # --- END: THIS IS THE FIX ---
 
     return await db.get_squads_with_members(event_id)
