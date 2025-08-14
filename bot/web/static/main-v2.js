@@ -371,7 +371,7 @@ document.addEventListener('DOMContentLoaded', () => {
     assignTaskForm.addEventListener('submit', async (e) => {
         e.preventDefault();
         const memberId = taskModalMemberIdInput.value;
-        const task = modalTaskSelect.value;
+        const task = modalTaskSelect.value || null; // Ensure empty string becomes null
         try {
             const response = await fetch(`/api/squads/members/${memberId}/task`, {
                 method: 'PUT',
@@ -379,6 +379,18 @@ document.addEventListener('DOMContentLoaded', () => {
                 body: JSON.stringify({ task: task })
             });
             if (await handleApiError(response)) return;
+
+            // --- START: FIX FOR MISSING STARTUP TASKS ---
+            // Update the underlying currentSquads object so the change is saved for the embed
+            const squad = currentSquads.find(s => s.members.some(m => m.squad_member_id == memberId));
+            if (squad) {
+                const member = squad.members.find(m => m.squad_member_id == memberId);
+                if (member) {
+                    member.startup_task = task;
+                }
+            }
+            // --- END: FIX FOR MISSING STARTUP TASKS ---
+            
             const memberEl = document.querySelector(`[data-member-id='${memberId}']`);
             if (memberEl) {
                 let taskTextEl = memberEl.querySelector('.startup-task-text');
@@ -389,17 +401,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
                 if (taskTextEl) taskTextEl.textContent = task;
                 if (!task && taskTextEl) taskTextEl.remove();
-
-                // --- START: FIX FOR MISSING STARTUP TASKS ---
-                // Update the underlying currentSquads object
-                const squad = currentSquads.find(s => s.members.some(m => m.squad_member_id == memberId));
-                if (squad) {
-                    const member = squad.members.find(m => m.squad_member_id == memberId);
-                    if (member) {
-                        member.startup_task = task || null;
-                    }
-                }
-                // --- END: FIX FOR MISSING STARTUP TASKS ---
             }
             assignTaskModal.classList.add('hidden');
         } catch (err) { alert("Error: Could not update task."); }
@@ -453,7 +454,7 @@ document.addEventListener('DOMContentLoaded', () => {
         eventDropdown.addEventListener('change', handleEventSelection);
         isPageInitialized = true;
         
-        loadChannels(); // Load channels on initial page load
+        loadChannels();
 
     }).catch(err => console.error("FATAL: Initial page data failed to load:", err));
 
