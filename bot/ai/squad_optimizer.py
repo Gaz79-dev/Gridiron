@@ -67,85 +67,76 @@ def get_squad_iteration(squad_name: str, counts: Dict, convention: str, group_in
 
 async def run_ai_draft(db: Database, event_id: int, request: SquadBuildRequest) -> List[Dict]:
     """
-    The core logic for drafting players into squads, respecting player sign-up classes and squad limits.
+    Incrementally adjusts squads based on new counts, rather than doing a full rebuild.
     """
-    # 1. SETUP: Clear old squads and get all necessary player data
-    await db.delete_squads_for_event(event_id)
-    signups = await db.get_signups_for_roster_page(event_id)
-    
-    player_pools = defaultdict(list)
-    for signup in signups:
-        if signup['rsvp_status'] == RsvpStatus.ACCEPTED:
-            pool_key = signup.get('role_name') or "Unassigned"
-            player_pools[pool_key].append(dict(signup))
-
-    # 2. SQUAD DEFINITION: Create the empty squad structures from the template
+    # 1. GET CURRENT & DESIRED STATE
+    current_squads = await db.get_squads_with_members(event_id)
     template = await db.get_squad_template_by_id(request.template_id)
     if not template:
         raise ValueError("Squad template not found.")
-    
-    squad_counts = {}
-    squads_to_fill = []
-    numeric_group_index = 1
-    for definition in template['definitions']:
-        squad_name = definition['squad_name']
-        convention = definition['naming_convention']
-        count = request.squad_counts.get(squad_name, 0)
-        group_index_for_naming = numeric_group_index if convention == 'numeric' else 0
 
-        for _ in range(count):
-            full_squad_name = get_squad_iteration(squad_name, squad_counts, convention, group_index_for_naming)
-            squads_to_fill.append({
-                'name': full_squad_name,
-                'squad_type': definition['squad_type'],
-                'source_pool': definition['source_rsvp_pool'],
-                'members': [],
-                'class_counts': defaultdict(int)
-            })
-        
-        if convention == 'numeric':
-            numeric_group_index += 1
+    # Ensure a reserves squad exists, as it's critical for moves
+    reserves_squad = await db.get_reserves_squad(event_id)
+    if not reserves_squad:
+        reserves_id = await db.create_squad(event_id, "Reserves", "Reserves")
+        reserves_squad = {'squad_id': reserves_id}
 
-    # 3. DRAFTING PHASE: Place players based on their chosen class
-    unplaced_players = []
-    all_players_sorted = sorted(
-        [p for pool in player_pools.values() for p in pool],
-        key=lambda p: ROLE_PRIORITY.index(p.get('subclass_name')) if p.get('subclass_name') in ROLE_PRIORITY else 99
-    )
+    # 2. PROCESS EACH SQUAD TYPE (INFANTRY, ARMOUR, ETC.)
+    squad_name_definitions = {definition['squad_name']: definition for definition in template['definitions']}
 
-    for player in all_players_sorted:
-        player_placed = False
-        player_class = player.get('subclass_name') or "Rifleman"
-        
-        for squad in squads_to_fill:
-            squad_size = 6 if squad['squad_type'] == "Infantry" else 3 if squad['squad_type'] == "Armour" else 2
-            if player.get('role_name') == squad['source_pool'] and len(squad['members']) < squad_size:
-                if squad['class_counts'][player_class] < CLASS_LIMITS.get(player_class, 99):
-                    squad['members'].append({'player_data': player, 'assigned_role': player_class})
-                    squad['class_counts'][player_class] += 1
-                    player_placed = True
-                    break
-        
-        if not player_placed:
-            unplaced_players.append(player)
+    for base_name, definition in squad_name_definitions.items():
+        current_squads_of_type = sorted(
+            [s for s in current_squads if s['name'].startswith(base_name)],
+            key=lambda s: s['name']
+        )
+        current_count = len(current_squads_of_type)
+        new_count = request.squad_counts.get(base_name, 0)
+
+        # --- HANDLE SQUAD REMOVAL ---
+        if new_count < current_count:
+            num_to_remove = current_count - new_count
+            squads_to_remove = current_squads_of_type[-num_to_remove:] # Get the last N squads
             
-    # 4. FINALIZATION: Write the main squads to the database
-    for squad_data in squads_to_fill:
-        squad_id = await db.create_squad(event_id, squad_data['name'], squad_data['squad_type'])
-        for member_info in squad_data['members']:
-            player = member_info['player_data']
-            assigned_role = member_info['assigned_role']
-            await db.add_squad_member(squad_id, int(player['user_id']), assigned_role)
-    
-    # --- START: THIS IS THE FIX ---
-    # Always create the reserves squad in the database so it's visible.
-    reserves_id = await db.create_squad(event_id, "Reserves", "Reserves")
-    
-    # If there are any unplaced players, add them to the squad we just created.
-    if unplaced_players:
-        for player in unplaced_players:
-            role = player.get('subclass_name') or player.get('role_name') or 'Unassigned'
-            await db.add_squad_member(reserves_id, int(player['user_id']), role)
-    # --- END: THIS IS THE FIX ---
+            for squad in squads_to_remove:
+                members_to_move = await db.get_squad_members(squad['squad_id'])
+                for member in members_to_move:
+                    await db.move_squad_member(member['squad_member_id'], reserves_squad['squad_id'])
+                await db.delete_squad(squad['squad_id'])
+            print(f"Removed {num_to_remove} squad(s) of type {base_name} and moved players to reserves.")
+
+        # --- HANDLE SQUAD ADDITION ---
+        elif new_count > current_count:
+            num_to_add = new_count - current_count
+            reserves_members = [m for s in current_squads if s['name'] == 'Reserves' for m in s['members']]
+            
+            # Prioritize players who signed up for the correct role
+            reserves_members.sort(key=lambda p: ROLE_PRIORITY.index(p.get('assigned_role_name')) if p.get('assigned_role_name') in ROLE_PRIORITY else 99)
+
+            squad_name_counts = {base_name: current_count}
+            
+            for i in range(num_to_add):
+                new_squad_name = get_squad_iteration(base_name, squad_name_counts, definition['naming_convention'], 0)
+                new_squad_id = await db.create_squad(event_id, new_squad_name, definition['squad_type'])
+                
+                # Fill the new squad from reserves
+                squad_size = 6 if definition['squad_type'] == "Infantry" else 3 if definition['squad_type'] == "Armour" else 2
+                class_counts = defaultdict(int)
+                
+                players_for_new_squad = []
+                temp_reserves = []
+
+                while len(players_for_new_squad) < squad_size and reserves_members:
+                    player = reserves_members.pop(0)
+                    player_class = player['assigned_role_name']
+                    
+                    if class_counts[player_class] < CLASS_LIMITS.get(player_class, 99):
+                        await db.move_squad_member(player['squad_member_id'], new_squad_id)
+                        class_counts[player_class] += 1
+                        players_for_new_squad.append(player)
+                    else:
+                        temp_reserves.append(player)
+                
+                reserves_members = temp_reserves + reserves_members # Add unplaced players back to the pool
+            print(f"Added {num_to_add} squad(s) of type {base_name}, filled from reserves.")
 
     return await db.get_squads_with_members(event_id)
