@@ -104,9 +104,6 @@ async def run_ai_draft(db: Database, event_id: int, request: SquadBuildRequest) 
     squad_counts, squads_to_fill_templates = {}, []
     numeric_group_index = 1
     for definition in template['definitions']:
-        # --- START: THIS IS THE FIX ---
-        # Changed all dot notation (e.g., definition.squad_name) to
-        # dictionary-style access (e.g., definition['squad_name'])
         squad_name = definition['squad_name']
         convention = definition['naming_convention']
         count = request.squad_counts.get(squad_name, 0)
@@ -122,7 +119,6 @@ async def run_ai_draft(db: Database, event_id: int, request: SquadBuildRequest) 
         
         if convention == 'numeric':
             numeric_group_index += 1
-        # --- END: THIS IS THE FIX ---
 
     # 4. DRAFTING PHASE: Fill squads using rule-based pools and AI optimization
     finalized_squads = []
@@ -189,6 +185,8 @@ async def run_ai_draft(db: Database, event_id: int, request: SquadBuildRequest) 
         for member_info in squad_data['members']:
             player = member_info['player_data']
             assigned_role = member_info['assigned_role']
-            await db.add_squad_member(squad_id, player['user_id'], assigned_role)
+            # --- THIS IS THE FIX ---
+            # Convert the string user_id back to an integer before saving
+            await db.add_squad_member(squad_id, int(player['user_id']), assigned_role)
 
     return await db.get_squads_with_members(event_id)
