@@ -247,7 +247,7 @@ class Scheduler(commands.Cog):
                 signups = await self.db.get_signups_for_event(event['event_id'])
                 accepted_user_ids = {s['user_id'] for s in signups if s['rsvp_status'] == RsvpStatus.ACCEPTED}
 
-                thread_member_ids = {member.id for member in await thread.fetch_members()}
+                thread_member_ids = {member.id for member in thread.members}
 
                 users_to_add = accepted_user_ids - thread_member_ids
                 users_to_remove = thread_member_ids - accepted_user_ids
