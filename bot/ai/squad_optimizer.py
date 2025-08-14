@@ -81,11 +81,14 @@ def get_squad_iteration(base_name: str, existing_names: List[str], convention: s
 
 async def run_ai_draft(db: Database, event_id: int, request: SquadBuildRequest) -> List[Dict]:
     """
-    Incrementally rebuilds squads using a reconciliation approach to preserve manual changes and template order.
+    Incrementally rebuilds squads using a reconciliation approach that respects template order,
+    player RSVP pools, and HLL class limits.
     """
-    # 1. GET CURRENT STATE AND DESIRED STATE
+    # 1. GET CURRENT & DESIRED STATE
     current_squads_list = await db.get_squads_with_members(event_id)
     current_squads_map = {s['name']: s for s in current_squads_list}
+    player_stats_records = await db.get_all_players_for_admin_panel()
+    player_stats_map = {str(p['user_id']): p for p in player_stats_records}
     
     template = await db.get_squad_template_by_id(request.template_id)
     if not template:
@@ -94,18 +97,12 @@ async def run_ai_draft(db: Database, event_id: int, request: SquadBuildRequest) 
     # 2. CALCULATE THE DESIRED SQUAD LAYOUT IN THE CORRECT ORDER
     desired_squad_names = []
     squad_definitions_map = {}
-    
-    # --- START: THIS IS THE FIX ---
-    # Initialize a dedicated counter for numeric groups
     numeric_group_index = 1
     
     for definition in template['definitions']:
         base_name = definition['squad_name']
         convention = definition['naming_convention']
-        
-        # Determine the correct group index to use for this specific type
         group_index_for_naming = numeric_group_index if convention == 'numeric' else 0
-        
         squad_definitions_map[base_name] = definition
         
         existing_names_for_type = [name for name in desired_squad_names if name.startswith(base_name)]
@@ -114,12 +111,10 @@ async def run_ai_draft(db: Database, event_id: int, request: SquadBuildRequest) 
             desired_squad_names.append(new_name)
             existing_names_for_type.append(new_name)
         
-        # Only increment the counter if the type we just processed uses numeric naming
         if convention == 'numeric':
             numeric_group_index += 1
-    # --- END: THIS IS THE FIX ---
             
-    # 3. RECONCILE: Preserve existing squads and identify players who need a new home
+    # 3. RECONCILE: Preserve existing squads and create a pool of available players
     new_squads_map = {}
     available_players = []
 
@@ -129,9 +124,19 @@ async def run_ai_draft(db: Database, event_id: int, request: SquadBuildRequest) 
         else:
             available_players.extend(squad_data['members'])
 
-    # 4. FILL NEWLY CREATED SQUADS
-    available_players.sort(key=lambda p: ROLE_PRIORITY.index(p.get('assigned_role_name')) if p.get('assigned_role_name') in ROLE_PRIORITY else 99)
+    # Re-sort available players into their RSVP pools
+    available_player_pools = defaultdict(list)
+    for player in available_players:
+        # We need the full signup record for the role_name, so we fetch it again
+        # This is inefficient, but necessary with the current data structure
+        signup_record = await db.get_signup(event_id, int(player['user_id']))
+        if signup_record:
+            pool_key = signup_record.get('role_name') or "Unassigned"
+            # Combine the signup data with the member data
+            full_player_data = {**player, **signup_record}
+            available_player_pools[pool_key].append(full_player_data)
 
+    # 4. FILL NEWLY CREATED SQUADS using a squad-centric approach
     for squad_name in desired_squad_names:
         if squad_name not in new_squads_map:
             base_name = re.split(r' \(\d', squad_name)[0].strip()
@@ -142,17 +147,34 @@ async def run_ai_draft(db: Database, event_id: int, request: SquadBuildRequest) 
             class_counts = defaultdict(int)
             squad_size = 6 if definition['squad_type'] == "Infantry" else 3 if definition['squad_type'] == "Armour" else 2
             
-            remaining_available = []
-            while len(new_squad_members) < squad_size and available_players:
-                player = available_players.pop(0)
-                player_class = player['assigned_role_name']
-                if class_counts[player_class] < CLASS_LIMITS.get(player_class, 99):
-                    new_squad_members.append(player)
-                    class_counts[player_class] += 1
-                else:
-                    remaining_available.append(player)
+            # Get the correct pool of players for this squad
+            eligible_players = available_player_pools[definition['source_rsvp_pool']]
             
-            available_players = remaining_available + available_players
+            roles_to_fill = ROLE_PRIORITY
+            if definition['squad_type'] == "Armour":
+                roles_to_fill = ["Tank Commander", "Crewman"]
+            elif definition['squad_type'] == "Recon":
+                roles_to_fill = ["Spotter", "Sniper"]
+            
+            # Fill the squad role-by-role using AI score
+            for role in roles_to_fill:
+                if len(new_squad_members) >= squad_size: break
+                if class_counts[role] >= CLASS_LIMITS.get(role, 99): continue
+
+                best_player = None
+                highest_score = -1
+                for player in eligible_players:
+                    player_stats = player_stats_map.get(str(player['user_id']), {})
+                    score = _calculate_suitability_score(player_stats, definition['squad_type'], role)
+                    if score > highest_score:
+                        highest_score = score
+                        best_player = player
+                
+                if best_player:
+                    new_squad_members.append(best_player)
+                    class_counts[role] += 1
+                    eligible_players.remove(best_player)
+            
             new_squads_map[squad_name] = new_squad_members
 
     # 5. COMMIT CHANGES TO DATABASE
@@ -165,10 +187,15 @@ async def run_ai_draft(db: Database, event_id: int, request: SquadBuildRequest) 
         
         squad_id = await db.create_squad(event_id, squad_name, definition['squad_type'])
         for member in new_squads_map.get(squad_name, []):
-            await db.add_squad_member(squad_id, int(member['user_id']), member['assigned_role_name'])
+            # The member object could be from get_squads_with_members OR get_signups_for_roster_page
+            assigned_role = member.get('assigned_role_name') or member.get('subclass_name') or 'Unassigned'
+            await db.add_squad_member(squad_id, int(member['user_id']), assigned_role)
 
+    # Add any leftover players to a new Reserves squad
     reserves_id = await db.create_squad(event_id, "Reserves", "Reserves")
-    for player in available_players:
-        await db.add_squad_member(reserves_id, int(player['user_id']), player['assigned_role_name'])
+    remaining_players = [p for pool in available_player_pools.values() for p in pool]
+    for player in remaining_players:
+        assigned_role = player.get('assigned_role_name') or player.get('subclass_name') or 'Unassigned'
+        await db.add_squad_member(reserves_id, int(player['user_id']), assigned_role)
 
     return await db.get_squads_with_members(event_id)
