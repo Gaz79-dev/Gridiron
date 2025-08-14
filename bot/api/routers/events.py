@@ -2,7 +2,6 @@ import os
 import httpx
 import datetime
 import asyncio
-import re
 from fastapi import APIRouter, Depends, HTTPException, status
 from typing import List, Optional
 
@@ -15,7 +14,6 @@ from bot.api.models import (
     SendEmbedRequest, Channel, User, EventLockStatus, EventUpdate, PromoteRequest, SquadReorderRequest
 )
 from bot.cogs.event_management import EMOJI_MAPPING
-from bot.ai import squad_optimizer
 
 router = APIRouter(
     prefix="/api/events",
