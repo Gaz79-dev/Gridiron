@@ -41,6 +41,17 @@ async def update_member_role(squad_member_id: int, request: RoleUpdateRequest, d
 async def move_member_to_squad(squad_member_id: int, request: SquadMoveRequest, db: Database = Depends(get_db)):
     await db.move_squad_member(squad_member_id, request.new_squad_id)
 
+@router.put("/{squad_id}/reorder", status_code=204)
+async def reorder_squad_members(
+    squad_id: int,
+    request: SquadReorderRequest,
+    db: Database = Depends(get_db)
+):
+    """
+    Updates the manual sort order of members within a squad.
+    """
+    await db.update_squad_member_order(squad_id, request.ordered_member_ids)
+
 @router.put("/members/{squad_member_id}/task", status_code=204)
 async def update_member_startup_task(
     squad_member_id: int,
