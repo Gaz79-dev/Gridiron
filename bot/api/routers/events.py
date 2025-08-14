@@ -234,33 +234,14 @@ async def get_event_squads(event_id: int, db: Database = Depends(get_db)):
 
 @router.get("/{event_id}/signups", response_model=List[Signup])
 async def get_event_signups(event_id: int, db: Database = Depends(get_db)):
-    if not BOT_TOKEN or not GUILD_ID:
-        raise HTTPException(status_code=500, detail="Bot token or Guild ID not configured on server.")
+    """
+    Retrieves all signups for an event, with display names pre-fetched
+    from the database cache.
+    """
+    # The slow loop that made API calls has been removed.
+    # We now get all the data we need in a single, fast database query.
     signups_records = await db.get_signups_for_event(event_id)
-    roster, headers = [], {"Authorization": f"Bot {BOT_TOKEN}"}
-    async with httpx.AsyncClient() as client:
-        for record in signups_records:
-            user_id = record['user_id']
-            display_name = f"User ID: {user_id}"
-            url = f"https://discord.com/api/v10/guilds/{GUILD_ID}/members/{user_id}"
-            try:
-                response = await client.get(url, headers=headers)
-                if response.is_success:
-                    member_data = response.json()
-                    display_name = member_data.get('nick') or member_data['user'].get('global_name') or member_data['user']['username']
-                elif response.status_code == 404:
-                    display_name = f"Left Server ({user_id})"
-            except Exception as e:
-                print(f"Error fetching member {user_id}: {e}")
-
-            roster.append(Signup(
-                user_id=str(user_id),
-                display_name=display_name,
-                role_name=record.get('role_name'),
-                subclass_name=record.get('subclass_name'),
-                rsvp_status=record['rsvp_status']
-            ))
-    return roster
+    return signups_records
 
 @router.post("/{event_id}/build-squads", response_model=List[Squad], dependencies=[Depends(check_event_lock)])
 async def build_squads_for_event(event_id: int, request: SquadBuildRequest, db: Database = Depends(get_db)):
