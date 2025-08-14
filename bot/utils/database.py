@@ -787,7 +787,26 @@ class Database:
             return [dict(row) for row in await connection.fetch(query)]
 
     async def get_signups_for_event(self, event_id: int) -> List[Dict]:
-        query = "SELECT * FROM signups WHERE event_id = $1 ORDER BY role_name, subclass_name;"
+        """
+        Gets all signups for an event and joins with player_stats to get the cached
+        display name for each user, avoiding slow, repeated API calls.
+        """
+        query = """
+            SELECT
+                s.user_id,
+                s.role_name,
+                s.subclass_name,
+                s.rsvp_status,
+                COALESCE(ps.display_name, s.user_id::text) AS display_name
+            FROM
+                signups s
+            LEFT JOIN
+                player_stats ps ON s.user_id = ps.user_id
+            WHERE
+                s.event_id = $1
+            ORDER BY
+                s.role_name, s.subclass_name;
+        """
         async with self.pool.acquire() as conn:
             return [dict(row) for row in await conn.fetch(query, event_id)]
 
