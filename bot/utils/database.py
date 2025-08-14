@@ -1,4 +1,3 @@
-
 import asyncpg
 import os
 import datetime
@@ -1104,60 +1103,37 @@ class Database:
         await self.pool.execute("UPDATE events SET needs_embed_update = FALSE WHERE event_id = $1;", event_id)
 
     async def get_squads_with_members(self, event_id: int) -> List[Dict]:
-        GUILD_ID, BOT_TOKEN = os.getenv("GUILD_ID"), os.getenv("DISCORD_TOKEN")
-        headers = {"Authorization": f"Bot {BOT_TOKEN}"}
-        
+        """
+        Gets all squads for an event and their members, joining with player_stats
+        to get cached display names for performance.
+        """
         query = """
-            SELECT s.squad_id, s.name, s.squad_type, 
-                   COALESCE(
-                       json_agg(
-                           json_build_object(
-                               'squad_member_id', sm.squad_member_id,
-                               'user_id', sm.user_id::text,
-                               'assigned_role_name', sm.assigned_role_name,
-                               'startup_task', sm.startup_task
-                           )
-                       ) FILTER (WHERE sm.squad_member_id IS NOT NULL), 
-                       '[]'
-                   ) as members
+            SELECT
+                s.squad_id,
+                s.name,
+                s.squad_type,
+                COALESCE(
+                    json_agg(
+                        json_build_object(
+                           'squad_member_id', sm.squad_member_id,
+                           'user_id', sm.user_id::text,
+                           'assigned_role_name', sm.assigned_role_name,
+                           'startup_task', sm.startup_task,
+                           'display_name', COALESCE(ps.display_name, sm.user_id::text)
+                        ) ORDER BY sm.squad_member_id
+                    ) FILTER (WHERE sm.squad_member_id IS NOT NULL),
+                    '[]'
+                ) as members
             FROM squads s
             LEFT JOIN squad_members sm ON s.squad_id = sm.squad_id
+            LEFT JOIN player_stats ps ON sm.user_id = ps.user_id
             WHERE s.event_id = $1
             GROUP BY s.squad_id
             ORDER BY s.squad_id;
         """
-
         async with self.pool.acquire() as connection:
             records = await connection.fetch(query, event_id)
-
-        if not GUILD_ID or not BOT_TOKEN:
             return [dict(record) for record in records]
-
-        processed_squads = []
-        async with httpx.AsyncClient() as client:
-            for record in records:
-                squad = dict(record)
-                processed_members = []
-                for member_data in squad.get('members', []):
-                    user_id = member_data['user_id']
-                    display_name = f"User ID: {user_id}"
-                    url = f"https://discord.com/api/v10/guilds/{GUILD_ID}/members/{user_id}"
-                    try:
-                        response = await client.get(url, headers=headers)
-                        if response.is_success:
-                            api_member_data = response.json()
-                            display_name = api_member_data.get('nick') or api_member_data['user'].get('global_name') or api_member_data['user']['username']
-                        elif response.status_code == 404:
-                            display_name = f"Left Server ({user_id})"
-                    except Exception as e:
-                        print(f"Exception while fetching member {user_id}: {e}")
-
-                    member_data['display_name'] = display_name
-                    processed_members.append(member_data)
-                
-                squad['members'] = processed_members
-                processed_squads.append(squad)
-        return processed_squads
 
     async def delete_squads_for_event(self, event_id: int):
         async with self.pool.acquire() as connection:
