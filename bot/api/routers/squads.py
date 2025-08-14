@@ -4,7 +4,7 @@ from typing import Dict, Optional
 from bot.api import auth
 from bot.api.dependencies import get_db
 from bot.utils.database import Database, ROLES, SUBCLASSES
-from bot.api.models import RoleUpdateRequest, SquadMoveRequest, StartupTaskUpdateRequest
+from bot.api.models import RoleUpdateRequest, SquadMoveRequest, StartupTaskUpdateRequest, SquadReorderRequest
 from bot.cogs.event_management import EMOJI_MAPPING
 
 router = APIRouter(prefix="/api/squads", tags=["squads"], dependencies=[Depends(auth.get_current_active_user)])
