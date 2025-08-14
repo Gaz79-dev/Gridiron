@@ -2,18 +2,17 @@ import os
 import httpx
 import datetime
 import asyncio
-import re
 from fastapi import APIRouter, Depends, HTTPException, status
 from typing import List, Optional
 
 # Use absolute imports from the 'bot' package root
-from bot.ai import squad_optimizer
 from bot.utils.database import Database, RsvpStatus, ROLES, SUBCLASSES
 from bot.api import auth
+from bot.ai import squad_optimizer
 from bot.api.dependencies import get_db
 from bot.api.models import (
     Event, Signup, Squad, SquadBuildRequest, RosterUpdateRequest, 
-    SendEmbedRequest, Channel, User, EventLockStatus, EventUpdate, PromoteRequest, SquadReorderRequest
+    SendEmbedRequest, Channel, User, EventLockStatus, EventUpdate, PromoteRequest
 )
 from bot.cogs.event_management import EMOJI_MAPPING
 
@@ -28,6 +27,7 @@ GUILD_ID = os.getenv("GUILD_ID")
 BOT_TOKEN = os.getenv("DISCORD_TOKEN")
 LOCK_TIMEOUT_MINUTES = 15
 
+# --- FIX START: New dedicated function for sending the FINAL embed ---
 async def _send_finalized_embed(event_id: int, request: SendEmbedRequest, db: Database):
     """
     Sends the FINALIZED squad composition embed to a Discord channel.
@@ -46,7 +46,7 @@ async def _send_finalized_embed(event_id: int, request: SendEmbedRequest, db: Da
     
     content_str, allowed_mentions = "", {"parse": ["users", "roles"]}
     if request.mention_accepted and event_id:
-        signups = await db.get_signups_for_roster_page(event_id)
+        signups = await db.get_signups_for_event(event_id)
         accepted_ids = [s['user_id'] for s in signups if s['rsvp_status'] == RsvpStatus.ACCEPTED]
         if accepted_ids:
             content_str = ' '.join([f'<@{uid}>' for uid in accepted_ids])
@@ -73,6 +73,7 @@ async def _send_finalized_embed(event_id: int, request: SendEmbedRequest, db: Da
         fields.append({"name": f"__**{squad.name}**__", "value": value, "inline": True})
         squad_count += 1
         
+        # After every second squad, add a blank field to force a new line
         if squad_count % 2 == 0 and squad_count < len(squads_for_display):
             fields.append({"name": "\u200b", "value": "\u200b", "inline": False})
     # --- END: 2-Column Layout Logic ---
@@ -95,6 +96,8 @@ async def _send_finalized_embed(event_id: int, request: SendEmbedRequest, db: Da
         except Exception as e:
             print(f"Error sending finalized embed to Discord API: {e}")
             raise HTTPException(status_code=502, detail="Failed to send finalized embed to Discord.")
+# --- FIX END ---
+
 
 # --- Locking Dependency ---
 async def check_event_lock(event_id: int, current_user: User = Depends(auth.get_current_admin_user), db: Database = Depends(get_db)):
@@ -193,9 +196,15 @@ async def update_event_details(event_id: int, event_data: EventUpdate, db: Datab
 
 @router.delete("/{event_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(auth.get_current_admin_user)])
 async def delete_event(event_id: int, db: Database = Depends(get_db)):
+    """
+    Permanently deletes an event from the database.
+    This is typically used for removing recurring parent templates.
+    """
+    # First, check if the event exists to avoid errors
     event_to_delete = await db.get_event_by_id(event_id, include_deleted=True)
     if not event_to_delete:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found")
+    
     await db.delete_event(event_id)
     return
 
@@ -229,10 +238,44 @@ async def force_unlock_all_events_endpoint(db: Database = Depends(get_db)):
 async def get_event_squads(event_id: int, db: Database = Depends(get_db)):
     return await db.get_squads_with_members(event_id)
 
+@router.get("/{event_id}/signups", response_model=List[Signup])
+async def get_event_signups(event_id: int, db: Database = Depends(get_db)):
+    if not BOT_TOKEN or not GUILD_ID:
+        raise HTTPException(status_code=500, detail="Bot token or Guild ID not configured on server.")
+    signups_records = await db.get_signups_for_event(event_id)
+    roster, headers = [], {"Authorization": f"Bot {BOT_TOKEN}"}
+    async with httpx.AsyncClient() as client:
+        for record in signups_records:
+            user_id = record['user_id']
+            display_name = f"User ID: {user_id}"
+            url = f"https://discord.com/api/v10/guilds/{GUILD_ID}/members/{user_id}"
+            try:
+                response = await client.get(url, headers=headers)
+                if response.is_success:
+                    member_data = response.json()
+                    display_name = member_data.get('nick') or member_data['user'].get('global_name') or member_data['user']['username']
+                elif response.status_code == 404:
+                    display_name = f"Left Server ({user_id})"
+            except Exception as e:
+                print(f"Error fetching member {user_id}: {e}")
+
+            roster.append(Signup(
+                user_id=str(user_id),
+                display_name=display_name,
+                role_name=record.get('role_name'),
+                subclass_name=record.get('subclass_name'),
+                rsvp_status=record['rsvp_status']
+            ))
+    return roster
+
 @router.get("/{event_id}/roster", response_model=List[Signup])
 async def get_event_roster_for_web(event_id: int, db: Database = Depends(get_db)):
+    """
+    A dedicated endpoint to get the event roster for the web UI,
+    using cached names for performance.
+    """
     return await db.get_signups_for_roster_page(event_id)
-    
+
 @router.post("/{event_id}/build-squads", response_model=List[Squad], dependencies=[Depends(check_event_lock)])
 async def build_squads_for_event(event_id: int, request: SquadBuildRequest, db: Database = Depends(get_db)):
     try:
@@ -244,8 +287,8 @@ async def build_squads_for_event(event_id: int, request: SquadBuildRequest, db: 
 @router.post("/{event_id}/refresh-roster", response_model=List[Squad], dependencies=[Depends(check_event_lock)])
 async def refresh_event_roster(event_id: int, request: RosterUpdateRequest, db: Database = Depends(get_db)):
     current_member_ids = {int(member.user_id) for squad in request.squads for member in squad.members}
-    latest_signups = await db.get_signups_for_roster_page(event_id)
-    accepted_user_ids = {int(s['user_id']) for s in latest_signups if s['rsvp_status'] == RsvpStatus.ACCEPTED}
+    latest_signups = await db.get_signups_for_event(event_id)
+    accepted_user_ids = {s['user_id'] for s in latest_signups if s['rsvp_status'] == RsvpStatus.ACCEPTED}
     users_to_remove = current_member_ids - accepted_user_ids
     for user_id in users_to_remove:
         await db.remove_user_from_all_squads(event_id, user_id)
@@ -263,6 +306,7 @@ async def refresh_event_roster(event_id: int, request: RosterUpdateRequest, db: 
         await db.flag_event_for_embed_update(event_id)
     return await db.get_squads_with_members(event_id)
 
+# --- FIX START: Update endpoint to call the new finalized embed function ---
 @router.post("/{event_id}/finalize-squads", status_code=204)
 async def finalize_squads_and_learn(
     event_id: int,
@@ -270,6 +314,9 @@ async def finalize_squads_and_learn(
     db: Database = Depends(get_db),
     lock_check: None = Depends(check_event_lock)
 ):
+    """
+    Sends the final squad embed and triggers the AI learning process.
+    """
     await _send_finalized_embed(event_id, request, db)
     
     try:
@@ -278,6 +325,7 @@ async def finalize_squads_and_learn(
         print(f"AI learning process triggered for event {event_id}.")
     except Exception as e:
         print(f"Error during AI learning process for event {event_id}: {e}")
+# --- FIX END ---
 
 @router.post("/send-draft-embed", status_code=204)
 async def send_draft_embed(
@@ -303,7 +351,7 @@ async def send_draft_embed(
     
     content_str, allowed_mentions = "", {"parse": ["users", "roles"]}
     if request.mention_accepted and event_id:
-        signups = await db.get_signups_for_roster_page(event_id)
+        signups = await db.get_signups_for_event(event_id)
         accepted_ids = [s['user_id'] for s in signups if s['rsvp_status'] == RsvpStatus.ACCEPTED]
         if accepted_ids:
             content_str = ' '.join([f'<@{uid}>' for uid in accepted_ids])
@@ -330,6 +378,7 @@ async def send_draft_embed(
         fields.append({"name": f"__**{squad.name}**__", "value": value, "inline": True})
         squad_count += 1
         
+        # After every second squad, add a blank field to force a new line
         if squad_count % 2 == 0 and squad_count < len(squads_for_display):
             fields.append({"name": "\u200b", "value": "\u200b", "inline": False})
     # --- END: 2-Column Layout Logic ---
