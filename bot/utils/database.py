@@ -982,6 +982,31 @@ class Database:
         async with self.pool.acquire() as connection:
             return [dict(row) for row in await connection.fetch(query)]
 
+    async def get_signups_for_roster_page(self, event_id: int) -> List[Dict]:
+        """
+        Gets all signups for an event for the web UI roster.
+        It joins with player_stats to get cached display names for performance and
+        casts user_id to text to match the API's data model.
+        """
+        query = """
+            SELECT
+                s.user_id::text AS user_id, -- Cast to string for Pydantic model
+                s.role_name,
+                s.subclass_name,
+                s.rsvp_status,
+                COALESCE(ps.display_name, s.user_id::text) AS display_name
+            FROM
+                signups s
+            LEFT JOIN
+                player_stats ps ON s.user_id = ps.user_id
+            WHERE
+                s.event_id = $1
+            ORDER BY
+                s.role_name, s.subclass_name;
+        """
+        async with self.pool.acquire() as conn:
+            return [dict(row) for row in await conn.fetch(query, event_id)]
+
     async def get_past_events_with_tentatives(self) -> List[Dict]:
         query = """
             SELECT s.event_id, s.user_id FROM signups s
