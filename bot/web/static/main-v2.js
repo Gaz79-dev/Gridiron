@@ -18,8 +18,6 @@ document.addEventListener('DOMContentLoaded', () => {
     // --- ELEMENT SELECTORS ---
     const eventDropdown = document.getElementById('event-dropdown');
     
-    // --- FIX: Add a guard clause to ensure the script only runs on the squad builder page ---
-    // If the main event dropdown doesn't exist, we're not on the right page, so stop execution.
     if (!eventDropdown) {
         return;
     }
@@ -391,6 +389,17 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
                 if (taskTextEl) taskTextEl.textContent = task;
                 if (!task && taskTextEl) taskTextEl.remove();
+
+                // --- START: FIX FOR MISSING STARTUP TASKS ---
+                // Update the underlying currentSquads object
+                const squad = currentSquads.find(s => s.members.some(m => m.squad_member_id == memberId));
+                if (squad) {
+                    const member = squad.members.find(m => m.squad_member_id == memberId);
+                    if (member) {
+                        member.startup_task = task || null;
+                    }
+                }
+                // --- END: FIX FOR MISSING STARTUP TASKS ---
             }
             assignTaskModal.classList.add('hidden');
         } catch (err) { alert("Error: Could not update task."); }
@@ -443,6 +452,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
         eventDropdown.addEventListener('change', handleEventSelection);
         isPageInitialized = true;
+        
+        loadChannels(); // Load channels on initial page load
 
     }).catch(err => console.error("FATAL: Initial page data failed to load:", err));
 
@@ -598,7 +609,6 @@ document.addEventListener('DOMContentLoaded', () => {
                     const oldSquadId = evt.from.dataset.squadId;
 
                     try {
-                        // Case 1: Player was moved to a DIFFERENT squad
                         if (oldSquadId !== newSquadId) {
                             const response = await fetch(`/api/squads/members/${memberId}/move`, {
                                 method: 'PUT', headers: { ...headers, 'Content-Type': 'application/json' },
@@ -607,8 +617,6 @@ document.addEventListener('DOMContentLoaded', () => {
                             if (await handleApiError(response)) throw new Error('Move failed on server');
                         }
 
-                        // Case 2: Player was re-ordered WITHIN THE SAME squad (or moved to a new one)
-                        // In both cases, we must update the order of the destination squad.
                         const memberItems = evt.to.querySelectorAll('.member-item');
                         const orderedMemberIds = Array.from(memberItems).map(item => parseInt(item.dataset.memberId));
 
@@ -621,9 +629,9 @@ document.addEventListener('DOMContentLoaded', () => {
                     } catch (err) {
                         console.error("Drag-and-drop error:", err);
                         alert("Error: Could not save squad changes. " + err.message);
-                        // NOTE: You might want to refresh the UI here to show the server state
                     }
                 }
             });
         });
     }
+});
