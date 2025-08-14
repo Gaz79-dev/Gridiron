@@ -50,93 +50,127 @@ def _calculate_suitability_score(player_stats: Dict, target_squad_type: str, tar
     )
     return suitability_score
 
-def get_squad_iteration(squad_name: str, counts: Dict, convention: str, group_index: int) -> str:
-    """Gets the next iteration for a squad name based on the convention."""
-    counts[squad_name] = counts.get(squad_name, 0) + 1
-    count = counts[squad_name]
+import re # Add this import at the top of your file
+
+def get_squad_iteration(base_name: str, existing_names: List[str], convention: str, group_index: int) -> str:
+    """Gets the next available name for a squad, avoiding collisions."""
+    # Find the highest existing count for this base name and group index
+    highest_count = 0
+    for name in existing_names:
+        if name.startswith(base_name):
+            if convention == 'numeric':
+                match = re.search(rf'\({group_index}\.(\d+)\)', name)
+                if match:
+                    highest_count = max(highest_count, int(match.group(1)))
+            elif convention == 'alpha':
+                match = re.search(r' ([A-Z])$', name)
+                if match:
+                    # Convert letter back to a number (A=1, B=2)
+                    num = ord(match.group(1)) - ord('A') + 1
+                    highest_count = max(highest_count, num)
+
+    next_count = highest_count + 1
     
     if convention == 'numeric':
-        return f"{squad_name} ({group_index}.{count})"
+        return f"{base_name} ({group_index}.{next_count})"
     elif convention == 'alpha':
-        iteration_char = chr(ord('A') + count - 1) if count <= 26 else f"Z{count - 26}"
-        return f"{squad_name} {iteration_char}"
-    else:
-        return squad_name
-
-# --- Main AI Drafting Logic ---
+        iteration_char = chr(ord('A') + next_count - 1)
+        return f"{base_name} {iteration_char}"
+    else: # 'none'
+        return base_name
 
 async def run_ai_draft(db: Database, event_id: int, request: SquadBuildRequest) -> List[Dict]:
     """
-    Incrementally adjusts squads based on new counts, rather than doing a full rebuild.
+    Incrementally rebuilds squads using a reconciliation approach to preserve manual changes.
     """
-    # 1. GET CURRENT & DESIRED STATE
-    current_squads = await db.get_squads_with_members(event_id)
+    # 1. GET CURRENT STATE AND DESIRED STATE
+    current_squads_list = await db.get_squads_with_members(event_id)
+    current_squads_map = {s['name']: s for s in current_squads_list}
+    
+    all_current_players = {
+        member['squad_member_id']: member for squad in current_squads_list for member in squad['members']
+    }
+
     template = await db.get_squad_template_by_id(request.template_id)
     if not template:
         raise ValueError("Squad template not found.")
 
-    # Ensure a reserves squad exists, as it's critical for moves
-    reserves_squad = await db.get_reserves_squad(event_id)
-    if not reserves_squad:
-        reserves_id = await db.create_squad(event_id, "Reserves", "Reserves")
-        reserves_squad = {'squad_id': reserves_id}
-
-    # 2. PROCESS EACH SQUAD TYPE (INFANTRY, ARMOUR, ETC.)
-    squad_name_definitions = {definition['squad_name']: definition for definition in template['definitions']}
-
-    for base_name, definition in squad_name_definitions.items():
-        current_squads_of_type = sorted(
-            [s for s in current_squads if s['name'].startswith(base_name)],
-            key=lambda s: s['name']
-        )
-        current_count = len(current_squads_of_type)
-        new_count = request.squad_counts.get(base_name, 0)
-
-        # --- HANDLE SQUAD REMOVAL ---
-        if new_count < current_count:
-            num_to_remove = current_count - new_count
-            squads_to_remove = current_squads_of_type[-num_to_remove:] # Get the last N squads
+    # 2. CALCULATE THE DESIRED SQUAD LAYOUT
+    desired_squad_names = set()
+    squad_definitions_map = {}
+    
+    for i, definition in enumerate(template['definitions']):
+        base_name = definition['squad_name']
+        convention = definition['naming_convention']
+        # The group_index is based on its order in the template
+        group_index = i + 1 
+        
+        squad_definitions_map[base_name] = definition
+        
+        # Generate the names of all squads that should exist
+        existing_names_for_type = [s['name'] for s in current_squads_list if s['name'].startswith(base_name)]
+        for _ in range(request.squad_counts.get(base_name, 0)):
+            # Pass the existing names to the helper to get the next correct name
+            new_name = get_squad_iteration(base_name, existing_names_for_type, convention, group_index)
+            desired_squad_names.add(new_name)
+            existing_names_for_type.append(new_name) # Add to list to ensure next iteration is unique
             
-            for squad in squads_to_remove:
-                members_to_move = await db.get_squad_members(squad['squad_id'])
-                for member in members_to_move:
-                    await db.move_squad_member(member['squad_member_id'], reserves_squad['squad_id'])
-                await db.delete_squad(squad['squad_id'])
-            print(f"Removed {num_to_remove} squad(s) of type {base_name} and moved players to reserves.")
+    # 3. RECONCILE: Preserve existing squads and identify players who need a new home
+    new_squads_map = {}
+    available_players = []
 
-        # --- HANDLE SQUAD ADDITION ---
-        elif new_count > current_count:
-            num_to_add = new_count - current_count
-            reserves_members = [m for s in current_squads if s['name'] == 'Reserves' for m in s['members']]
+    # Find players from squads that are being deleted or from the old reserves
+    for squad_name, squad_data in current_squads_map.items():
+        if squad_name in desired_squad_names:
+            new_squads_map[squad_name] = squad_data['members'] # Preserve this squad and its members
+        else:
+            available_players.extend(squad_data['members']) # This squad is being deleted, its members are now available
+
+    # 4. FILL NEWLY CREATED SQUADS from the available player pool
+    available_players.sort(key=lambda p: ROLE_PRIORITY.index(p.get('assigned_role_name')) if p.get('assigned_role_name') in ROLE_PRIORITY else 99)
+
+    for squad_name in desired_squad_names:
+        if squad_name not in new_squads_map:
+            # This is a new squad that needs to be created and filled
+            base_name = squad_name.split(' ')[0]
+            definition = squad_definitions_map.get(base_name)
+            if not definition: continue
+
+            new_squad_members = []
+            class_counts = defaultdict(int)
+            squad_size = 6 if definition['squad_type'] == "Infantry" else 3 if definition['squad_type'] == "Armour" else 2
             
-            # Prioritize players who signed up for the correct role
-            reserves_members.sort(key=lambda p: ROLE_PRIORITY.index(p.get('assigned_role_name')) if p.get('assigned_role_name') in ROLE_PRIORITY else 99)
-
-            squad_name_counts = {base_name: current_count}
+            remaining_available = []
+            while len(new_squad_members) < squad_size and available_players:
+                player = available_players.pop(0)
+                player_class = player['assigned_role_name']
+                if class_counts[player_class] < CLASS_LIMITS.get(player_class, 99):
+                    new_squad_members.append(player)
+                    class_counts[player_class] += 1
+                else:
+                    remaining_available.append(player)
             
-            for i in range(num_to_add):
-                new_squad_name = get_squad_iteration(base_name, squad_name_counts, definition['naming_convention'], 0)
-                new_squad_id = await db.create_squad(event_id, new_squad_name, definition['squad_type'])
-                
-                # Fill the new squad from reserves
-                squad_size = 6 if definition['squad_type'] == "Infantry" else 3 if definition['squad_type'] == "Armour" else 2
-                class_counts = defaultdict(int)
-                
-                players_for_new_squad = []
-                temp_reserves = []
+            available_players = remaining_available + available_players
+            new_squads_map[squad_name] = new_squad_members
 
-                while len(players_for_new_squad) < squad_size and reserves_members:
-                    player = reserves_members.pop(0)
-                    player_class = player['assigned_role_name']
-                    
-                    if class_counts[player_class] < CLASS_LIMITS.get(player_class, 99):
-                        await db.move_squad_member(player['squad_member_id'], new_squad_id)
-                        class_counts[player_class] += 1
-                        players_for_new_squad.append(player)
-                    else:
-                        temp_reserves.append(player)
-                
-                reserves_members = temp_reserves + reserves_members # Add unplaced players back to the pool
-            print(f"Added {num_to_add} squad(s) of type {base_name}, filled from reserves.")
+    # 5. COMMIT CHANGES TO DATABASE
+    await db.delete_squads_for_event(event_id)
+    
+    # Create the squads in the correct order
+    sorted_squad_names = sorted(list(desired_squad_names))
+    
+    for squad_name in sorted_squad_names:
+        base_name = squad_name.split(' ')[0]
+        definition = squad_definitions_map.get(base_name)
+        if not definition: continue
+        
+        squad_id = await db.create_squad(event_id, squad_name, definition['squad_type'])
+        for member in new_squads_map.get(squad_name, []):
+            await db.add_squad_member(squad_id, int(member['user_id']), member['assigned_role_name'])
+
+    # Add any leftover players to a new Reserves squad
+    reserves_id = await db.create_squad(event_id, "Reserves", "Reserves")
+    for player in available_players:
+        await db.add_squad_member(reserves_id, int(player['user_id']), player['assigned_role_name'])
 
     return await db.get_squads_with_members(event_id)
