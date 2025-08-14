@@ -73,7 +73,10 @@ async def run_ai_draft(db: Database, event_id: int, request: SquadBuildRequest) 
     await db.delete_squads_for_event(event_id)
     
     signups = await db.get_signups_for_event(event_id)
-    player_stats_records = await db.get_all_player_stats_for_admin()
+    
+    # --- THIS IS THE LINE THAT FIXES THE ERROR ---
+    player_stats_records = await db.get_all_players_for_admin_panel()
+    
     player_stats_map = {str(p['user_id']): p for p in player_stats_records}
 
     # --- FIX: Ensure role_affinities is always a dictionary ---
@@ -103,8 +106,8 @@ async def run_ai_draft(db: Database, event_id: int, request: SquadBuildRequest) 
     squad_counts, squads_to_fill_templates = {}, []
     numeric_group_index = 1
     for definition in template['definitions']:
-        squad_name = definition['squad_name']
-        convention = definition['naming_convention']
+        squad_name = definition.squad_name
+        convention = definition.naming_convention
         count = request.squad_counts.get(squad_name, 0)
         group_index_for_naming = numeric_group_index if convention == 'numeric' else 0
 
@@ -112,8 +115,8 @@ async def run_ai_draft(db: Database, event_id: int, request: SquadBuildRequest) 
             full_squad_name = get_squad_iteration(squad_name, squad_counts, convention, group_index_for_naming)
             squads_to_fill_templates.append({
                 'name': full_squad_name,
-                'squad_type': definition['squad_type'],
-                'source_pool': definition['source_rsvp_pool'],
+                'squad_type': definition.squad_type,
+                'source_pool': definition.source_rsvp_pool,
             })
         
         if convention == 'numeric':
