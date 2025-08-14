@@ -262,6 +262,14 @@ async def get_event_signups(event_id: int, db: Database = Depends(get_db)):
             ))
     return roster
 
+@router.get("/{event_id}/roster", response_model=List[Signup])
+async def get_event_roster_for_web(event_id: int, db: Database = Depends(get_db)):
+    """
+    A dedicated endpoint to get the event roster for the web UI,
+    using cached names for performance.
+    """
+    return await db.get_signups_for_roster_page(event_id)
+
 @router.post("/{event_id}/build-squads", response_model=List[Squad], dependencies=[Depends(check_event_lock)])
 async def build_squads_for_event(event_id: int, request: SquadBuildRequest, db: Database = Depends(get_db)):
     try:
