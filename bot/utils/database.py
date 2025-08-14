@@ -590,8 +590,12 @@ class Database:
                         (template_id, squad_name, default_count, squad_type, naming_convention, source_rsvp_pool)
                         VALUES ($1, $2, $3, $4, $5, $6)
                         """,
-                        template_id, defi['squad_name'], defi['default_count'], defi['squad_type'],
-                        defi['naming_convention'], defi['source_rsvp_pool']
+                        template_id,
+                        defi.squad_name,         # Changed to dot notation
+                        defi.default_count,      # Changed to dot notation
+                        defi.squad_type,         # Changed to dot notation
+                        defi.naming_convention,  # Changed to dot notation
+                        defi.source_rsvp_pool    # Changed to dot notation
                     )
 
     async def get_squad_template_by_id(self, template_id: int) -> Optional[Dict]:
