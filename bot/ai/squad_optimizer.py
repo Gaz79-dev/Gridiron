@@ -81,58 +81,49 @@ def get_squad_iteration(base_name: str, existing_names: List[str], convention: s
 
 async def run_ai_draft(db: Database, event_id: int, request: SquadBuildRequest) -> List[Dict]:
     """
-    Incrementally rebuilds squads using a reconciliation approach to preserve manual changes.
+    Incrementally rebuilds squads using a reconciliation approach to preserve manual changes and template order.
     """
     # 1. GET CURRENT STATE AND DESIRED STATE
     current_squads_list = await db.get_squads_with_members(event_id)
     current_squads_map = {s['name']: s for s in current_squads_list}
     
-    all_current_players = {
-        member['squad_member_id']: member for squad in current_squads_list for member in squad['members']
-    }
-
     template = await db.get_squad_template_by_id(request.template_id)
     if not template:
         raise ValueError("Squad template not found.")
 
-    # 2. CALCULATE THE DESIRED SQUAD LAYOUT
-    desired_squad_names = set()
+    # 2. CALCULATE THE DESIRED SQUAD LAYOUT IN THE CORRECT ORDER
+    desired_squad_names = [] # Use a list to preserve order
     squad_definitions_map = {}
     
     for i, definition in enumerate(template['definitions']):
         base_name = definition['squad_name']
         convention = definition['naming_convention']
-        # The group_index is based on its order in the template
         group_index = i + 1 
         
         squad_definitions_map[base_name] = definition
         
-        # Generate the names of all squads that should exist
-        existing_names_for_type = [s['name'] for s in current_squads_list if s['name'].startswith(base_name)]
+        existing_names_for_type = [name for name in desired_squad_names if name.startswith(base_name)]
         for _ in range(request.squad_counts.get(base_name, 0)):
-            # Pass the existing names to the helper to get the next correct name
             new_name = get_squad_iteration(base_name, existing_names_for_type, convention, group_index)
-            desired_squad_names.add(new_name)
-            existing_names_for_type.append(new_name) # Add to list to ensure next iteration is unique
+            desired_squad_names.append(new_name)
+            existing_names_for_type.append(new_name)
             
     # 3. RECONCILE: Preserve existing squads and identify players who need a new home
     new_squads_map = {}
     available_players = []
 
-    # Find players from squads that are being deleted or from the old reserves
     for squad_name, squad_data in current_squads_map.items():
         if squad_name in desired_squad_names:
-            new_squads_map[squad_name] = squad_data['members'] # Preserve this squad and its members
+            new_squads_map[squad_name] = squad_data['members']
         else:
-            available_players.extend(squad_data['members']) # This squad is being deleted, its members are now available
+            available_players.extend(squad_data['members'])
 
-    # 4. FILL NEWLY CREATED SQUADS from the available player pool
+    # 4. FILL NEWLY CREATED SQUADS
     available_players.sort(key=lambda p: ROLE_PRIORITY.index(p.get('assigned_role_name')) if p.get('assigned_role_name') in ROLE_PRIORITY else 99)
 
     for squad_name in desired_squad_names:
         if squad_name not in new_squads_map:
-            # This is a new squad that needs to be created and filled
-            base_name = squad_name.split(' ')[0]
+            base_name = re.split(r' \(\d', squad_name)[0].strip()
             definition = squad_definitions_map.get(base_name)
             if not definition: continue
 
@@ -156,11 +147,9 @@ async def run_ai_draft(db: Database, event_id: int, request: SquadBuildRequest) 
     # 5. COMMIT CHANGES TO DATABASE
     await db.delete_squads_for_event(event_id)
     
-    # Create the squads in the correct order
-    sorted_squad_names = sorted(list(desired_squad_names))
-    
-    for squad_name in sorted_squad_names:
-        base_name = squad_name.split(' ')[0]
+    # Create the squads in the desired order (no alphabetical sort)
+    for squad_name in desired_squad_names:
+        base_name = re.split(r' \(\d', squad_name)[0].strip()
         definition = squad_definitions_map.get(base_name)
         if not definition: continue
         
@@ -168,7 +157,6 @@ async def run_ai_draft(db: Database, event_id: int, request: SquadBuildRequest) 
         for member in new_squads_map.get(squad_name, []):
             await db.add_squad_member(squad_id, int(member['user_id']), member['assigned_role_name'])
 
-    # Add any leftover players to a new Reserves squad
     reserves_id = await db.create_squad(event_id, "Reserves", "Reserves")
     for player in available_players:
         await db.add_squad_member(reserves_id, int(player['user_id']), player['assigned_role_name'])
