@@ -620,6 +620,25 @@ class Database:
         async with self.pool.acquire() as conn:
             await conn.execute("DELETE FROM squad_templates WHERE template_id = $1", template_id)
 
+    async def get_squad_members(self, squad_id: int) -> List[Dict]:
+        """Gets all members of a specific squad."""
+        query = "SELECT * FROM squad_members WHERE squad_id = $1;"
+        async with self.pool.acquire() as connection:
+            return [dict(row) for row in await connection.fetch(query, squad_id)]
+
+    async def get_reserves_squad(self, event_id: int) -> Optional[Dict]:
+        """Gets the reserves squad for a given event."""
+        query = "SELECT * FROM squads WHERE event_id = $1 AND name = 'Reserves' LIMIT 1;"
+        async with self.pool.acquire() as connection:
+            row = await connection.fetchrow(query, event_id)
+            return dict(row) if row else None
+
+    async def delete_squad(self, squad_id: int):
+        """Permanently deletes a squad by its ID."""
+        query = "DELETE FROM squads WHERE squad_id = $1;"
+        async with self.pool.acquire() as connection:
+            await connection.execute(query, squad_id)
+
     async def promote_tentative_player(self, event_id: int, user_id: int, role_name: Optional[str], subclass_name: Optional[str]):
         async with self.pool.acquire() as connection:
             async with connection.transaction():
