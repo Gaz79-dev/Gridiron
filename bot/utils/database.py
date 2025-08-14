@@ -1104,34 +1104,47 @@ class Database:
 
     async def get_squads_with_members(self, event_id: int) -> List[Dict]:
         """
-        Gets all squads for an event and their members, joining with player_stats
-        to get cached display names for performance.
-        """
-        query = """
-            SELECT
-                s.squad_id,
-                s.name,
-                s.squad_type,
-                COALESCE(
-                    json_agg(
-                        json_build_object(
-                           'squad_member_id', sm.squad_member_id,
-                           'user_id', sm.user_id::text,
-                           'assigned_role_name', sm.assigned_role_name,
-                           'startup_task', sm.startup_task,
-                           'display_name', COALESCE(ps.display_name, sm.user_id::text)
-                        ) ORDER BY sm.squad_member_id
-                    ) FILTER (WHERE sm.squad_member_id IS NOT NULL),
-                    '[]'
-                ) as members
-            FROM squads s
-            LEFT JOIN squad_members sm ON s.squad_id = sm.squad_id
-            LEFT JOIN player_stats ps ON sm.user_id = ps.user_id
-            WHERE s.event_id = $1
-            GROUP BY s.squad_id
-            ORDER BY s.squad_id;
+        Gets all squads for an event and their members. If a Reserves squad
+        does not exist for the event, it will be created automatically.
         """
         async with self.pool.acquire() as connection:
+            # First, check if a reserves squad exists for this event
+            reserves_exists = await connection.fetchval(
+                "SELECT EXISTS (SELECT 1 FROM squads WHERE event_id = $1 AND name = 'Reserves');",
+                event_id
+            )
+
+            # If it doesn't exist, create it now
+            if not reserves_exists:
+                await self.create_squad(event_id, "Reserves", "Reserves")
+
+            # Now, fetch all squads for the event, which will include the Reserves squad
+            query = """
+                SELECT
+                    s.squad_id,
+                    s.name,
+                    s.squad_type,
+                    COALESCE(
+                        json_agg(
+                            json_build_object(
+                               'squad_member_id', sm.squad_member_id,
+                               'user_id', sm.user_id::text,
+                               'assigned_role_name', sm.assigned_role_name,
+                               'startup_task', sm.startup_task,
+                               'display_name', COALESCE(ps.display_name, sm.user_id::text)
+                            ) ORDER BY sm.squad_member_id
+                        ) FILTER (WHERE sm.squad_member_id IS NOT NULL),
+                        '[]'
+                    ) as members
+                FROM squads s
+                LEFT JOIN squad_members sm ON s.squad_id = sm.squad_id
+                LEFT JOIN player_stats ps ON sm.user_id = ps.user_id
+                WHERE s.event_id = $1
+                GROUP BY s.squad_id
+                ORDER BY
+                    CASE WHEN s.name = 'Reserves' THEN 1 ELSE 0 END, -- Ensure Reserves is last
+                    s.squad_id;
+            """
             records = await connection.fetch(query, event_id)
             return [dict(record) for record in records]
 
