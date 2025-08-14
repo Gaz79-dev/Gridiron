@@ -371,7 +371,7 @@ document.addEventListener('DOMContentLoaded', () => {
     assignTaskForm.addEventListener('submit', async (e) => {
         e.preventDefault();
         const memberId = taskModalMemberIdInput.value;
-        const task = modalTaskSelect.value || null; // Ensure empty string becomes null
+        const task = modalTaskSelect.value || null;
         try {
             const response = await fetch(`/api/squads/members/${memberId}/task`, {
                 method: 'PUT',
@@ -380,8 +380,6 @@ document.addEventListener('DOMContentLoaded', () => {
             });
             if (await handleApiError(response)) return;
 
-            // --- START: FIX FOR MISSING STARTUP TASKS ---
-            // Update the underlying currentSquads object so the change is saved for the embed
             const squad = currentSquads.find(s => s.members.some(m => m.squad_member_id == memberId));
             if (squad) {
                 const member = squad.members.find(m => m.squad_member_id == memberId);
@@ -389,7 +387,6 @@ document.addEventListener('DOMContentLoaded', () => {
                     member.startup_task = task;
                 }
             }
-            // --- END: FIX FOR MISSING STARTUP TASKS ---
             
             const memberEl = document.querySelector(`[data-member-id='${memberId}']`);
             if (memberEl) {
