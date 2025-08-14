@@ -818,16 +818,6 @@ class Database:
         async with self.pool.acquire() as conn:
             return [dict(row) for row in await conn.fetch(query, event_id)]
 
-    async def get_signup_user_ids_for_sync(self, event_id: int) -> List[int]:
-        """
-        Gets a simple list of user IDs for accepted signups for a given event,
-        returning them as integers for sync tasks.
-        """
-        query = "SELECT user_id FROM signups WHERE event_id = $1 AND rsvp_status = 'Accepted';"
-        async with self.pool.acquire() as conn:
-            records = await conn.fetch(query, event_id)
-            return [r['user_id'] for r in records]
-
     async def get_signup(self, event_id: int, user_id: int) -> Optional[Dict]:
         async with self.pool.acquire() as conn:
             row = await conn.fetchrow("SELECT * FROM signups WHERE event_id = $1 AND user_id = $2", event_id, user_id)
