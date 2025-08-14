@@ -35,7 +35,7 @@ class Scheduler(commands.Cog):
         self.recreate_recurring_events.cancel()
         self.cleanup_finished_events.cancel()
         self.purge_deleted_events.cancel()
-        self._threads.cancel()
+        self.sync_event_threads.cancel()
         self.process_tentatives.cancel()
         self.update_event_embeds.cancel()
         self.sync_player_database.cancel()
@@ -227,15 +227,52 @@ class Scheduler(commands.Cog):
             print(f"[Scheduler] FATAL ERROR in process_tentatives loop: {e}")
             traceback.print_exc()
 
-    async def get_signup_user_ids_for_sync(self, event_id: int) -> List[int]:
-        """
-        Gets a simple list of user IDs for accepted signups for a given event,
-        returning them as integers for sync tasks.
-        """
-        query = "SELECT user_id FROM signups WHERE event_id = $1 AND rsvp_status = 'Accepted';"
-        async with self.pool.acquire() as conn:
-            records = await conn.fetch(query, event_id)
-            return [r['user_id'] for r in records]
+    @tasks.loop(minutes=5)
+    async def sync_event_threads(self):
+        """Periodically syncs thread members with the latest accepted signups."""
+        print("\n[Scheduler] Running sync_event_threads loop...")
+        try:
+            active_events = await self.db.get_active_events_with_threads()
+            if not active_events:
+                print("[Scheduler] No active threads to sync this cycle.")
+                return
+
+            for event in active_events:
+                guild = self.bot.get_guild(event['guild_id'])
+                if not guild: continue
+
+                thread = guild.get_thread(event['thread_id'])
+                if not thread: continue
+
+                signups = await self.db.get_signups_for_event(event['event_id'])
+                accepted_user_ids = {s['user_id'] for s in signups if s['rsvp_status'] == RsvpStatus.ACCEPTED}
+
+                thread_member_ids = {member.id for member in thread.members}
+
+                users_to_add = accepted_user_ids - thread_member_ids
+                users_to_remove = thread_member_ids - accepted_user_ids
+
+                for user_id in users_to_add:
+                    try:
+                        member = await guild.fetch_member(user_id)
+                        await thread.add_user(member)
+                        print(f"  [Sync:{event['event_id']}] Added {member.display_name} to thread.")
+                    except Exception as e:
+                        print(f"  [Sync:{event['event_id']}] FAILED to add member {user_id}: {e}")
+
+                for user_id in users_to_remove:
+                    if user_id == self.bot.user.id:
+                        continue
+                    try:
+                        member = await guild.fetch_member(user_id)
+                        await thread.remove_user(member)
+                        print(f"  [Sync:{event['event_id']}] Removed {member.display_name} from thread.")
+                    except Exception as e:
+                        print(f"  [Sync:{event['event_id']}] FAILED to remove member {user_id}: {e}")
+
+        except Exception as e:
+            print(f"[Scheduler] FATAL ERROR in sync_event_threads loop: {e}")
+            traceback.print_exc()
 
     @tasks.loop(minutes=1)
     async def create_event_threads(self):
