@@ -473,7 +473,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     async function fetchAndDisplayRoster(eventId) {
         try {
-            const rosterResponse = await fetch(`/api/events/${eventId}/signups`, { headers });
+            const rosterResponse = await fetch(`/api/events/${eventId}/roster`, { headers });
             if(await handleApiError(rosterResponse)) return;
             fullRoster = await rosterResponse.json();
             displayRoster(fullRoster);
