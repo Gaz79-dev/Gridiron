@@ -42,7 +42,6 @@ async def _send_finalized_embed(event_id: int, request: SendEmbedRequest, db: Da
     if event_details:
         event_timestamp = int(event_details['event_time'].timestamp())
         event_time_str = f" - <t:{event_timestamp}:F>"
-        # Use a non-draft title
         title_str = f"Team Composition - {event_details['title']}"
     
     content_str, allowed_mentions = "", {"parse": ["users", "roles"]}
@@ -59,9 +58,11 @@ async def _send_finalized_embed(event_id: int, request: SendEmbedRequest, db: Da
             reserves_list = [m.display_name for m in squad.members]
             break
             
+    # --- START: 2-Column Layout Logic ---
     fields = []
-    for squad in request.squads:
-        if squad.squad_type == "Reserves": continue
+    squads_for_display = [s for s in request.squads if s.squad_type != "Reserves"]
+    squad_count = 0
+    for squad in squads_for_display:
         member_list = []
         for m in squad.members:
             emoji = EMOJI_MAPPING.get(m.assigned_role_name, "❔")
@@ -70,12 +71,17 @@ async def _send_finalized_embed(event_id: int, request: SendEmbedRequest, db: Da
             member_list.append(member_line)
         value = "\n".join(member_list) or "Empty"
         fields.append({"name": f"__**{squad.name}**__", "value": value, "inline": True})
+        squad_count += 1
+        
+        # After every second squad, add a blank field to force a new line
+        if squad_count % 2 == 0 and squad_count < len(squads_for_display):
+            fields.append({"name": "\u200b", "value": "\u200b", "inline": False})
+    # --- END: 2-Column Layout Logic ---
 
     embed_payload = {
         "content": content_str,
         "embeds": [{
             "title": f"{title_str}{event_time_str}",
-            # Use a non-draft description
             "description": "The following squads have been finalized for the event.",
             "color": 15844367, 
             "fields": fields, 
@@ -341,7 +347,6 @@ async def send_draft_embed(
     if event_details:
         event_timestamp = int(event_details['event_time'].timestamp())
         event_time_str = f" - <t:{event_timestamp}:F>"
-        # Use a DRAFT title
         title_str = f"DRAFT - {event_details['title']}"
     
     content_str, allowed_mentions = "", {"parse": ["users", "roles"]}
@@ -358,9 +363,11 @@ async def send_draft_embed(
             reserves_list = [m.display_name for m in squad.members]
             break
             
+    # --- START: 2-Column Layout Logic ---
     fields = []
-    for squad in request.squads:
-        if squad.squad_type == "Reserves": continue
+    squads_for_display = [s for s in request.squads if s.squad_type != "Reserves"]
+    squad_count = 0
+    for squad in squads_for_display:
         member_list = []
         for m in squad.members:
             emoji = EMOJI_MAPPING.get(m.assigned_role_name, "❔")
@@ -369,12 +376,17 @@ async def send_draft_embed(
             member_list.append(member_line)
         value = "\n".join(member_list) or "Empty"
         fields.append({"name": f"__**{squad.name}**__", "value": value, "inline": True})
+        squad_count += 1
+        
+        # After every second squad, add a blank field to force a new line
+        if squad_count % 2 == 0 and squad_count < len(squads_for_display):
+            fields.append({"name": "\u200b", "value": "\u200b", "inline": False})
+    # --- END: 2-Column Layout Logic ---
 
     embed_payload = {
         "content": content_str,
         "embeds": [{
             "title": f"{title_str}{event_time_str}",
-            # Use a DRAFT description
             "description": "The following draft has been prepared for feedback.",
             "color": 15844367, 
             "fields": fields, 
