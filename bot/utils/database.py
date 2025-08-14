@@ -793,7 +793,7 @@ class Database:
         """
         query = """
             SELECT
-                s.user_id,
+                s.user_id::text AS user_id, -- Cast to string to match Pydantic model
                 s.role_name,
                 s.subclass_name,
                 s.rsvp_status,
