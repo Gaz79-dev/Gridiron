@@ -555,6 +555,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function renderWorkshop(squads) {
+        workshopSection.classList.remove('hidden');
         currentSquads = squads;
         workshopArea.innerHTML = '';
         let teamSize = 0;
