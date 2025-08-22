@@ -33,6 +33,15 @@ def _calculate_suitability_score(player_stats: Dict, target_squad_type: str, tar
     ROLE_AFFINITY_WEIGHT = 0.25
 
     rating = player_stats.get('rating', 50)
+    affinities_raw = player_stats.get('role_affinities')
+    affinities = {}
+    if isinstance(affinities_raw, str):
+        try:
+            affinities = json.loads(affinities_raw)
+        except json.JSONDecodeError:
+            affinities = {} # Default to empty if JSON is malformed
+    elif isinstance(affinities_raw, dict):
+        affinities = affinities_raw
     affinities = player_stats.get('role_affinities', {})
     squad_counts = affinities.get('squad_types', {})
     role_counts = affinities.get('roles', {})
