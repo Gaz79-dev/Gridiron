@@ -42,7 +42,7 @@ def _calculate_suitability_score(player_stats: Dict, target_squad_type: str, tar
             affinities = {} # Default to empty if JSON is malformed
     elif isinstance(affinities_raw, dict):
         affinities = affinities_raw
-    affinities = player_stats.get('role_affinities', {})
+    # affinities = player_stats.get('role_affinities', {}) <--- DELETE THIS LINE
     squad_counts = affinities.get('squad_types', {})
     role_counts = affinities.get('roles', {})
 
