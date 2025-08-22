@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from typing import List, Optional
 
 # Use absolute imports from the 'bot' package root
+from bot.ai import squad_optimizer
 from bot.utils.database import Database, RsvpStatus, ROLES, SUBCLASSES
 from bot.api import auth
 from bot.api.dependencies import get_db
