@@ -227,53 +227,113 @@ class Scheduler(commands.Cog):
             print(f"[Scheduler] FATAL ERROR in process_tentatives loop: {e}")
             traceback.print_exc()
 
+    #@tasks.loop(minutes=5)
+    #async def sync_event_threads(self):
+    #    """Periodically syncs thread members with the latest accepted signups."""
+    #    print("\n[Scheduler] Running sync_event_threads loop...")
+    #    try:
+    #        active_events = await self.db.get_active_events_with_threads()
+    #        if not active_events:
+    #            print("[Scheduler] No active threads to sync this cycle.")
+    #            return
+
+    #        for event in active_events:
+    #            guild = self.bot.get_guild(event['guild_id'])
+    #            if not guild: continue
+
+    #            thread = guild.get_thread(event['thread_id'])
+    #            if not thread: continue
+
+    #            signups = await self.db.get_signups_for_event(event['event_id'])
+    #            accepted_user_ids = {s['user_id'] for s in signups if s['rsvp_status'] == RsvpStatus.ACCEPTED}
+
+    #            thread_member_ids = {member.id for member in await thread.fetch_members()}
+
+    #            users_to_add = accepted_user_ids - thread_member_ids
+    #            users_to_remove = thread_member_ids - accepted_user_ids
+
+    #            for user_id in users_to_add:
+    #                try:
+    #                    member = await guild.fetch_member(user_id)
+    #                    await thread.add_user(member)
+    #                    print(f"  [Sync:{event['event_id']}] Added {member.display_name} to thread.")
+    #                except Exception as e:
+    #                    print(f"  [Sync:{event['event_id']}] FAILED to add member {user_id}: {e}")
+
+    #            for user_id in users_to_remove:
+    #                if user_id == self.bot.user.id:
+    #                    continue
+    #                try:
+    #                    member = await guild.fetch_member(user_id)
+    #                    await thread.remove_user(member)
+    #                    print(f"  [Sync:{event['event_id']}] Removed {member.display_name} from thread.")
+    #                except Exception as e:
+    #                    print(f"  [Sync:{event['event_id']}] FAILED to remove member {user_id}: {e}")
+
+    #    except Exception as e:
+    #        print(f"[Scheduler] FATAL ERROR in sync_event_threads loop: {e}")
+    #        traceback.print_exc()
+
     @tasks.loop(minutes=5)
-    async def sync_event_threads(self):
-        """Periodically syncs thread members with the latest accepted signups."""
-        print("\n[Scheduler] Running sync_event_threads loop...")
-        try:
-            active_events = await self.db.get_active_events_with_threads()
-            if not active_events:
-                print("[Scheduler] No active threads to sync this cycle.")
-                return
+async def sync_event_threads(self):
+    """Periodically syncs thread members with the latest accepted signups."""
+    print("\n[Scheduler] Running sync_event_threads loop...") # Keep this line
+    try:
+        active_events = await self.db.get_active_events_with_threads()
+        if not active_events:
+            print("[Scheduler] No active threads to sync this cycle.") # Keep this line
+            return
 
-            for event in active_events:
-                guild = self.bot.get_guild(event['guild_id'])
-                if not guild: continue
+        for event in active_events:
+            guild = self.bot.get_guild(event['guild_id'])
+            if not guild: continue
 
-                thread = guild.get_thread(event['thread_id'])
-                if not thread: continue
+            thread = guild.get_thread(event['thread_id'])
+            if not thread: continue
+            
+            # --- START: New Detailed Logging ---
+            print(f"\n--- Processing Event ID: {event['event_id']} (Thread: {thread.name}) ---")
 
-                signups = await self.db.get_signups_for_event(event['event_id'])
-                accepted_user_ids = {s['user_id'] for s in signups if s['rsvp_status'] == RsvpStatus.ACCEPTED}
+            signups = await self.db.get_signups_for_event(event['event_id'])
+            accepted_user_ids = {s['user_id'] for s in signups if s['rsvp_status'] == RsvpStatus.ACCEPTED}
+            print(f"[DEBUG] Accepted User IDs from DB: {accepted_user_ids}")
 
-                thread_member_ids = {member.id for member in await thread.fetch_members()}
+            thread_members = await thread.fetch_members()
+            thread_member_ids = {member.id for member in thread_members}
+            print(f"[DEBUG] Member IDs found in Thread: {thread_member_ids}")
 
-                users_to_add = accepted_user_ids - thread_member_ids
-                users_to_remove = thread_member_ids - accepted_user_ids
+            users_to_add = accepted_user_ids - thread_member_ids
+            users_to_remove = thread_member_ids - accepted_user_ids
+            print(f"[DEBUG] Calculated Users to ADD: {users_to_add}")
+            print(f"[DEBUG] Calculated Users to REMOVE: {users_to_remove}")
+            # --- END: New Detailed Logging ---
 
-                for user_id in users_to_add:
-                    try:
-                        member = await guild.fetch_member(user_id)
-                        await thread.add_user(member)
-                        print(f"  [Sync:{event['event_id']}] Added {member.display_name} to thread.")
-                    except Exception as e:
-                        print(f"  [Sync:{event['event_id']}] FAILED to add member {user_id}: {e}")
+            for user_id in users_to_add:
+                try:
+                    member = await guild.fetch_member(user_id)
+                    await thread.add_user(member)
+                    print(f"  [Sync:{event['event_id']}] Added {member.display_name} to thread.")
+                except Exception as e:
+                    print(f"  [Sync:{event['event_id']}] FAILED to add member {user_id}: {e}")
 
-                for user_id in users_to_remove:
-                    if user_id == self.bot.user.id:
-                        continue
-                    try:
-                        member = await guild.fetch_member(user_id)
-                        await thread.remove_user(member)
-                        print(f"  [Sync:{event['event_id']}] Removed {member.display_name} from thread.")
-                    except Exception as e:
-                        print(f"  [Sync:{event['event_id']}] FAILED to remove member {user_id}: {e}")
+            for user_id in users_to_remove:
+                if user_id == self.bot.user.id:
+                    continue
+                try:
+                    member = await guild.fetch_member(user_id)
+                    await thread.remove_user(member)
+                    print(f"  [Sync:{event['event_id']}] Removed {member.display_name} from thread.")
+                except Exception as e:
+                    # --- START: Enhanced Error Logging ---
+                    print(f"  [Sync:{event['event_id']}] FAILED to remove member {user_id}. Exception below:")
+                    traceback.print_exc()
+                    # --- END: Enhanced Error Logging ---
 
-        except Exception as e:
-            print(f"[Scheduler] FATAL ERROR in sync_event_threads loop: {e}")
-            traceback.print_exc()
+    except Exception as e:
+        print(f"[Scheduler] FATAL ERROR in sync_event_threads loop: {e}")
+        traceback.print_exc()
 
+    
     @tasks.loop(minutes=1)
     async def create_event_threads(self):
         """Periodically checks for events that need a discussion thread created."""
