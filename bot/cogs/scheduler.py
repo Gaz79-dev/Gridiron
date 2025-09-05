@@ -276,7 +276,7 @@ class Scheduler(commands.Cog):
     #        traceback.print_exc()
 
     @tasks.loop(minutes=5)
-async def sync_event_threads(self):
+    async def sync_event_threads(self):
     """Periodically syncs thread members with the latest accepted signups."""
     print("\n[Scheduler] Running sync_event_threads loop...") # Keep this line
     try:
