@@ -355,6 +355,18 @@ class PersistentEventView(ui.View):
         event = await self.db.get_event_by_message_id(i.message.id)
         if not event: return await i.followup.send("Event not found.", ephemeral=True)
 
+        restricted_roles = event.get('restrict_to_role_ids')
+        if restricted_roles:  # Only perform the check if the event has role restrictions.
+            user_role_ids = {role.id for role in i.user.roles}
+            if not user_role_ids.intersection(restricted_roles):
+                # If the user has no roles in common with the restricted list, send an error and stop.
+                role_mentions = [f'<@&{role_id}>' for role_id in restricted_roles]
+                await i.followup.send(
+                    f"Sorry, this event is restricted to members with the following role(s): {', '.join(role_mentions)}",
+                    ephemeral=True
+                )
+                return # Stop the signup process.
+
         restricted_roles_config = {
             "Commander": os.getenv("ROLE_ID_COMMANDER"), "Officer": os.getenv("ROLE_ID_OFFICER"),
             "Recon": os.getenv("ROLE_ID_RECON"), "Tank Commander": os.getenv("ROLE_ID_TANK_COMMANDER"),
