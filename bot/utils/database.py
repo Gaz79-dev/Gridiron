@@ -344,6 +344,35 @@ class Database:
             records = await connection.fetch(query)
             return [dict(row) for row in records]
 
+    async def remove_user_from_all_upcoming_signups(self, user_id: int):
+        """
+        Finds all upcoming events a user is signed up for, deletes their signups,
+        and flags the events for an embed update.
+        """
+        async with self.pool.acquire() as conn:
+            async with conn.transaction():
+                # Find the event_ids of all upcoming events the user is signed up for
+                event_ids = await conn.fetchval(
+                    """
+                    SELECT array_agg(s.event_id)
+                    FROM signups s
+                    JOIN events e ON s.event_id = e.event_id
+                    WHERE s.user_id = $1 AND e.event_time > NOW() AT TIME ZONE 'utc';
+                    """,
+                    user_id
+                )
+
+                if not event_ids:
+                    return # User was not signed up for any upcoming events
+
+                # Delete the user's signups for these events
+                await conn.execute("DELETE FROM signups WHERE user_id = $1 AND event_id = ANY($2::int[]);", user_id, event_ids)
+                
+                # Flag the events for an embed update
+                await conn.execute("UPDATE events SET needs_embed_update = TRUE WHERE event_id = ANY($1::int[]);", event_ids)
+                
+                print(f"Removed user {user_id} from {len(event_ids)} upcoming event(s) and flagged embeds for update.")
+    
     async def update_player_game_id(self, user_id: int, game_player_id: str):
         """Updates a player's in-game ID for linking stats."""
         async with self.pool.acquire() as connection:
