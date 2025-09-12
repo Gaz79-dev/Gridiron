@@ -74,14 +74,24 @@ async def main():
 
     @bot.event
     async def on_member_remove(member: discord.Member):
-        """Automatically marks leaving members as inactive in the player database."""
-        if not member.bot:
-            try:
-                await db.deactivate_server_member(member.id)
-                print(f"Deactivated member in database: {member.display_name} (ID: {member.id})")
-            except Exception as e:
-                print(f"Error deactivating member {member.id} in database: {e}")
-    # --- FIX END ---
+        """
+        Handles a member leaving the server. It marks them as inactive,
+        removes them from all upcoming event signups, and flags those events for an update.
+        """
+        if member.bot:
+            return
+            
+        try:
+            # Mark the player as inactive in the player_stats table
+            await db.deactivate_server_member(member.id)
+            print(f"Deactivated member in database: {member.display_name} (ID: {member.id})")
+    
+            # NEW: Remove them from all upcoming event signups
+            await db.remove_user_from_all_upcoming_signups(member.id)
+    
+        except Exception as e:
+            print(f"Error during on_member_remove for {member.id}: {e}")
+            traceback.print_exc() # Use traceback for more detailed errors
 
     @bot.check
     async def global_role_check(interaction: discord.Interaction):
