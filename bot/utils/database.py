@@ -1079,10 +1079,10 @@ class Database:
             LEFT JOIN
                 player_stats ps ON s.user_id = ps.user_id
             WHERE
-                s.event_id = $1
+                s.event_id = $1 AND ps.is_active = TRUE
             ORDER BY
                 s.role_name, s.subclass_name;
-        """
+            """
         async with self.pool.acquire() as conn:
             return [dict(row) for row in await conn.fetch(query, event_id)]
 
