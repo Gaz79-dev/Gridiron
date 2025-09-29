@@ -117,70 +117,89 @@ async def create_event_embed(bot: commands.Bot, event_id: int, db: Database) -> 
     total_accepted = sum(len(v) for v in accepted_signups.values())
     embed.add_field(name=f"Accepted ({total_accepted})", value="\u200b", inline=False)
 
-    # --- REVISED DYNAMIC FIELD & COLUMN LOGIC ---
+    # --- REVISED DYNAMIC FIELD & INDEPENDENT COLUMN LOGIC ---
+    
     def get_role_content_lines(role_name, signups):
+        """Helper to build the text content for a single role category."""
         subclass_groups = defaultdict(list)
         for signup in signups:
             subclass_key = signup.get('subclass') or "Unassigned"
             subclass_groups[subclass_key].append(signup['display_name'])
 
-        content_lines = []
+        content_lines = [f"__**{role_name}**__ ({len(signups)})"]
         subclass_order = SUBCLASSES.get(role_name, []) + ["Unassigned"]
         for subclass in subclass_order:
             if players := subclass_groups.get(subclass):
                 content_lines.append(f"__**{subclass}**__ ({len(players)})")
                 content_lines.extend(players)
-                content_lines.append("")
-        if content_lines: content_lines.pop()
+                content_lines.append("") # Add spacing between subclasses
+        if content_lines and content_lines[-1] == "": content_lines.pop()
         return content_lines
 
-    def add_fields_for_role(embed, role_name, total_signups, content_lines, inline):
-        MAX_VALUE_LENGTH = 1024
-        full_content = "\n".join(content_lines)
-        
+    def chunk_content(lines: List[str], max_len: int = 1024) -> List[str]:
+        """Splits a list of lines into chunks that fit within the character limit."""
+        if not lines: return []
         chunks = []
-        if len(full_content) > MAX_VALUE_LENGTH:
-            current_chunk = ""
-            for line in content_lines:
-                if len(current_chunk) + len(line) + 1 > MAX_VALUE_LENGTH:
-                    chunks.append(current_chunk)
-                    current_chunk = line
-                else:
-                    current_chunk += f"\n{line}" if current_chunk else line
-            chunks.append(current_chunk)
+        current_chunk = ""
+        for line in lines:
+            if len(current_chunk) + len(line) + 1 > max_len:
+                chunks.append(current_chunk)
+                current_chunk = line
+            else:
+                current_chunk += f"\n{line}" if current_chunk else line
+        chunks.append(current_chunk)
+        return chunks
+
+    # 1. Define column content and assemble lines
+    col1_roles = ["Commander", "Infantry"]
+    col2_roles = ["Armour", "Recon", "Pathfinders", "Artillery"]
+
+    col1_lines = []
+    for role_name in col1_roles:
+        if signups := accepted_signups.get(role_name):
+            if col1_lines: col1_lines.append("\n\n") # Add space between roles
+            col1_lines.extend(get_role_content_lines(role_name, signups))
+
+    col2_lines = []
+    for role_name in col2_roles:
+        if signups := accepted_signups.get(role_name):
+            if col2_lines: col2_lines.append("\n\n")
+            col2_lines.extend(get_role_content_lines(role_name, signups))
+
+    # 2. Chunk the assembled content for each column
+    col1_chunks = chunk_content(col1_lines)
+    col2_chunks = chunk_content(col2_lines)
+
+    # 3. Add fields to the embed in pairs to create two independent columns
+    num_rows = max(len(col1_chunks), len(col2_chunks))
+    for i in range(num_rows):
+        # Column 1 Field
+        if i < len(col1_chunks):
+            name = "Commander & Infantry"
+            if len(col1_chunks) > 1: name += f" ({i+1}/{len(col1_chunks)})"
+            embed.add_field(name=name, value=col1_chunks[i], inline=True)
         else:
-            chunks.append(full_content)
+            # Add a blank field to maintain the column if this side is shorter
+            embed.add_field(name="\u200b", value="\u200b", inline=True)
 
-        for i, chunk in enumerate(chunks):
-            name = f"{role_name} ({total_signups})"
-            if len(chunks) > 1:
-                name += f" ({i+1}/{len(chunks)})"
-            embed.add_field(name=name, value=chunk or "\u200b", inline=inline)
+        # Column 2 Field
+        if i < len(col2_chunks):
+            name = "Specialist Roles"
+            if len(col2_chunks) > 1: name += f" ({i+1}/{len(col2_chunks)})"
+            embed.add_field(name=name, value=col2_chunks[i], inline=True)
+        else:
+            embed.add_field(name="\u200b", value="\u200b", inline=True)
         
-        return len(chunks)
+        # Add a line break after each row of two columns, unless it's the last row
+        if (i + 1) < num_rows:
+            embed.add_field(name="\u200b", value="\u200b", inline=False)
 
-    # Group smaller roles together in a 2-column grid
-    small_roles_to_pair = ["Commander", "Armour", "Recon", "Pathfinders", "Artillery"]
-    small_role_fields_added = 0
-    for role_name in small_roles_to_pair:
-        if role_signups := accepted_signups.get(role_name):
-            content = get_role_content_lines(role_name, role_signups)
-            num_fields = add_fields_for_role(embed, role_name, len(role_signups), content, inline=True)
-            small_role_fields_added += num_fields
-
-    if small_role_fields_added % 2 != 0:
-        embed.add_field(name="\u200b", value="\u200b", inline=True)
-
-    # Add a line break if we added any small roles
-    if small_role_fields_added > 0:
+    # Add a final line break if any column fields were added
+    if num_rows > 0:
         embed.add_field(name="\u200b", value="\u200b", inline=False)
 
-    # Process Infantry (typically the largest group) as a full-width block
-    if infantry_signups := accepted_signups.get("Infantry"):
-        content = get_role_content_lines("Infantry", infantry_signups)
-        add_fields_for_role(embed, "Infantry", len(infantry_signups), content, inline=False)
 
-    # --- Handle remaining lists ---
+    # --- Handle remaining lists which are always full-width ---
     if unassigned_signups := accepted_signups.get("Unassigned"):
         player_list = "\n".join(p['display_name'] for p in unassigned_signups)
         embed.add_field(name=f"__**Unassigned**__ ({len(unassigned_signups)})", value=player_list or "\u200b", inline=False)
