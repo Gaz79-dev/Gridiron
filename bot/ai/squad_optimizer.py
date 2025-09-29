@@ -123,28 +123,29 @@ async def run_ai_draft(db: Database, event_id: int, request: SquadBuildRequest) 
         if convention == 'numeric':
             numeric_group_index += 1
             
-    # 3. RECONCILE: Preserve existing squads and create a pool of available players
+    # 3. RECONCILE: Fetch ALL accepted players first, then handle preserved squads.
     new_squads_map = {}
-    available_players = []
+    
+    # Get all players who have accepted the event signup
+    all_accepted_signups = await db.get_signups_for_roster_page(event_id)
+    available_players_map = {
+        int(p['user_id']): p for p in all_accepted_signups if p['rsvp_status'] == RsvpStatus.ACCEPTED
+    }
 
+    # Preserve players who are already in squads that will continue to exist
     for squad_name, squad_data in current_squads_map.items():
         if squad_name in desired_squad_names:
             new_squads_map[squad_name] = squad_data['members']
-        else:
-            available_players.extend(squad_data['members'])
+            # Remove these preserved players from the available pool
+            for member in squad_data['members']:
+                available_players_map.pop(int(member['user_id']), None)
 
-    # Re-sort available players into their RSVP pools
+    # The remaining players are now correctly available for placement
     available_player_pools = defaultdict(list)
-    for player in available_players:
-        # We need the full signup record for the role_name, so we fetch it again
-        # This is inefficient, but necessary with the current data structure
-        signup_record = await db.get_signup(event_id, int(player['user_id']))
-        if signup_record:
-            pool_key = signup_record.get('role_name') or "Unassigned"
-            # Combine the signup data with the member data
-            full_player_data = {**player, **signup_record}
-            available_player_pools[pool_key].append(full_player_data)
-
+    for player_data in available_players_map.values():
+        pool_key = player_data.get('role_name') or "Unassigned"
+        available_player_pools[pool_key].append(player_data)
+        
     # 4. FILL NEWLY CREATED SQUADS using a squad-centric approach
     for squad_name in desired_squad_names:
         if squad_name not in new_squads_map:
