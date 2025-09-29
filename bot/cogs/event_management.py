@@ -64,7 +64,7 @@ def has_required_role(member: discord.Member) -> bool:
     user_role_ids = {role.id for role in member.roles}
     return not user_role_ids.isdisjoint(allowed_role_ids)
 
-# --- NEW: Rewritten create_event_embed function with Dynamic Field Splitting ---
+# --- CORRECTED: Rewritten create_event_embed with fixed column alignment ---
 async def create_event_embed(bot: commands.Bot, event_id: int, db: Database) -> discord.Embed:
     event = await db.get_event_by_id(event_id)
     if not event:
@@ -117,65 +117,71 @@ async def create_event_embed(bot: commands.Bot, event_id: int, db: Database) -> 
     total_accepted = sum(len(v) for v in accepted_signups.values())
     embed.add_field(name=f"Accepted ({total_accepted})", value="\u200b", inline=False)
 
-    # --- DYNAMIC FIELD SPLITTING LOGIC ---
-    # Helper to create and add fields, splitting content if it's too long
-    def add_split_fields(embed: discord.Embed, field_name: str, content_lines: List[str]):
-        MAX_VALUE_LENGTH = 1024
-        
-        if not content_lines:
-            # If there's content for the first part but not subsequent parts, add an empty field for alignment
-            if len(embed.fields) % 2 != 0:
-                 embed.add_field(name="\u200b", value="\u200b", inline=True)
-            return
-
-        parts = []
-        current_part = ""
-        for line in content_lines:
-            if len(current_part) + len(line) + 1 > MAX_VALUE_LENGTH:
-                parts.append(current_part)
-                current_part = line
-            else:
-                current_part += f"\n{line}" if current_part else line
-        parts.append(current_part)
-
-        for i, part in enumerate(parts):
-            name = f"{field_name} ({i+1}/{len(parts)})" if len(parts) > 1 else field_name
-            embed.add_field(name=name, value=part, inline=True)
-            # Add a blank field to maintain the two-column layout if necessary
-            if len(embed.fields) % 2 != 0 and (i == len(parts) - 1):
-                 embed.add_field(name="\u200b", value="\u200b", inline=True)
-
-    # Define the order and content of primary roles
+    # --- DYNAMIC FIELD & COLUMN LOGIC ---
+    all_fields_to_add = []
     role_order = ["Commander", "Infantry", "Armour", "Recon", "Pathfinders", "Artillery"]
-    
+
     for role_name in role_order:
         if role_signups := accepted_signups.get(role_name):
-            
-            # Group players by subclass within this role
+            # 1. Build the full content for this role group
             subclass_groups = defaultdict(list)
             for signup in role_signups:
                 subclass_key = signup['subclass'] or "Unassigned"
                 subclass_groups[subclass_key].append(signup['display_name'])
 
             content_lines = []
-            
-            # Order subclasses according to the main definition
             subclass_order = SUBCLASSES.get(role_name, []) + ["Unassigned"]
             for subclass in subclass_order:
                 if players := subclass_groups.get(subclass):
                     content_lines.append(f"__**{subclass}**__ ({len(players)})")
                     content_lines.extend(players)
-                    content_lines.append("") # Add a blank line for spacing
-            
-            if content_lines and content_lines[-1] == "":
-                content_lines.pop()
+                    content_lines.append("") # Spacing
+            if content_lines: content_lines.pop()
 
-            add_split_fields(embed, f"{role_name} ({len(role_signups)})", content_lines)
+            full_content = "\n".join(content_lines)
 
-    # --- Handle remaining lists (Unassigned, Tentative, Declined) ---
+            # 2. Split the content into chunks if it exceeds the limit
+            MAX_VALUE_LENGTH = 1024
+            content_chunks = []
+            if len(full_content) > MAX_VALUE_LENGTH:
+                current_chunk = ""
+                # A more careful splitting logic that doesn't break mid-subclass
+                for line in content_lines:
+                    if len(current_chunk) + len(line) + 1 > MAX_VALUE_LENGTH:
+                        content_chunks.append(current_chunk)
+                        current_chunk = line
+                    else:
+                        current_chunk += f"\n{line}" if current_chunk else line
+                content_chunks.append(current_chunk)
+            else:
+                content_chunks.append(full_content)
+
+            # 3. Create field objects for this role group
+            total_chunks = len(content_chunks)
+            for i, chunk in enumerate(content_chunks):
+                field_name = f"{role_name} ({len(role_signups)})"
+                if total_chunks > 1:
+                    field_name += f" ({i+1}/{total_chunks})"
+                
+                all_fields_to_add.append({
+                    "name": field_name,
+                    "value": chunk or "\u200b", # Can't be empty
+                    "inline": True
+                })
+
+    # 4. Add all generated fields to the embed, enforcing a strict 2-column layout
+    for i, field_data in enumerate(all_fields_to_add):
+        embed.add_field(**field_data)
+        
+        # If we've just added the second field in a row, and it's not the last field overall,
+        # add a blank, NON-INLINE field to force a line break.
+        if (i + 1) % 2 == 0 and (i + 1) < len(all_fields_to_add):
+             embed.add_field(name="\u200b", value="\u200b", inline=False)
+    
+    # --- Handle remaining lists ---
     if unassigned_signups := accepted_signups.get("Unassigned"):
         player_list = "\n".join(p['display_name'] for p in unassigned_signups)
-        embed.add_field(name=f"__**Unassigned**__ ({len(unassigned_signups)})", value=player_list, inline=False)
+        embed.add_field(name=f"__**Unassigned**__ ({len(unassigned_signups)})", value=player_list or "\u200b", inline=False)
     
     if tentative_users:
         embed.add_field(name=f"__**Tentative**__ ({len(tentative_users)})", value=", ".join(tentative_users), inline=False)
