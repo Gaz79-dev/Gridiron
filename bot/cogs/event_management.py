@@ -117,67 +117,69 @@ async def create_event_embed(bot: commands.Bot, event_id: int, db: Database) -> 
     total_accepted = sum(len(v) for v in accepted_signups.values())
     embed.add_field(name=f"Accepted ({total_accepted})", value="\u200b", inline=False)
 
-    # --- DYNAMIC FIELD & COLUMN LOGIC ---
-    all_fields_to_add = []
-    role_order = ["Commander", "Infantry", "Armour", "Recon", "Pathfinders", "Artillery"]
+    # --- REVISED DYNAMIC FIELD & COLUMN LOGIC ---
+    def get_role_content_lines(role_name, signups):
+        subclass_groups = defaultdict(list)
+        for signup in signups:
+            subclass_key = signup.get('subclass') or "Unassigned"
+            subclass_groups[subclass_key].append(signup['display_name'])
 
-    for role_name in role_order:
-        if role_signups := accepted_signups.get(role_name):
-            # 1. Build the full content for this role group
-            subclass_groups = defaultdict(list)
-            for signup in role_signups:
-                subclass_key = signup['subclass'] or "Unassigned"
-                subclass_groups[subclass_key].append(signup['display_name'])
+        content_lines = []
+        subclass_order = SUBCLASSES.get(role_name, []) + ["Unassigned"]
+        for subclass in subclass_order:
+            if players := subclass_groups.get(subclass):
+                content_lines.append(f"__**{subclass}**__ ({len(players)})")
+                content_lines.extend(players)
+                content_lines.append("")
+        if content_lines: content_lines.pop()
+        return content_lines
 
-            content_lines = []
-            subclass_order = SUBCLASSES.get(role_name, []) + ["Unassigned"]
-            for subclass in subclass_order:
-                if players := subclass_groups.get(subclass):
-                    content_lines.append(f"__**{subclass}**__ ({len(players)})")
-                    content_lines.extend(players)
-                    content_lines.append("") # Spacing
-            if content_lines: content_lines.pop()
-
-            full_content = "\n".join(content_lines)
-
-            # 2. Split the content into chunks if it exceeds the limit
-            MAX_VALUE_LENGTH = 1024
-            content_chunks = []
-            if len(full_content) > MAX_VALUE_LENGTH:
-                current_chunk = ""
-                # A more careful splitting logic that doesn't break mid-subclass
-                for line in content_lines:
-                    if len(current_chunk) + len(line) + 1 > MAX_VALUE_LENGTH:
-                        content_chunks.append(current_chunk)
-                        current_chunk = line
-                    else:
-                        current_chunk += f"\n{line}" if current_chunk else line
-                content_chunks.append(current_chunk)
-            else:
-                content_chunks.append(full_content)
-
-            # 3. Create field objects for this role group
-            total_chunks = len(content_chunks)
-            for i, chunk in enumerate(content_chunks):
-                field_name = f"{role_name} ({len(role_signups)})"
-                if total_chunks > 1:
-                    field_name += f" ({i+1}/{total_chunks})"
-                
-                all_fields_to_add.append({
-                    "name": field_name,
-                    "value": chunk or "\u200b", # Can't be empty
-                    "inline": True
-                })
-
-    # 4. Add all generated fields to the embed, enforcing a strict 2-column layout
-    for i, field_data in enumerate(all_fields_to_add):
-        embed.add_field(**field_data)
+    def add_fields_for_role(embed, role_name, total_signups, content_lines, inline):
+        MAX_VALUE_LENGTH = 1024
+        full_content = "\n".join(content_lines)
         
-        # If we've just added the second field in a row, and it's not the last field overall,
-        # add a blank, NON-INLINE field to force a line break.
-        if (i + 1) % 2 == 0 and (i + 1) < len(all_fields_to_add):
-             embed.add_field(name="\u200b", value="\u200b", inline=False)
-    
+        chunks = []
+        if len(full_content) > MAX_VALUE_LENGTH:
+            current_chunk = ""
+            for line in content_lines:
+                if len(current_chunk) + len(line) + 1 > MAX_VALUE_LENGTH:
+                    chunks.append(current_chunk)
+                    current_chunk = line
+                else:
+                    current_chunk += f"\n{line}" if current_chunk else line
+            chunks.append(current_chunk)
+        else:
+            chunks.append(full_content)
+
+        for i, chunk in enumerate(chunks):
+            name = f"{role_name} ({total_signups})"
+            if len(chunks) > 1:
+                name += f" ({i+1}/{len(chunks)})"
+            embed.add_field(name=name, value=chunk or "\u200b", inline=inline)
+        
+        return len(chunks)
+
+    # Group smaller roles together in a 2-column grid
+    small_roles_to_pair = ["Commander", "Armour", "Recon", "Pathfinders", "Artillery"]
+    small_role_fields_added = 0
+    for role_name in small_roles_to_pair:
+        if role_signups := accepted_signups.get(role_name):
+            content = get_role_content_lines(role_name, role_signups)
+            num_fields = add_fields_for_role(embed, role_name, len(role_signups), content, inline=True)
+            small_role_fields_added += num_fields
+
+    if small_role_fields_added % 2 != 0:
+        embed.add_field(name="\u200b", value="\u200b", inline=True)
+
+    # Add a line break if we added any small roles
+    if small_role_fields_added > 0:
+        embed.add_field(name="\u200b", value="\u200b", inline=False)
+
+    # Process Infantry (typically the largest group) as a full-width block
+    if infantry_signups := accepted_signups.get("Infantry"):
+        content = get_role_content_lines("Infantry", infantry_signups)
+        add_fields_for_role(embed, "Infantry", len(infantry_signups), content, inline=False)
+
     # --- Handle remaining lists ---
     if unassigned_signups := accepted_signups.get("Unassigned"):
         player_list = "\n".join(p['display_name'] for p in unassigned_signups)
