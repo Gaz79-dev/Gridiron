@@ -64,29 +64,21 @@ def has_required_role(member: discord.Member) -> bool:
     user_role_ids = {role.id for role in member.roles}
     return not user_role_ids.isdisjoint(allowed_role_ids)
 
+# --- NEW: Rewritten create_event_embed function with Dynamic Field Splitting ---
 async def create_event_embed(bot: commands.Bot, event_id: int, db: Database) -> discord.Embed:
     event = await db.get_event_by_id(event_id)
-    if not event: return discord.Embed(title="Error", description="Event not found.", color=discord.Color.red())
+    if not event:
+        return discord.Embed(title="Error", description="Event not found.", color=discord.Color.red())
 
     guild = bot.get_guild(event['guild_id'])
-    if not guild: return discord.Embed(title="Error", description="Could not find the server for this event.", color=discord.Color.red())
+    if not guild:
+        return discord.Embed(title="Error", description="Could not find the server for this event.", color=discord.Color.red())
 
     signups = await db.get_signups_for_event(event_id)
 
-    specialty_roles = {
-        "arty": os.getenv("ROLE_ID_ARTY"), "armour": os.getenv("ROLE_ID_ARMOUR"),
-        "attack": os.getenv("ROLE_ID_ATTACK"), "defence": os.getenv("ROLE_ID_DEFENCE"),
-    }
-    specialty_roles = {k: int(v) for k, v in specialty_roles.items() if v and v.isdigit()}
-
     description = event.get('description', '')
     if restricted_ids := event.get('restrict_to_role_ids'):
-        role_mentions = []
-        for role_id in restricted_ids:
-            role = guild.get_role(role_id)
-            if role:
-                role_mentions.append(role.mention)
-
+        role_mentions = [f"<@&{role_id}>" for role_id in restricted_ids]
         if role_mentions:
             roles_text = ", ".join(role_mentions)
             restriction_notice = (
@@ -97,92 +89,101 @@ async def create_event_embed(bot: commands.Bot, event_id: int, db: Database) -> 
 
     embed = discord.Embed(title=f"📅 {event['title']}", description=description, color=discord.Color.blue())
     time_str = f"**Starts:** {discord.utils.format_dt(event['event_time'], style='F')} ({discord.utils.format_dt(event['event_time'], style='R')})"
-    if event['end_time']: time_str += f"\n**Ends:** {discord.utils.format_dt(event['end_time'], style='F')}"
-    if event['timezone']: time_str += f"\nTimezone: {event['timezone']}"
+    if event['end_time']:
+        time_str += f"\n**Ends:** {discord.utils.format_dt(event['end_time'], style='F')}"
+    if event['timezone']:
+        time_str += f"\nTimezone: {event['timezone']}"
     embed.add_field(name="Time", value=time_str, inline=False)
 
     accepted_signups = defaultdict(list)
-    tentative_users = []
-    declined_users = []
+    tentative_users, declined_users = [], []
 
     for signup in signups:
         member = guild.get_member(signup['user_id'])
         if not member: continue
 
-        if signup['rsvp_status'] == RsvpStatus.ACCEPTED:
+        status = signup['rsvp_status']
+        if status == RsvpStatus.ACCEPTED:
             role_key = signup['role_name'] or "Unassigned"
             accepted_signups[role_key].append({
                 "display_name": f"**{member.display_name}**",
                 "subclass": signup['subclass_name']
             })
-        elif signup['rsvp_status'] == RsvpStatus.TENTATIVE:
+        elif status == RsvpStatus.TENTATIVE:
             tentative_users.append(member.display_name)
-        elif signup['rsvp_status'] == RsvpStatus.DECLINED:
+        elif status == RsvpStatus.DECLINED:
             declined_users.append(member.display_name)
 
     total_accepted = sum(len(v) for v in accepted_signups.values())
     embed.add_field(name=f"Accepted ({total_accepted})", value="\u200b", inline=False)
 
-    column_1_roles = ["Commander", "Infantry"]
-    column_2_roles = ["Armour", "Pathfinders", "Artillery", "Recon"]
+    # --- DYNAMIC FIELD SPLITTING LOGIC ---
+    # Helper to create and add fields, splitting content if it's too long
+    def add_split_fields(embed: discord.Embed, field_name: str, content_lines: List[str]):
+        MAX_VALUE_LENGTH = 1024
+        
+        if not content_lines:
+            # If there's content for the first part but not subsequent parts, add an empty field for alignment
+            if len(embed.fields) % 2 != 0:
+                 embed.add_field(name="\u200b", value="\u200b", inline=True)
+            return
 
-    def build_role_block(primary_role, signups):
-        if not signups:
-            return None
+        parts = []
+        current_part = ""
+        for line in content_lines:
+            if len(current_part) + len(line) + 1 > MAX_VALUE_LENGTH:
+                parts.append(current_part)
+                current_part = line
+            else:
+                current_part += f"\n{line}" if current_part else line
+        parts.append(current_part)
 
-        block_lines = [f"__**{primary_role}**__ ({len(signups)})"]
+        for i, part in enumerate(parts):
+            name = f"{field_name} ({i+1}/{len(parts)})" if len(parts) > 1 else field_name
+            embed.add_field(name=name, value=part, inline=True)
+            # Add a blank field to maintain the two-column layout if necessary
+            if len(embed.fields) % 2 != 0 and (i == len(parts) - 1):
+                 embed.add_field(name="\u200b", value="\u200b", inline=True)
 
-        if primary_role not in SUBCLASSES:
-            player_names = [signup['display_name'] for signup in signups]
-            block_lines.extend(player_names)
-            return "\n".join(block_lines)
+    # Define the order and content of primary roles
+    role_order = ["Commander", "Infantry", "Armour", "Recon", "Pathfinders", "Artillery"]
+    
+    for role_name in role_order:
+        if role_signups := accepted_signups.get(role_name):
+            
+            # Group players by subclass within this role
+            subclass_groups = defaultdict(list)
+            for signup in role_signups:
+                subclass_key = signup['subclass'] or "Unassigned"
+                subclass_groups[subclass_key].append(signup['display_name'])
 
-        subclass_groups = defaultdict(list)
-        for signup in signups:
-            subclass_key = signup['subclass'] or "Unassigned"
-            subclass_groups[subclass_key].append(signup['display_name'])
+            content_lines = []
+            
+            # Order subclasses according to the main definition
+            subclass_order = SUBCLASSES.get(role_name, []) + ["Unassigned"]
+            for subclass in subclass_order:
+                if players := subclass_groups.get(subclass):
+                    content_lines.append(f"__**{subclass}**__ ({len(players)})")
+                    content_lines.extend(players)
+                    content_lines.append("") # Add a blank line for spacing
+            
+            if content_lines and content_lines[-1] == "":
+                content_lines.pop()
 
-        for subclass in (SUBCLASSES.get(primary_role, []) + ["Unassigned"]):
-            if players := subclass_groups.get(subclass):
-                block_lines.append(f"__**{subclass}**__ ({len(players)})")
-                block_lines.extend(players)
-                block_lines.append("")
+            add_split_fields(embed, f"{role_name} ({len(role_signups)})", content_lines)
 
-        if len(block_lines) > 1:
-            if block_lines[-1] == "": block_lines.pop()
-            return "\n".join(block_lines)
-
-        return None
-
-    col1_text = []
-    for role in column_1_roles:
-        if block := build_role_block(role, accepted_signups.get(role)):
-            col1_text.append(block)
-
-    col2_text = []
-    for role in column_2_roles:
-        if block := build_role_block(role, accepted_signups.get(role)):
-            col2_text.append(block)
-
-    if col1_text:
-        embed.add_field(name="\u200b", value="\n\n".join(col1_text), inline=True)
-    if col2_text:
-        embed.add_field(name="\u200b", value="\n\n".join(col2_text), inline=True)
-
-    if (col1_text and not col2_text) or (col2_text and not col1_text):
-        embed.add_field(name="\u200b", value="\u200b", inline=True)
-
+    # --- Handle remaining lists (Unassigned, Tentative, Declined) ---
     if unassigned_signups := accepted_signups.get("Unassigned"):
-        embed.add_field(
-            name=f"__**Unassigned**__ ({len(unassigned_signups)})",
-            value="\n".join([p['display_name'] for p in unassigned_signups]),
-            inline=False
-        )
+        player_list = "\n".join(p['display_name'] for p in unassigned_signups)
+        embed.add_field(name=f"__**Unassigned**__ ({len(unassigned_signups)})", value=player_list, inline=False)
+    
     if tentative_users:
         embed.add_field(name=f"__**Tentative**__ ({len(tentative_users)})", value=", ".join(tentative_users), inline=False)
+    
     if declined_users:
         embed.add_field(name=f"__**Declined**__ ({len(declined_users)})", value=", ".join(declined_users), inline=False)
-
+    
+    # --- Footer ---
     creator_name = "Unknown User"
     if creator_id := event.get('creator_id'):
         try:
@@ -193,7 +194,7 @@ async def create_event_embed(bot: commands.Bot, event_id: int, db: Database) -> 
     embed.set_footer(text=f"Event ID: {event_id} | Created by: {creator_name}")
     return embed
 
-# --- UI Classes ---
+# --- UI Classes (No changes needed in these classes) ---
 
 class RoleSelect(ui.Select):
     def __init__(self, db: Database, event_id: int, available_roles: List[str]):
