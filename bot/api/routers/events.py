@@ -11,7 +11,7 @@ from bot.utils.database import Database, RsvpStatus, ROLES, SUBCLASSES
 from bot.api import auth
 from bot.api.dependencies import get_db
 from bot.api.models import (
-    Event, Signup, Squad, SquadBuildRequest, RosterUpdateRequest,
+    Event, Signup, Squad, SquadBuildRequest, RosterUpdateRequest, 
     SendEmbedRequest, Channel, User, EventLockStatus, EventUpdate, PromoteRequest, SquadReorderRequest
 )
 from bot.cogs.event_management import EMOJI_MAPPING
@@ -28,10 +28,10 @@ BOT_TOKEN = os.getenv("DISCORD_TOKEN")
 LOCK_TIMEOUT_MINUTES = 15
 
 
-# --- NEW: Helper function for creating scalable team sheet embeds ---
+# --- CORRECTED HELPER FUNCTION ---
 def _create_team_sheet_embeds(request: SendEmbedRequest, event_details: Optional[Dict], is_draft: bool) -> List[Dict]:
     """
-    Builds the main team embed and a separate reserves embed, both with dynamic field splitting.
+    Builds the main team embed and a separate reserves embed, using an efficient layout.
     """
     title_str = "Team Composition"
     event_time_str = ""
@@ -44,45 +44,42 @@ def _create_team_sheet_embeds(request: SendEmbedRequest, event_details: Optional
     main_embed = {
         "title": f"{title_str}{event_time_str}",
         "description": "The following squads have been prepared for the event.",
-        "color": 15844367,  # Orange
+        "color": 3447003 if is_draft else 3066993,  # Blue for draft, Green for final
         "fields": []
     }
 
     squads_for_display = [s for s in request.squads if s.squad_type != "Reserves"]
-    squad_count = 0
-    for squad in squads_for_display:
-        member_lines = []
-        for m in squad.members:
+    
+    # --- START FIX: Efficient 2-column layout logic ---
+    for i in range(0, len(squads_for_display), 2):
+        # First squad in the pair
+        squad1 = squads_for_display[i]
+        member_lines1 = []
+        for m in squad1.members:
             emoji = EMOJI_MAPPING.get(m.assigned_role_name, "❔")
             member_line = f"{emoji} {m.display_name}"
             if m.startup_task:
                 member_line += f" - **{m.startup_task}**"
-            member_lines.append(member_line)
-        
-        value = "\n".join(member_lines) or "Empty"
-        
-        # Dynamic Splitting for oversized squads
-        if len(value) > 1024:
-            parts = []
-            current_part = ""
-            for line in member_lines:
-                if len(current_part) + len(line) + 1 > 1024:
-                    parts.append(current_part)
-                    current_part = line
-                else:
-                    current_part += f"\n{line}" if current_part else line
-            parts.append(current_part)
-            
-            for i, part in enumerate(parts):
-                field_name = f"__**{squad.name} ({i+1}/{len(parts)})**__"
-                main_embed["fields"].append({"name": field_name, "value": part, "inline": True})
-        else:
-            field_name = f"__**{squad.name}**__"
-            main_embed["fields"].append({"name": field_name, "value": value, "inline": True})
+            member_lines1.append(member_line)
+        value1 = "\n".join(member_lines1) or "Empty"
+        main_embed["fields"].append({"name": f"__**{squad1.name}**__", "value": value1, "inline": True})
 
-        squad_count += 1
-        if squad_count % 2 == 0 and squad_count < len(squads_for_display):
-            main_embed["fields"].append({"name": "\u200b", "value": "\u200b", "inline": False})
+        # Second squad in the pair (if it exists)
+        if (i + 1) < len(squads_for_display):
+            squad2 = squads_for_display[i+1]
+            member_lines2 = []
+            for m in squad2.members:
+                emoji = EMOJI_MAPPING.get(m.assigned_role_name, "❔")
+                member_line = f"{emoji} {m.display_name}"
+                if m.startup_task:
+                    member_line += f" - **{m.startup_task}**"
+                member_lines2.append(member_line)
+            value2 = "\n".join(member_lines2) or "Empty"
+            main_embed["fields"].append({"name": f"__**{squad2.name}**__", "value": value2, "inline": True})
+        else:
+            # If there's an odd number of squads, add a blank field to keep alignment.
+            main_embed["fields"].append({"name": "\u200b", "value": "\u200b", "inline": True})
+    # --- END FIX ---
 
     # --- Reserves Embed ---
     reserves_embed = None
@@ -95,7 +92,7 @@ def _create_team_sheet_embeds(request: SendEmbedRequest, event_details: Optional
     if reserves_list:
         reserves_embed = {
             "title": "Reserves",
-            "color": 5855577, # Grey
+            "color": 9807270, # Grey
             "fields": []
         }
         
@@ -328,7 +325,6 @@ async def refresh_event_roster(event_id: int, request: RosterUpdateRequest, db: 
         await db.flag_event_for_embed_update(event_id)
     return await db.get_squads_with_members(event_id)
 
-# --- UPDATED: Finalize endpoint now calls the new generic sending function ---
 @router.post("/{event_id}/finalize-squads", status_code=204)
 async def finalize_squads_and_learn(
     event_id: int,
@@ -341,11 +337,12 @@ async def finalize_squads_and_learn(
     try:
         squads_for_learning = [s.model_dump() for s in request.squads]
         await db.update_player_affinities(squads_for_learning)
-        print(f"AI learning process triggered for event {event_id}.")
+        # --- NEW: Save the finalized roster snapshot ---
+        await db.save_finalized_roster(event_id, squads_for_learning)
+        print(f"AI learning and roster snapshot triggered for event {event_id}.")
     except Exception as e:
-        print(f"Error during AI learning process for event {event_id}: {e}")
+        print(f"Error during AI learning/snapshot process for event {event_id}: {e}")
 
-# --- UPDATED: Draft endpoint now calls the new generic sending function ---
 @router.post("/send-draft-embed", status_code=204)
 async def send_draft_embed(
     event_id: int,
@@ -357,3 +354,4 @@ async def send_draft_embed(
     Sends a squad composition embed to a Discord channel without triggering any learning.
     """
     await _send_embed_to_discord(event_id, request, db, is_draft=True)
+
