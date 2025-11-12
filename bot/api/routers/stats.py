@@ -9,7 +9,9 @@ from typing import List
 from bot.utils.database import Database
 from bot.api import auth
 from bot.api.dependencies import get_db
-from bot.api.models import PlayerStats, AcceptedEvent, MatchUpload, Leaderboard, User
+# --- START: MODIFICATION - Update imported model name ---
+from bot.api.models import PlayerStats, PlayerEventHistoryEntry, MatchUpload, Leaderboard, User
+# --- END: MODIFICATION ---
 from dateutil.parser import parse as parse_datetime
 
 router = APIRouter(
@@ -21,17 +23,19 @@ router = APIRouter(
 @router.get("/engagement", response_model=List[PlayerStats])
 async def get_engagement_stats(db: Database = Depends(get_db)):
     """
-    Retrieves player engagement statistics by calculating them directly
-    from the source signup data for maximum accuracy and performance.
+    Retrieves player engagement statistics by reading the persistent,
+    running totals from the player_stats table.
     """
     return await db.get_engagement_stats()
 
-@router.get("/player/{user_id}/accepted-events", response_model=List[AcceptedEvent])
-async def get_player_accepted_events(user_id: int, db: Database = Depends(get_db)):
+# --- START: MODIFICATION - Update endpoint, function, and response model ---
+@router.get("/player/{user_id}/event-history", response_model=List[PlayerEventHistoryEntry])
+async def get_player_event_history(user_id: int, db: Database = Depends(get_db)):
     """
-    Retrieves all accepted events for a specific player.
+    Retrieves all snapshotted event history for a specific player.
     """
-    return await db.get_accepted_events_for_user(user_id)
+    return await db.get_event_history_for_user(user_id)
+# --- END: MODIFICATION ---
 
 @router.post("/upload", status_code=201)
 async def upload_match_stats(
