@@ -304,7 +304,7 @@ class Database:
                 await connection.execute("CREATE INDEX IF NOT EXISTS idx_match_history_game_player_id ON match_history(game_player_id);")
 
                 # --- START: FIX 1 - Add Event Locks Table ---
-                # This table was also missing, causing errors on the main page
+                # This table was also missing, and would cause the next error
                 await connection.execute("""
                     CREATE TABLE IF NOT EXISTS event_locks (
                         event_id INT PRIMARY KEY REFERENCES events(event_id) ON DELETE CASCADE,
@@ -907,12 +907,7 @@ class Database:
         """
         async with self.pool.acquire() as connection:
             # We must use the registered JSONB codec for this to work
-            if self._jsonb_codec:
-                await connection.execute(query, [member_data], types=[self._jsonb_codec])
-            else:
-                # Fallback in case codec isn't ready, though it should be.
-                await connection.execute(query, json.dumps(member_data))
-
+            await connection.execute(query, [member_data], types=[self._jsonb_codec])
 
     async def update_player_rating(self, user_id: int, rating: int):
         query = "UPDATE player_stats SET rating = $1 WHERE user_id = $2;"
@@ -1127,12 +1122,7 @@ class Database:
                 finalized_at = (NOW() AT TIME ZONE 'utc');
         """
         async with self.pool.acquire() as connection:
-            # We must use the registered JSONB codec for this to work
-            if self._jsonb_codec:
-                await connection.execute(query, event_id, roster_data, types=[None, self._jsonb_codec])
-            else:
-                await connection.execute(query, event_id, json.dumps(roster_data))
-
+            await connection.execute(query, event_id, roster_data, types=[None, self._jsonb_codec])
 
     # --- Match Stats Management ---
     async def check_match_exists(self, match_id: str) -> bool:
