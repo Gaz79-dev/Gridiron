@@ -75,39 +75,43 @@ class Database:
     """Handles all database operations."""
     def __init__(self):
         self.pool = None
-        self._jsonb_codec = None
+        self._jsonb_codec = None # We still cache the OID for 'copy_records_to_table'
 
-    # --- START: FIX 2 - Add Codec Registration Function ---
-    async def _register_jsonb_codec(self, connection):
-        """Registers JSONB codec for a new connection and caches the OID."""
+    # --- START: FINAL FIX - Use correct text-based JSON codecs ---
+    async def _register_json_codecs(self, connection):
+        """Registers JSON/JSONB codecs to automatically encode/decode using text."""
         await connection.set_type_codec(
             'jsonb',
-            encoder=self._encode_jsonb,
-            decoder=self._decode_jsonb,
-            schema='pg_catalog',
-            format='binary'
+            encoder=json.dumps,
+            decoder=json.loads,
+            schema='pg_catalog'
         )
-        # Cache the OID if not already cached.
-        # This is needed for copy_records_to_table to function correctly.
+        await connection.set_type_codec(
+            'json',
+            encoder=json.dumps,
+            decoder=json.loads,
+            schema='pg_catalog'
+        )
+        # We still need the OID for the 'copy_records_to_table' types parameter
         if self._jsonb_codec is None:
             self._jsonb_codec = await connection.fetchval(
                 "SELECT oid FROM pg_type WHERE typname = 'jsonb'"
             )
-    # --- END: FIX 2 ---
+    # --- END: FINAL FIX ---
 
     async def connect(self):
         """Establishes the database connection pool."""
         try:
-            # --- START: FIX 2 - Register Codec on Pool Init ---
+            # --- START: FINAL FIX - Register codecs on pool Init ---
             self.pool = await asyncpg.create_pool(
                 user=os.getenv("POSTGRES_USER"),
                 password=os.getenv("POSTGRES_PASSWORD"),
                 database=os.getenv("POSTGRES_DB"),
                 host=os.getenv("POSTGRES_HOST"),
                 port=os.getenv("POSTGRES_PORT"),
-                init=self._register_jsonb_codec  # <-- This fixes the JSON validation errors
+                init=self._register_json_codecs  # <-- This fixes the JSON validation errors
             )
-            # --- END: FIX 2 ---
+            # --- END: FINAL FIX ---
             
             # Run setup to create tables
             await self._initial_setup()
@@ -118,9 +122,7 @@ class Database:
     async def _initial_setup(self):
         async with self.pool.acquire() as connection:
             async with connection.transaction():
-                # --- START: FIX 2 - Remove Codec logic from here ---
-                # The JSONB codec is now registered in the pool's 'init' function
-                # --- END: FIX 2 ---
+                # Codec registration is now handled by the pool 'init' function
                 
                 await connection.execute("""
                     CREATE TABLE IF NOT EXISTS guild_settings (
@@ -156,11 +158,9 @@ class Database:
                     );
                 """)
                 
-                # --- START: FIX 1 - Add missing ALTER TABLE commands ---
-                # This will patch the existing database schema
+                # These ALTER TABLE commands are still needed to patch the schema
                 await connection.execute("ALTER TABLE events ADD COLUMN IF NOT EXISTS is_deleted BOOLEAN DEFAULT FALSE;")
                 await connection.execute("ALTER TABLE events ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP WITH TIME ZONE;")
-                # --- END: FIX 1 ---
 
                 await connection.execute("""
                     CREATE TABLE IF NOT EXISTS signups (
@@ -211,10 +211,8 @@ class Database:
                         UNIQUE(user_id, event_id)
                     );
                 """)
-                # --- START: MODIFICATION - Add new columns for history ---
                 await connection.execute("ALTER TABLE player_event_history ADD COLUMN IF NOT EXISTS end_time TIMESTAMP WITH TIME ZONE;")
                 await connection.execute("ALTER TABLE player_event_history ADD COLUMN IF NOT EXISTS rsvp_status VARCHAR(10);")
-                # --- END: MODIFICATION ---
                 
                 await connection.execute("""
                     CREATE TABLE IF NOT EXISTS reminder_jobs (
@@ -303,8 +301,6 @@ class Database:
                 """)
                 await connection.execute("CREATE INDEX IF NOT EXISTS idx_match_history_game_player_id ON match_history(game_player_id);")
 
-                # --- START: FIX 1 - Add Event Locks Table ---
-                # This table was also missing, and would cause the next error
                 await connection.execute("""
                     CREATE TABLE IF NOT EXISTS event_locks (
                         event_id INT PRIMARY KEY REFERENCES events(event_id) ON DELETE CASCADE,
@@ -312,21 +308,12 @@ class Database:
                         locked_at TIMESTAMP WITH TIME ZONE DEFAULT (NOW() AT TIME ZONE 'utc')
                     );
                 """)
-                # --- END: FIX 1 ---
 
-    async def _get_jsonb_codec(self, connection):
-        """DEPRECATED: This logic is now in _register_jsonb_codec."""
-        # This function is no longer called but is safe to leave
-        # for now, as we've removed its call from _initial_setup.
-        pass
-
-    def _encode_jsonb(self, value):
-        """Encodes a Python object to JSONB binary format."""
-        return b'\x01' + json.dumps(value).encode('utf-8')
-
-    def _decode_jsonb(self, value):
-        """Decodes JSONB binary format to a Python object."""
-        return json.loads(value[1:].decode('utf-8'))
+    # --- START: FINAL FIX - Remove old, unused binary codec functions ---
+    # def _get_jsonb_codec(self, connection): ...
+    # def _encode_jsonb(self, value): ...
+    # def _decode_jsonb(self, value): ...
+    # --- END: FINAL FIX ---
 
     # --- Guild Settings ---
     async def set_thread_creation_hours(self, guild_id: int, hours: int):
@@ -906,8 +893,9 @@ class Database:
                 display_name = EXCLUDED.display_name;
         """
         async with self.pool.acquire() as connection:
-            # We must use the registered JSONB codec for this to work
-            await connection.execute(query, [member_data], types=[self._jsonb_codec])
+            # --- START: FINAL FIX - Pass argument directly, no 'types' needed ---
+            await connection.execute(query, member_data)
+            # --- END: FINAL FIX ---
 
     async def update_player_rating(self, user_id: int, rating: int):
         query = "UPDATE player_stats SET rating = $1 WHERE user_id = $2;"
@@ -933,6 +921,7 @@ class Database:
                 existing_data = await connection.fetch("SELECT user_id, role_affinities FROM player_stats WHERE user_id = ANY($1);", all_member_ids)
                 player_affinities = {}
                 for row in existing_data:
+                    # The codec now auto-decodes, so 'row['role_affinities']' is already a dict
                     player_affinities[row['user_id']] = row['role_affinities'] or {'roles': {}, 'squad_types': {}}
                 
                 # Step 2: Update affinities in memory
@@ -1000,6 +989,7 @@ class Database:
             ORDER BY t.template_name;
         """
         async with self.pool.acquire() as connection:
+            # The JSONB codec will automatically parse the 'definitions' json_agg
             return [dict(row) for row in await connection.fetch(query)]
 
     async def get_squad_template_by_id(self, template_id: int) -> Optional[Dict]:
@@ -1122,7 +1112,9 @@ class Database:
                 finalized_at = (NOW() AT TIME ZONE 'utc');
         """
         async with self.pool.acquire() as connection:
-            await connection.execute(query, event_id, roster_data, types=[None, self._jsonb_codec])
+            # --- START: FINAL FIX - Pass argument directly, no 'types' needed ---
+            await connection.execute(query, event_id, roster_data)
+            # --- END: FINAL FIX ---
 
     # --- Match Stats Management ---
     async def check_match_exists(self, match_id: str) -> bool:
