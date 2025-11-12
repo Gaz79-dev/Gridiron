@@ -38,6 +38,9 @@ def _safe_float(value: Any) -> Optional[float]:
     if value is None:
         return None
     try:
+        # Remove commas that might be in the string (e.g., "1,234.5")
+        if isinstance(value, str):
+            value = value.replace(',', '')
         return float(value)
     except (ValueError, TypeError):
         return None
@@ -45,119 +48,114 @@ def _safe_float(value: Any) -> Optional[float]:
 
 
 async def _send_rsvp_log_message(user_id: int, event_title: str, old_status: str, new_status: str):
-    log_channel_id = os.getenv("EVENT_LOG_CHANNEL_ID")
-    bot_token = os.getenv("DISCORD_TOKEN")
-    guild_id = os.getenv("GUILD_ID")
-
-    if not all([log_channel_id, bot_token, guild_id]):
-        print("Log channel, bot token, or guild ID not configured. Skipping log message.")
+    """(Helper) Sends a log of an RSVP change to a webhook."""
+    webhook_url = os.getenv("RSVP_LOG_WEBHOOK")
+    if not webhook_url:
         return
 
-    headers = {"Authorization": f"Bot {bot_token}"}
-    member_name = f"ID: {user_id}"
-    
-    async with httpx.AsyncClient() as client:
-        try:
-            url = f"https://discord.com/api/v10/guilds/{guild_id}/members/{user_id}"
-            response = await client.get(url, headers=headers)
-            if response.is_success:
-                member_data = response.json()
-                member_name = member_data.get('nick') or member_data['user'].get('global_name') or member_data['user']['username']
-        except Exception as e:
-            print(f"Could not fetch member name for logging: {e}")
-
-    color = 0
-    if new_status == RsvpStatus.ACCEPTED:
-        color = 3066993  # Green
-    elif new_status in [RsvpStatus.TENTATIVE, RsvpStatus.DECLINED]:
-        color = 15158332 # Red
-
     embed = {
-        "title": "RSVP Status Change",
-        "color": color,
+        "title": "RSVP Change Detected",
+        "color": 0x00FF00 if new_status == RsvpStatus.ACCEPTED else 0xFF0000,
         "fields": [
-            {"name": "Player", "value": member_name, "inline": True},
-            {"name": "Event", "value": event_title, "inline": True},
-            {"name": "Status Change", "value": f"**{old_status or 'None'}** → **{new_status}**", "inline": False},
+            {"name": "Event", "value": event_title, "inline": False},
+            {"name": "User", "value": f"<@{user_id}>", "inline": True},
+            {"name": "Old Status", "value": old_status or "None", "inline": True},
+            {"name": "New Status", "value": new_status, "inline": True}
         ],
         "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat()
     }
 
     try:
-        url = f"https://discord.com/api/v10/channels/{log_channel_id}/messages"
         async with httpx.AsyncClient() as client:
-            response = await client.post(url, headers=headers, json={"embeds": [embed]})
-            response.raise_for_status()
+            await client.post(webhook_url, json={"embeds": [embed]})
     except Exception as e:
-        print(f"Failed to send log message to Discord: {e}")
+        print(f"Failed to send RSVP log webhook: {e}")
 
 class Database:
+    """Handles all database operations."""
     def __init__(self):
         self.pool = None
+        self._jsonb_codec = None
 
     async def connect(self):
-        async def init_connection(conn):
-            await conn.set_type_codec('json', encoder=json.dumps, decoder=json.loads, schema='pg_catalog')
-            await conn.set_type_codec('jsonb', encoder=json.dumps, decoder=json.loads, schema='pg_catalog')
+        """Establishes the database connection pool."""
         try:
             self.pool = await asyncpg.create_pool(
-                user=os.getenv("POSTGRES_USER"), password=os.getenv("POSTGRES_PASSWORD"),
-                database=os.getenv("POSTGRES_DB"), host=os.getenv("POSTGRES_HOST", "db"),
-                port=os.getenv("POSTGRES_PORT", 5432),
-                init=init_connection
+                user=os.getenv("POSTGRES_USER"),
+                password=os.getenv("POSTGRES_PASSWORD"),
+                database=os.getenv("POSTGRES_DB"),
+                host=os.getenv("POSTGRES_HOST"),
+                port=os.getenv("POSTGRES_PORT")
             )
-            print("Successfully connected to the PostgreSQL database.")
+            # Run setup to register codecs and create tables
             await self._initial_setup()
+            print("Database connection pool established and tables ensured.")
         except Exception as e:
-            print(f"Error: Could not connect to the PostgreSQL database. {e}")
-            raise
+            print(f"Failed to connect to database: {e}")
 
     async def _initial_setup(self):
         async with self.pool.acquire() as connection:
             async with connection.transaction():
-                await connection.execute("CREATE TABLE IF NOT EXISTS users (id SERIAL PRIMARY KEY, username VARCHAR(50) UNIQUE NOT NULL, hashed_password VARCHAR(255) NOT NULL, is_active BOOLEAN DEFAULT TRUE, is_admin BOOLEAN DEFAULT FALSE);")
-                await connection.execute("CREATE TABLE IF NOT EXISTS guilds (guild_id BIGINT PRIMARY KEY, event_manager_role_ids BIGINT[], thread_creation_hours INT DEFAULT 24);")
-                await connection.execute("""CREATE TABLE IF NOT EXISTS events (event_id SERIAL PRIMARY KEY,
+                # Get and register the JSONB codec
+                self._jsonb_codec = await self._get_jsonb_codec(connection)
+                
+                await connection.execute("""
+                    CREATE TABLE IF NOT EXISTS guild_settings (
+                        guild_id BIGINT PRIMARY KEY,
+                        thread_creation_hours INT DEFAULT 24
+                    );
+                """)
+                
+                await connection.execute("""
+                    CREATE TABLE IF NOT EXISTS events (
+                        event_id SERIAL PRIMARY KEY,
                         guild_id BIGINT NOT NULL,
-                        creator_id BIGINT NOT NULL,
-                        message_id BIGINT UNIQUE,
                         channel_id BIGINT NOT NULL,
+                        message_id BIGINT,
                         thread_id BIGINT,
+                        creator_id BIGINT NOT NULL,
                         title VARCHAR(255) NOT NULL,
                         description TEXT,
                         event_time TIMESTAMP WITH TIME ZONE NOT NULL,
-                        end_time TIMESTAMP WITH TIME ZONE,
+                        end_time TIMESTAMP WITH TIME ZONE NOT NULL,
                         timezone VARCHAR(100),
-                        created_at TIMESTAMP WITH TIME ZONE DEFAULT (NOW() AT TIME ZONE 'utc'),
-                        thread_created BOOLEAN DEFAULT FALSE,
                         is_recurring BOOLEAN DEFAULT FALSE,
-                        recurrence_rule VARCHAR(50),
+                        recurrence_rule VARCHAR(50), -- e.g., 'daily', 'weekly', 'monthly'
+                        recreation_hours INT DEFAULT 168, -- Default to 1 week
+                        parent_event_id INT REFERENCES events(event_id) ON DELETE SET NULL,
                         mention_role_ids BIGINT[],
                         restrict_to_role_ids BIGINT[],
-                        recreation_hours INT,
-                        parent_event_id INT REFERENCES events(event_id) ON DELETE SET NULL,
-                        last_recreated_at TIMESTAMP WITH TIME ZONE,
-                        deleted_at TIMESTAMP WITH TIME ZONE DEFAULT NULL,
-                        locked_by_user_id INT REFERENCES users(id) ON DELETE SET NULL,
-                        locked_at TIMESTAMP WITH TIME ZONE
+                        created_at TIMESTAMP WITH TIME ZONE DEFAULT (NOW() AT TIME ZONE 'utc'),
+                        is_deleted BOOLEAN DEFAULT FALSE,
+                        deleted_at TIMESTAMP WITH TIME ZONE,
+                        thread_created BOOLEAN DEFAULT FALSE,
+                        update_embed BOOLEAN DEFAULT FALSE
                     );
                 """)
-                await connection.execute("ALTER TABLE events ADD COLUMN IF NOT EXISTS needs_embed_update BOOLEAN DEFAULT FALSE;")
-
-                await connection.execute("CREATE TABLE IF NOT EXISTS signups (signup_id SERIAL PRIMARY KEY, event_id INT REFERENCES events(event_id) ON DELETE CASCADE, user_id BIGINT NOT NULL, role_name VARCHAR(100), subclass_name VARCHAR(100), rsvp_status VARCHAR(10) NOT NULL, UNIQUE(event_id, user_id));")
-                await connection.execute("CREATE TABLE IF NOT EXISTS squads (squad_id SERIAL PRIMARY KEY, event_id INT NOT NULL REFERENCES events(event_id) ON DELETE CASCADE, name VARCHAR(100) NOT NULL, squad_type VARCHAR(50) NOT NULL);")
-                await connection.execute("""
-                    CREATE TABLE IF NOT EXISTS squad_members (
-                        squad_member_id SERIAL PRIMARY KEY,
-                        squad_id INT NOT NULL REFERENCES squads(squad_id) ON DELETE CASCADE,
-                        user_id BIGINT NOT NULL,
-                        assigned_role_name VARCHAR(100) NOT NULL,
-                        startup_task VARCHAR(100),
-                        UNIQUE(squad_id, user_id)
-                    );
-                """)
-                await connection.execute("ALTER TABLE squad_members ADD COLUMN IF NOT EXISTS position INT NOT NULL DEFAULT 0;")
                 
+                await connection.execute("""
+                    CREATE TABLE IF NOT EXISTS signups (
+                        signup_id SERIAL PRIMARY KEY,
+                        event_id INT NOT NULL REFERENCES events(event_id) ON DELETE CASCADE,
+                        user_id BIGINT NOT NULL,
+                        rsvp_status VARCHAR(10) NOT NULL, -- Accepted, Declined, Tentative
+                        role_name VARCHAR(100), -- Infantry, Armour, Recon
+                        subclass_name VARCHAR(100), -- Officer, Medic, etc.
+                        timestamp TIMESTAMP WITH TIME ZONE DEFAULT (NOW() AT TIME ZONE 'utc'),
+                        UNIQUE(event_id, user_id)
+                    );
+                """)
+
+                await connection.execute("""
+                    CREATE TABLE IF NOT EXISTS users (
+                        id SERIAL PRIMARY KEY,
+                        username VARCHAR(50) UNIQUE NOT NULL,
+                        hashed_password VARCHAR(255) NOT NULL,
+                        is_active BOOLEAN DEFAULT TRUE,
+                        is_admin BOOLEAN DEFAULT FALSE
+                    );
+                """)
+
                 await connection.execute("""
                     CREATE TABLE IF NOT EXISTS player_stats (
                         user_id BIGINT PRIMARY KEY,
@@ -166,14 +164,10 @@ class Database:
                         declined_count INT DEFAULT 0,
                         last_signup_date TIMESTAMP WITH TIME ZONE,
                         rating INT DEFAULT 50,
-                        is_active BOOLEAN DEFAULT TRUE,
-                        role_affinities JSONB DEFAULT '{}'::jsonb
+                        role_affinities JSONB,
+                        is_active BOOLEAN DEFAULT TRUE
                     );
                 """)
-                await connection.execute("ALTER TABLE player_stats ADD COLUMN IF NOT EXISTS rating INT DEFAULT 50;")
-                await connection.execute("ALTER TABLE player_stats ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE;")
-                await connection.execute("ALTER TABLE player_stats ADD COLUMN IF NOT EXISTS role_affinities JSONB DEFAULT '{}'::jsonb;")
-                await connection.execute("ALTER TABLE player_stats ADD COLUMN IF NOT EXISTS game_player_id TEXT;")
                 await connection.execute("ALTER TABLE player_stats ADD COLUMN IF NOT EXISTS display_name VARCHAR(255);")
 
                 await connection.execute("""
@@ -188,639 +182,373 @@ class Database:
                         UNIQUE(user_id, event_id)
                     );
                 """)
+                # --- START: MODIFICATION - Add new columns for history ---
+                await connection.execute("ALTER TABLE player_event_history ADD COLUMN IF NOT EXISTS end_time TIMESTAMP WITH TIME ZONE;")
+                await connection.execute("ALTER TABLE player_event_history ADD COLUMN IF NOT EXISTS rsvp_status VARCHAR(10);")
+                # --- END: MODIFICATION ---
+                
                 await connection.execute("""
                     CREATE TABLE IF NOT EXISTS reminder_jobs (
-                        job_id UUID PRIMARY KEY,
-                        user_ids BIGINT[] NOT NULL,
-                        created_at TIMESTAMP WITH TIME ZONE DEFAULT (NOW() AT TIME ZONE 'utc')
+                        job_id VARCHAR(255) PRIMARY KEY,
+                        event_id INT NOT NULL REFERENCES events(event_id) ON DELETE CASCADE,
+                        user_id BIGINT NOT NULL,
+                        reminder_time TIMESTAMP WITH TIME ZONE NOT NULL
                     );
                 """)
+                
                 await connection.execute("""
                     CREATE TABLE IF NOT EXISTS squad_templates (
                         template_id SERIAL PRIMARY KEY,
                         guild_id BIGINT NOT NULL,
-                        template_name VARCHAR(100) NOT NULL UNIQUE
+                        template_name VARCHAR(255) NOT NULL
                     );
                 """)
+
                 await connection.execute("""
                     CREATE TABLE IF NOT EXISTS squad_template_definitions (
                         definition_id SERIAL PRIMARY KEY,
                         template_id INT NOT NULL REFERENCES squad_templates(template_id) ON DELETE CASCADE,
-                        squad_name VARCHAR(100) NOT NULL,
-                        default_count INT NOT NULL DEFAULT 1,
-                        squad_type VARCHAR(50) NOT NULL,
-                        naming_convention VARCHAR(20) NOT NULL DEFAULT 'alpha',
-                        source_rsvp_pool VARCHAR(50) NOT NULL
+                        squad_name VARCHAR(255) NOT NULL,
+                        default_count INT DEFAULT 0,
+                        squad_type VARCHAR(100) NOT NULL,
+                        naming_convention VARCHAR(50) NOT NULL DEFAULT 'numeric',
+                        source_rsvp_pool VARCHAR(100) NOT NULL
                     );
                 """)
                 
+                await connection.execute("""
+                    CREATE TABLE IF NOT EXISTS squads (
+                        squad_id SERIAL PRIMARY KEY,
+                        event_id INT NOT NULL REFERENCES events(event_id) ON DELETE CASCADE,
+                        name VARCHAR(255) NOT NULL,
+                        squad_type VARCHAR(100) NOT NULL
+                    );
+                """)
+
+                await connection.execute("""
+                    CREATE TABLE IF NOT EXISTS squad_members (
+                        squad_member_id SERIAL PRIMARY KEY,
+                        squad_id INT NOT NULL REFERENCES squads(squad_id) ON DELETE CASCADE,
+                        user_id BIGINT NOT NULL,
+                        assigned_role_name VARCHAR(100),
+                        position INT DEFAULT 0,
+                        startup_task TEXT
+                    );
+                """)
+                
+                await connection.execute("""
+                    CREATE TABLE IF NOT EXISTS event_final_rosters (
+                        roster_id SERIAL PRIMARY KEY,
+                        event_id INT NOT NULL UNIQUE REFERENCES events(event_id) ON DELETE CASCADE,
+                        roster_data JSONB NOT NULL,
+                        finalized_at TIMESTAMP WITH TIME ZONE DEFAULT (NOW() AT TIME ZONE 'utc')
+                    );
+                """)
+                
+                await connection.execute("ALTER TABLE player_stats ADD COLUMN IF NOT EXISTS game_player_id VARCHAR(100);")
+
                 await connection.execute("""
                     CREATE TABLE IF NOT EXISTS match_uploads (
-                        match_id VARCHAR(255) PRIMARY KEY,
+                        match_id VARCHAR(255) PRIMARY KEY, -- e.g., '20240520_MatchName_123456'
                         event_name VARCHAR(255) NOT NULL,
                         event_date DATE NOT NULL,
-                        uploaded_at TIMESTAMP WITH TIME ZONE DEFAULT (NOW() AT TIME ZONE 'utc'),
-                        uploaded_by_user_id INT REFERENCES users(id) ON DELETE SET NULL
+                        uploaded_by_user_id INT NOT NULL REFERENCES users(id),
+                        uploaded_at TIMESTAMP WITH TIME ZONE DEFAULT (NOW() AT TIME ZONE 'utc')
                     );
                 """)
-                
+
                 await connection.execute("""
                     CREATE TABLE IF NOT EXISTS match_history (
-                        match_history_id SERIAL PRIMARY KEY,
-                        match_id VARCHAR(255) REFERENCES match_uploads(match_id) ON DELETE CASCADE,
-                        game_player_id TEXT NOT NULL,
-                        discord_user_id BIGINT,
-                        player_name VARCHAR(255),
+                        match_stat_id SERIAL PRIMARY KEY,
+                        match_id VARCHAR(255) NOT NULL REFERENCES match_uploads(match_id) ON DELETE CASCADE,
+                        player_name VARCHAR(255) NOT NULL,
+                        game_player_id VARCHAR(100) NOT NULL,
+                        discord_user_id BIGINT REFERENCES player_stats(user_id), -- Linked via game_player_id
                         kills INT,
                         deaths INT,
-                        kd FLOAT,
                         combat_effectiveness INT,
-                        support_score INT,
+                        offensive_score INT,
                         defensive_score INT,
-                        offensive_score INT
+                        support_score INT
                     );
                 """)
+                await connection.execute("CREATE INDEX IF NOT EXISTS idx_match_history_game_player_id ON match_history(game_player_id);")
 
-                await connection.execute("CREATE INDEX IF NOT EXISTS idx_signups_user_id ON signups(user_id);")
-                
-                print("Database setup is complete.")
+    async def _get_jsonb_codec(self, connection):
+        """Fetches and registers a JSONB codec for the connection."""
+        await connection.set_type_codec(
+            'jsonb',
+            encoder=self._encode_jsonb,
+            decoder=self._decode_jsonb,
+            schema='pg_catalog',
+            format='binary'
+        )
+        # Fetch the OID of the 'jsonb' type for this connection
+        return await connection.fetchval("SELECT oid FROM pg_type WHERE typname = 'jsonb'")
 
-    # --- New function to calculate leaderboards from match history ---
-    async def calculate_leaderboards(self) -> Dict[str, List[Dict]]:
-        """
-        Calculates leaderboards by finding the top 10 clan players within each match
-        and counting their appearances.
-        """
-        async with self.pool.acquire() as conn:
-            
-            # This query filters for clan players first, then ranks them.
-            # The final "LIMIT 10" has been removed to show all ranked players.
-            base_query = """
-                WITH ClanPlayerStats AS (
-                    SELECT
-                        mh.match_id,
-                        ps.display_name,
-                        ps.user_id,
-                        mh.{stat_column},
-                        RANK() OVER (PARTITION BY mh.match_id ORDER BY mh.{stat_column} DESC) as rank
-                    FROM
-                        match_history mh
-                    INNER JOIN
-                        player_stats ps ON mh.game_player_id = ps.game_player_id
-                    WHERE
-                        mh.{stat_column} IS NOT NULL
-                )
-                SELECT
-                    cps.display_name AS player_name,
-                    cps.user_id::text AS discord_user_id,
-                    COUNT(cps.match_id) AS total_value
-                FROM
-                    ClanPlayerStats cps
-                WHERE
-                    cps.rank <= 10
-                GROUP BY
-                    cps.display_name, cps.user_id
-                ORDER BY
-                    total_value DESC;
-            """
-            
-            # Execute the query for each leaderboard category
-            kills_records = await conn.fetch(base_query.format(stat_column='kills'))
-            combat_records = await conn.fetch(base_query.format(stat_column='combat_effectiveness'))
-            support_records = await conn.fetch(base_query.format(stat_column='support_score'))
-            offensive_records = await conn.fetch(base_query.format(stat_column='offensive_score'))
-            defensive_records = await conn.fetch(base_query.format(stat_column='defensive_score'))
-    
-            return {
-                "kills": [dict(r) for r in kills_records],
-                "combat_effectiveness": [dict(r) for r in combat_records],
-                "support_score": [dict(r) for r in support_records],
-                "offensive_score": [dict(r) for r in offensive_records],
-                "defensive_score": [dict(r) for r in defensive_records]
-            }
+    def _encode_jsonb(self, value):
+        """Encodes a Python object to JSONB binary format."""
+        return b'\x01' + json.dumps(value).encode('utf-8')
 
-    async def get_full_player_export_data(self) -> List[Dict]:
-        """
-        Gathers all active player stats and their complete event history for CSV export,
-        calculating RSVP counts on the fly for accuracy.
-        """
-        # This query is now aligned with the performant Engagement page query
+    def _decode_jsonb(self, value):
+        """Decodes JSONB binary format to a Python object."""
+        return json.loads(value[1:].decode('utf-8'))
+
+    # --- Guild Settings ---
+    async def set_thread_creation_hours(self, guild_id: int, hours: int):
         query = """
-            WITH SignupCounts AS (
-                SELECT
-                    user_id,
-                    COUNT(*) FILTER (WHERE rsvp_status = 'Accepted') AS accepted_count,
-                    COUNT(*) FILTER (WHERE rsvp_status = 'Tentative') AS tentative_count,
-                    COUNT(*) FILTER (WHERE rsvp_status = 'Declined') AS declined_count
-                FROM
-                    signups
-                GROUP BY
-                    user_id
+            INSERT INTO guild_settings (guild_id, thread_creation_hours)
+            VALUES ($1, $2)
+            ON CONFLICT (guild_id) DO UPDATE SET thread_creation_hours = $2;
+        """
+        async with self.pool.acquire() as connection:
+            await connection.execute(query, guild_id, hours)
+
+    async def get_thread_creation_hours(self, guild_id: int) -> int:
+        query = "SELECT thread_creation_hours FROM guild_settings WHERE guild_id = $1;"
+        async with self.pool.acquire() as connection:
+            hours = await connection.fetchval(query, guild_id)
+            return hours if hours is not None else 24
+
+    # --- Event Management ---
+    async def create_event(self, guild_id: int, channel_id: int, creator_id: int, event_data: dict) -> int:
+        query = """
+            INSERT INTO events (
+                guild_id, channel_id, creator_id, title, description, event_time, 
+                end_time, timezone, is_recurring, recurrence_rule, 
+                recreation_hours, parent_event_id, mention_role_ids, restrict_to_role_ids
             )
-            SELECT
-                ps.user_id,
-                ps.display_name,
-                ps.last_signup_date,
-                ps.rating,
-                COALESCE(sc.accepted_count, 0) AS accepted_count,
-                COALESCE(sc.tentative_count, 0) AS tentative_count,
-                COALESCE(sc.declined_count, 0) AS declined_count,
-                COALESCE(
-                    (SELECT jsonb_agg(peh.* ORDER BY peh.event_time DESC)
-                     FROM player_event_history peh
-                     WHERE peh.user_id = ps.user_id),
-                    '[]'::jsonb
-                ) as event_history
-            FROM
-                player_stats ps
-            LEFT JOIN
-                SignupCounts sc ON ps.user_id = sc.user_id
-            WHERE
-                ps.is_active = TRUE
-            ORDER BY
-                ps.display_name;
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+            RETURNING event_id;
+        """
+        async with self.pool.acquire() as connection:
+            event_id = await connection.fetchval(
+                query,
+                guild_id, channel_id, creator_id,
+                event_data['title'], event_data['description'], event_data['event_time'],
+                event_data['end_time'], event_data['timezone'], event_data['is_recurring'],
+                event_data.get('recurrence_rule'), event_data.get('recreation_hours'),
+                event_data.get('parent_event_id'), event_data.get('mention_role_ids', []),
+                event_data.get('restrict_to_role_ids', [])
+            )
+            return event_id
+
+    async def get_event_by_id(self, event_id: int, include_deleted: bool = False) -> Optional[Dict]:
+        query = "SELECT * FROM events WHERE event_id = $1"
+        if not include_deleted:
+            query += " AND is_deleted = FALSE"
+        async with self.pool.acquire() as connection:
+            record = await connection.fetchrow(query, event_id)
+            return dict(record) if record else None
+
+    async def get_active_events_with_message_id(self) -> List[Dict]:
+        query = "SELECT * FROM events WHERE message_id IS NOT NULL AND is_deleted = FALSE AND end_time > (NOW() AT TIME ZONE 'utc');"
+        async with self.pool.acquire() as connection:
+            records = await connection.fetch(query)
+            return [dict(record) for record in records]
+            
+    async def get_active_events_with_threads(self) -> List[Dict]:
+        query = "SELECT * FROM events WHERE thread_id IS NOT NULL AND is_deleted = FALSE AND end_time > (NOW() AT TIME ZONE 'utc');"
+        async with self.pool.acquire() as connection:
+            records = await connection.fetch(query)
+            return [dict(record) for record in records]
+
+    async def get_events_for_thread_creation(self) -> List[Dict]:
+        query = """
+            SELECT e.*
+            FROM events e
+            JOIN guild_settings gs ON e.guild_id = gs.guild_id
+            WHERE e.is_deleted = FALSE
+              AND e.thread_created = FALSE
+              AND (e.event_time - (gs.thread_creation_hours * INTERVAL '1 hour')) <= (NOW() AT TIME ZONE 'utc')
+              AND e.end_time > (NOW() AT TIME ZONE 'utc');
         """
         async with self.pool.acquire() as connection:
             records = await connection.fetch(query)
-            return [dict(row) for row in records]
+            return [dict(record) for record in records]
 
-    async def remove_user_from_all_upcoming_signups(self, user_id: int):
-        """
-        Finds all upcoming events a user is signed up for, deletes their signups,
-        and flags the events for an embed update.
-        """
-        async with self.pool.acquire() as conn:
-            async with conn.transaction():
-                # Find the event_ids of all upcoming events the user is signed up for
-                event_ids = await conn.fetchval(
-                    """
-                    SELECT array_agg(s.event_id)
-                    FROM signups s
-                    JOIN events e ON s.event_id = e.event_id
-                    WHERE s.user_id = $1 AND e.event_time > NOW() AT TIME ZONE 'utc';
-                    """,
-                    user_id
-                )
-
-                if not event_ids:
-                    return # User was not signed up for any upcoming events
-
-                # Delete the user's signups for these events
-                await conn.execute("DELETE FROM signups WHERE user_id = $1 AND event_id = ANY($2::int[]);", user_id, event_ids)
-                
-                # Flag the events for an embed update
-                await conn.execute("UPDATE events SET needs_embed_update = TRUE WHERE event_id = ANY($1::int[]);", event_ids)
-                
-                print(f"Removed user {user_id} from {len(event_ids)} upcoming event(s) and flagged embeds for update.")
-    
-    async def update_player_game_id(self, user_id: int, game_player_id: str):
-        """Updates a player's in-game ID for linking stats."""
-        async with self.pool.acquire() as connection:
-            await connection.execute(
-                "UPDATE player_stats SET game_player_id = $1 WHERE user_id = $2;",
-                game_player_id, user_id
-            )
-
-    # In database.py
-
-    async def update_squad_member_order(self, squad_id: int, ordered_member_ids: List[int]):
-        """
-        Updates the position for all members of a squad based on a new sorted list of their IDs.
-        """
-        if not ordered_member_ids:
-            return
-
-        # Build the CASE statement for the UPDATE query
-        case_statement = "CASE squad_member_id "
-        for index, member_id in enumerate(ordered_member_ids):
-            case_statement += f"WHEN {member_id} THEN {index} "
-        case_statement += "END"
-
-        query = f"""
-            UPDATE squad_members
-            SET position = {case_statement}
-            WHERE squad_id = $1 AND squad_member_id = ANY($2::int[]);
-        """
-        async with self.pool.acquire() as connection:
-            await connection.execute(query, squad_id, ordered_member_ids)
-
-    async def cache_player_display_names(self, member_data: List[Dict]):
-        """Updates the cached display names for a list of members."""
-        async with self.pool.acquire() as connection:
-            await connection.executemany(
-                "UPDATE player_stats SET display_name = $1 WHERE user_id = $2;",
-                [(m['name'], m['id']) for m in member_data]
-            )
-
-    async def check_match_exists(self, match_id: str) -> bool:
-        """Checks if a match with the given signature has already been uploaded."""
-        async with self.pool.acquire() as connection:
-            return await connection.fetchval(
-                "SELECT EXISTS (SELECT 1 FROM match_uploads WHERE match_id = $1);", match_id
-            )
-
-    async def insert_match_data(self, match_id: str, event_name: str, event_date: datetime.date, uploader_id: int, match_stats: List[Dict]):
-        """Inserts a new match and all its player stats into the database."""
-        async with self.pool.acquire() as conn:
-            async with conn.transaction():
-                # Link Discord IDs where possible
-                game_id_to_discord_id = {
-                    row['game_player_id']: row['user_id']
-                    for row in await conn.fetch("SELECT user_id, game_player_id FROM player_stats WHERE game_player_id IS NOT NULL;")
-                }
-
-                # Create the main upload record
-                await conn.execute(
-                    "INSERT INTO match_uploads (match_id, event_name, event_date, uploaded_by_user_id) VALUES ($1, $2, $3, $4);",
-                    match_id, event_name, event_date, uploader_id
-                )
-
-                # Prepare the data for insertion
-                records_to_insert = []
-                for row in match_stats:
-                    game_player_id = row.get("Player ID")
-                    # --- FIX: Convert all numeric string values from CSV to their correct types ---
-                    records_to_insert.append((
-                        match_id,
-                        game_player_id,
-                        game_id_to_discord_id.get(game_player_id),
-                        row.get("Name"),
-                        _safe_int(row.get("Kills")),
-                        _safe_int(row.get("Deaths")),
-                        _safe_float(row.get("K/D")),
-                        _safe_int(row.get("Combat Effectiveness")),
-                        _safe_int(row.get("Support Points")),
-                        _safe_int(row.get("Defensive Points")),
-                        _safe_int(row.get("Offensive Points"))
-                    ))
-
-                # Insert all player stats for this match
-                await conn.copy_records_to_table(
-                    'match_history',
-                    records=records_to_insert,
-                    columns=[
-                        'match_id', 'game_player_id', 'discord_user_id', 'player_name',
-                        'kills', 'deaths', 'kd', 'combat_effectiveness', 'support_score',
-                        'defensive_score', 'offensive_score'
-                    ]
-                )
-    
-    async def add_or_update_server_member(self, user_id: int):
+    async def get_events_for_recreation(self) -> List[Dict]:
         query = """
-            INSERT INTO player_stats (user_id, is_active) VALUES ($1, TRUE)
-            ON CONFLICT (user_id) DO UPDATE SET is_active = TRUE;
-        """
-        async with self.pool.acquire() as connection:
-            await connection.execute(query, user_id)
-
-    async def deactivate_server_member(self, user_id: int):
-        async with self.pool.acquire() as connection:
-            await connection.execute("UPDATE player_stats SET is_active = FALSE WHERE user_id = $1;", user_id)
-
-    async def sync_all_server_members(self, member_ids_with_role: List[int]):
-        async with self.pool.acquire() as connection:
-            async with connection.transaction():
-                await connection.execute("UPDATE player_stats SET is_active = FALSE;")
-                
-                stmt = await connection.prepare("""
-                    INSERT INTO player_stats (user_id, is_active) VALUES ($1, TRUE)
-                    ON CONFLICT (user_id) DO UPDATE SET is_active = TRUE;
-                """)
-                
-                await stmt.executemany([(user_id,) for user_id in member_ids_with_role])
-
-    async def get_all_players_for_admin_panel(self) -> List[Dict]:
-        """
-        Fetches all player data (active and inactive) for the Players page.
-        This is a simple, fast query.
-        """
-        query = "SELECT * FROM player_stats ORDER BY display_name;"
-        async with self.pool.acquire() as connection:
-            return [dict(row) for row in await connection.fetch(query)]
-
-    async def get_engagement_stats(self) -> List[Dict]:
-        """
-        Calculates engagement stats by aggregating raw signup data and joining it
-        to the full list of active players.
-        """
-        query = """
-            WITH SignupCounts AS (
-                SELECT
-                    user_id,
-                    COUNT(*) FILTER (WHERE rsvp_status = 'Accepted') AS accepted_count,
-                    COUNT(*) FILTER (WHERE rsvp_status = 'Tentative') AS tentative_count,
-                    COUNT(*) FILTER (WHERE rsvp_status = 'Declined') AS declined_count
-                FROM
-                    signups
-                GROUP BY
-                    user_id
-            )
-            SELECT
-                ps.user_id::text AS user_id,
-                ps.display_name,
-                ps.rating,
-                ps.is_active,
-                ps.last_signup_date,
-                ps.role_affinities,
-                ps.game_player_id,
-                COALESCE(sc.accepted_count, 0) AS accepted_count,
-                COALESCE(sc.tentative_count, 0) AS tentative_count,
-                COALESCE(sc.declined_count, 0) AS declined_count,
-                CASE
-                    WHEN ps.last_signup_date IS NOT NULL
-                    THEN EXTRACT(DAY FROM (NOW() AT TIME ZONE 'utc' - ps.last_signup_date))
-                    ELSE NULL
-                END AS days_since_last_signup
-            FROM
-                player_stats ps
-            LEFT JOIN
-                SignupCounts sc ON ps.user_id = sc.user_id
-            WHERE
-                ps.is_active = TRUE
-            ORDER BY
-                ps.display_name;
+            SELECT * FROM events
+            WHERE is_recurring = TRUE 
+              AND is_deleted = FALSE
+              AND (end_time + INTERVAL '1 hour') <= (NOW() AT TIME ZONE 'utc');
         """
         async with self.pool.acquire() as connection:
             records = await connection.fetch(query)
-
-            # --- START: NEW MANUAL PARSING LOGIC ---
-            processed_records = []
-            for record in records:
-                # Create a mutable copy of the immutable database record
-                processed_record = dict(record)
-                
-                # Check if role_affinities exists and is a string
-                if 'role_affinities' in processed_record and isinstance(processed_record['role_affinities'], str):
-                    try:
-                        # Manually parse the JSON string into a dictionary
-                        processed_record['role_affinities'] = json.loads(processed_record['role_affinities'])
-                    except json.JSONDecodeError:
-                        # If the string is not valid JSON, default to an empty dictionary
-                        processed_record['role_affinities'] = {}
-                
-                processed_records.append(processed_record)
-                
-            return processed_records
-            # --- END: NEW MANUAL PARSING LOGIC ---
-
-    async def update_member_active_status(self, user_ids: List[int], is_active: bool):
-        """
-        Performs a targeted update to set the is_active flag for a specific list of user IDs.
-        """
-        if not user_ids:
-            return
-        
-        query = "UPDATE player_stats SET is_active = $1 WHERE user_id = ANY($2::bigint[]);"
+            return [dict(record) for record in records]
+            
+    async def get_latest_child_event(self, parent_event_id: int) -> Optional[Dict]:
+        query = "SELECT * FROM events WHERE parent_event_id = $1 ORDER BY event_time DESC LIMIT 1;"
         async with self.pool.acquire() as connection:
-            await connection.execute(query, is_active, user_ids)
+            record = await connection.fetchrow(query, parent_event_id)
+            return dict(record) if record else None
 
-    async def update_player_rating(self, user_id: int, rating: int):
-        query = "UPDATE player_stats SET rating = $1 WHERE user_id = $2;"
+    async def get_finished_events_for_cleanup(self) -> List[Dict]:
+        query = "SELECT * FROM events WHERE end_time < (NOW() AT TIME ZONE 'utc') - INTERVAL '2 hours' AND is_recurring = FALSE AND is_deleted = FALSE;"
         async with self.pool.acquire() as connection:
-            await connection.execute(query, rating, user_id)
+            records = await connection.fetch(query)
+            return [dict(record) for record in records]
 
-    async def update_player_affinities(self, finalized_squads: List[Dict]):
-        async with self.pool.acquire() as conn:
-            async with conn.transaction():
-                for squad in finalized_squads:
-                    squad_type = squad['squad_type']
-                    for member in squad['members']:
-                        user_id = int(member['user_id'])
-                        role_name = member['assigned_role_name']
-
-                        current_affinities_raw = await conn.fetchval(
-                            "SELECT role_affinities FROM player_stats WHERE user_id = $1", user_id
-                        )
-                        current_affinities = json.loads(current_affinities_raw or '{}')
-
-                        squad_counts = defaultdict(int, current_affinities.get('squad_types', {}))
-                        role_counts = defaultdict(int, current_affinities.get('roles', {}))
-
-                        squad_counts[squad_type] += 1
-                        role_counts[role_name] += 1
-
-                        new_affinities = {
-                            'squad_types': squad_counts,
-                            'roles': role_counts
-                        }
-
-                        await conn.execute(
-                            "UPDATE player_stats SET role_affinities = $1 WHERE user_id = $2",
-                            json.dumps(new_affinities), user_id
-                        )
-    
-    async def create_squad_template(self, guild_id: int, template_name: str, definitions: List[Any]) -> int:
-        async with self.pool.acquire() as conn:
-            async with conn.transaction():
-                template_id = await conn.fetchval(
-                    "INSERT INTO squad_templates (guild_id, template_name) VALUES ($1, $2) RETURNING template_id",
-                    guild_id, template_name
-                )
-                for defi in definitions:
-                    await conn.execute(
-                        """
-                        INSERT INTO squad_template_definitions
-                        (template_id, squad_name, default_count, squad_type, naming_convention, source_rsvp_pool)
-                        VALUES ($1, $2, $3, $4, $5, $6)
-                        """,
-                        template_id, 
-                        defi.squad_name,         # Changed to dot notation
-                        defi.default_count,      # Changed to dot notation
-                        defi.squad_type,         # Changed to dot notation
-                        defi.naming_convention,  # Changed to dot notation
-                        defi.source_rsvp_pool    # Changed to dot notation
-                    )
-                return template_id
-
-    async def update_squad_template(self, template_id: int, template_name: str, definitions: List[Dict]):
-        async with self.pool.acquire() as conn:
-            async with conn.transaction():
-                await conn.execute(
-                    "UPDATE squad_templates SET template_name = $1 WHERE template_id = $2",
-                    template_name, template_id
-                )
-                await conn.execute("DELETE FROM squad_template_definitions WHERE template_id = $1", template_id)
-                for defi in definitions:
-                    await conn.execute(
-                        """
-                        INSERT INTO squad_template_definitions
-                        (template_id, squad_name, default_count, squad_type, naming_convention, source_rsvp_pool)
-                        VALUES ($1, $2, $3, $4, $5, $6)
-                        """,
-                        template_id,
-                        defi.squad_name,         # Changed to dot notation
-                        defi.default_count,      # Changed to dot notation
-                        defi.squad_type,         # Changed to dot notation
-                        defi.naming_convention,  # Changed to dot notation
-                        defi.source_rsvp_pool    # Changed to dot notation
-                    )
-
-    async def get_squad_template_by_id(self, template_id: int) -> Optional[Dict]:
-        async with self.pool.acquire() as conn:
-            template_row = await conn.fetchrow("SELECT * FROM squad_templates WHERE template_id = $1", template_id)
-            if not template_row:
-                return None
-            definitions = await conn.fetch(
-                "SELECT * FROM squad_template_definitions WHERE template_id = $1 ORDER BY definition_id", template_id
-            )
-            template = dict(template_row)
-            template['definitions'] = [dict(d) for d in definitions]
-            return template
-
-    async def get_all_squad_templates(self) -> List[Dict]:
-        async with self.pool.acquire() as conn:
-            templates = await conn.fetch("SELECT * FROM squad_templates ORDER BY template_name")
-            result = []
-            for t in templates:
-                template_with_defs = await self.get_squad_template_by_id(t['template_id'])
-                if template_with_defs:
-                    result.append(template_with_defs)
-            return result
-
-    async def delete_squad_template(self, template_id: int):
-        async with self.pool.acquire() as conn:
-            await conn.execute("DELETE FROM squad_templates WHERE template_id = $1", template_id)
-
-    async def get_squad_members(self, squad_id: int) -> List[Dict]:
-        """Gets all members of a specific squad."""
-        query = "SELECT * FROM squad_members WHERE squad_id = $1;"
-        async with self.pool.acquire() as connection:
-            return [dict(row) for row in await connection.fetch(query, squad_id)]
-
-    async def get_reserves_squad(self, event_id: int) -> Optional[Dict]:
-        """Gets the reserves squad for a given event."""
-        query = "SELECT * FROM squads WHERE event_id = $1 AND name = 'Reserves' LIMIT 1;"
-        async with self.pool.acquire() as connection:
-            row = await connection.fetchrow(query, event_id)
-            return dict(row) if row else None
-
-    async def delete_squad(self, squad_id: int):
-        """Permanently deletes a squad by its ID."""
-        query = "DELETE FROM squads WHERE squad_id = $1;"
-        async with self.pool.acquire() as connection:
-            await connection.execute(query, squad_id)
-
-    async def promote_tentative_player(self, event_id: int, user_id: int, role_name: Optional[str], subclass_name: Optional[str]):
-        async with self.pool.acquire() as connection:
-            async with connection.transaction():
-                await self.set_rsvp(event_id, user_id, RsvpStatus.ACCEPTED)
-                await self.update_signup_role(event_id, user_id, role_name, subclass_name)
-
-    async def get_user_by_username(self, username: str) -> Optional[Dict]:
-        async with self.pool.acquire() as conn:
-            row = await conn.fetchrow("SELECT * FROM users WHERE username = $1", username)
-            return dict(row) if row else None
-
-    async def get_user_by_id(self, user_id: int) -> Optional[Dict]:
-        async with self.pool.acquire() as conn:
-            row = await conn.fetchrow("SELECT * FROM users WHERE id = $1", user_id)
-            return dict(row) if row else None
-
-    async def get_all_users(self) -> List[Dict]:
-        async with self.pool.acquire() as conn:
-            rows = await conn.fetch("SELECT * FROM users ORDER BY username;")
-            return [dict(row) for row in rows]
-
-    async def create_user(self, username: str, hashed_password: str, is_admin: bool = False) -> int:
-        async with self.pool.acquire() as conn:
-            return await conn.fetchval(
-                "INSERT INTO users (username, hashed_password, is_admin) VALUES ($1, $2, $3) RETURNING id",
-                username, hashed_password, is_admin
-            )
-
-    async def update_user_password(self, user_id: int, new_hashed_password: str):
-        async with self.pool.acquire() as conn:
-            await conn.execute("UPDATE users SET hashed_password = $1 WHERE id = $2", new_hashed_password, user_id)
-
-    async def update_user_status(self, user_id: int, is_active: Optional[bool], is_admin: Optional[bool]):
-        query_parts, params = [], []
-        if is_active is not None: params.append(is_active); query_parts.append(f"is_active = ${len(params)}")
-        if is_admin is not None: params.append(is_admin); query_parts.append(f"is_admin = ${len(params)}")
-        if not query_parts: return
-        params.append(user_id)
-        query = f"UPDATE users SET {', '.join(query_parts)} WHERE id = ${len(params)}"
-        async with self.pool.acquire() as conn: await conn.execute(query, *params)
-
-    async def delete_user(self, user_id: int):
-        async with self.pool.acquire() as conn: await conn.execute("DELETE FROM users WHERE id = $1", user_id)
-
-    async def create_event(self, guild_id: int, channel_id: int, creator_id: int, data: Dict) -> int:
+    async def get_past_events_with_tentatives(self) -> List[Dict]:
         query = """
-            INSERT INTO events (guild_id, channel_id, creator_id, title, description, event_time, end_time, timezone, is_recurring, recurrence_rule, mention_role_ids, restrict_to_role_ids, recreation_hours, parent_event_id)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING event_id;
+            SELECT s.*
+            FROM signups s
+            JOIN events e ON s.event_id = e.event_id
+            WHERE e.end_time < (NOW() AT TIME ZONE 'utc')
+              AND s.rsvp_status = $1;
         """
         async with self.pool.acquire() as connection:
-            return await connection.fetchval(
-                query, guild_id, channel_id, creator_id,
-                data.get('title'),
-                data.get('description'),
-                data.get('event_time'),
-                data.get('end_time'),
-                data.get('timezone'),
-                data.get('is_recurring'),
-                data.get('recurrence_rule'),
-                data.get('mention_role_ids', []),
-                data.get('restrict_to_role_ids', []),
-                data.get('recreation_hours'),
-                data.get('parent_event_id')
-            )
+            records = await connection.fetch(query, RsvpStatus.TENTATIVE)
+            return [dict(record) for record in records]
 
-    async def update_event(self, event_id: int, data: Dict):
+    async def get_events_for_purging(self) -> List[Dict]:
+        query = "SELECT * FROM events WHERE is_deleted = TRUE AND deleted_at < (NOW() AT TIME ZONE 'utc') - INTERVAL '7 days';"
+        async with self.pool.acquire() as connection:
+            records = await connection.fetch(query)
+            return [dict(record) for record in records]
+
+    async def get_recurring_parent_events(self) -> List[Dict]:
+        query = "SELECT * FROM events WHERE is_recurring = TRUE AND is_deleted = FALSE ORDER BY event_time ASC;"
+        async with self.pool.acquire() as connection:
+            return [dict(record) for record in await connection.fetch(query)]
+
+    async def get_deleted_events(self) -> List[Dict]:
+        query = "SELECT * FROM events WHERE is_deleted = TRUE ORDER BY deleted_at DESC LIMIT 50;"
+        async with self.pool.acquire() as connection:
+            return [dict(record) for record in await connection.fetch(query)]
+            
+    async def get_events_for_embed_update(self) -> List[Dict]:
+        query = "SELECT * FROM events WHERE update_embed = TRUE AND is_deleted = FALSE;"
+        async with self.pool.acquire() as connection:
+            records = await connection.fetch(query)
+            return [dict(record) for record in records]
+
+    async def flag_event_for_embed_update(self, event_id: int):
+        query = "UPDATE events SET update_embed = TRUE WHERE event_id = $1;"
+        async with self.pool.acquire() as connection:
+            await connection.execute(query, event_id)
+
+    async def clear_embed_update_flag(self, event_id: int):
+        query = "UPDATE events SET update_embed = FALSE WHERE event_id = $1;"
+        async with self.pool.acquire() as connection:
+            await connection.execute(query, event_id)
+
+    async def update_event_message_id(self, event_id: int, message_id: int):
+        query = "UPDATE events SET message_id = $1 WHERE event_id = $2;"
+        async with self.pool.acquire() as connection:
+            await connection.execute(query, message_id, event_id)
+
+    async def mark_thread_created(self, event_id: int, thread_id: int):
+        query = "UPDATE events SET thread_created = TRUE, thread_id = $1 WHERE event_id = $2;"
+        async with self.pool.acquire() as connection:
+            await connection.execute(query, thread_id, event_id)
+
+    async def soft_delete_event(self, event_id: int):
+        query = "UPDATE events SET is_deleted = TRUE, deleted_at = (NOW() AT TIME ZONE 'utc') WHERE event_id = $1;"
+        async with self.pool.acquire() as connection:
+            await connection.execute(query, event_id)
+            
+    async def delete_event(self, event_id: int):
+        query = "DELETE FROM events WHERE event_id = $1;"
+        async with self.pool.acquire() as connection:
+            await connection.execute(query, event_id)
+            
+    async def update_event(self, event_id: int, event_data: dict):
         query = """
             UPDATE events SET
-                title = $1, description = $2, event_time = $3, end_time = $4, timezone = $5,
-                is_recurring = $6, recurrence_rule = $7, mention_role_ids = $8,
-                restrict_to_role_ids = $9, recreation_hours = $10
+                title = $1, description = $2, event_time = $3, end_time = $4,
+                timezone = $5, is_recurring = $6, recurrence_rule = $7,
+                recreation_hours = $8, mention_role_ids = $9, restrict_to_role_ids = $10,
+                is_deleted = FALSE, deleted_at = NULL
             WHERE event_id = $11;
         """
         async with self.pool.acquire() as connection:
             await connection.execute(
-                query, data.get('title'), data.get('description'),
-                data.get('event_time'), data.get('end_time'), data.get('timezone'),
-                data.get('is_recurring'), data.get('recurrence_rule'),
-                data.get('mention_role_ids', []),
-                data.get('restrict_to_role_ids', []),
-                data.get('recreation_hours'), event_id
+                query,
+                event_data['title'], event_data['description'], event_data['event_time'],
+                event_data['end_time'], event_data['timezone'], event_data['is_recurring'],
+                event_data.get('recurrence_rule'), event_data.get('recreation_hours'),
+                event_data.get('mention_role_ids', []), event_data.get('restrict_to_role_ids', []),
+                event_id
             )
-
-    async def update_event_message_id(self, event_id: int, message_id: int):
+            
+    # --- Signup Management ---
+    async def get_signup(self, event_id: int, user_id: int) -> Optional[Dict]:
+        query = "SELECT * FROM signups WHERE event_id = $1 AND user_id = $2;"
         async with self.pool.acquire() as connection:
-            await connection.execute("UPDATE events SET message_id = $1 WHERE event_id = $2;", message_id, event_id)
+            record = await connection.fetchrow(query, event_id, user_id)
+            return dict(record) if record else None
 
-    async def get_event_by_message_id(self, message_id: int) -> Optional[Dict]:
-        async with self.pool.acquire() as conn:
-            row = await conn.fetchrow("SELECT * FROM events WHERE message_id = $1;", message_id)
-            return dict(row) if row else None
+    async def get_signups_for_event(self, event_id: int) -> List[Dict]:
+        query = "SELECT * FROM signups WHERE event_id = $1;"
+        async with self.pool.acquire() as connection:
+            records = await connection.fetch(query, event_id)
+            return [dict(record) for record in records]
+            
+    async def get_signups_for_roster_page(self, event_id: int) -> List[Dict]:
+        query = """
+            SELECT 
+                s.user_id::text, 
+                COALESCE(ps.display_name, s.user_id::text) AS display_name,
+                s.role_name, 
+                s.subclass_name, 
+                s.rsvp_status,
+                ps.rating,
+                ps.role_affinities
+            FROM signups s
+            LEFT JOIN player_stats ps ON s.user_id = ps.user_id
+            WHERE s.event_id = $1
+            ORDER BY
+                CASE s.rsvp_status
+                    WHEN 'Accepted' THEN 1
+                    WHEN 'Tentative' THEN 2
+                    WHEN 'Declined' THEN 3
+                    ELSE 4
+                END,
+                ps.display_name;
+        """
+        async with self.pool.acquire() as connection:
+            records = await connection.fetch(query, event_id)
+            return [dict(record) for record in records]
+
+    async def get_signup_counts(self, event_id: int) -> Dict[str, int]:
+        query = "SELECT rsvp_status, COUNT(*) FROM signups WHERE event_id = $1 GROUP BY rsvp_status;"
+        async with self.pool.acquire() as connection:
+            records = await connection.fetch(query, event_id)
+            return {r['rsvp_status']: r['count'] for r in records}
+            
+    async def get_all_roles_and_subclasses(self) -> Dict[str, List[str]]:
+        return {"roles": ROLES, "subclasses": SUBCLASSES}
 
     async def set_rsvp(self, event_id: int, user_id: int, new_status: str):
         async with self.pool.acquire() as connection:
             async with connection.transaction():
                 event_and_signup_data = await connection.fetchrow(
                     """
-                    SELECT e.title, e.event_time, s.rsvp_status, s.role_name, s.subclass_name
+                    SELECT e.title, e.event_time, e.end_time, s.rsvp_status, s.role_name, s.subclass_name
                     FROM events e
                     LEFT JOIN signups s ON e.event_id = s.event_id AND s.user_id = $2
-                    WHERE e.event_id = $1
+                    WHERE e.event_id = $1;
                     """,
                     event_id, user_id
                 )
-
+                
                 if not event_and_signup_data:
-                    return
+                    return # Event doesn't exist
 
                 old_status = event_and_signup_data['rsvp_status']
 
                 if old_status == new_status:
-                    return
-
-                if new_status != RsvpStatus.ACCEPTED:
-                    await self.remove_user_from_all_squads(event_id, user_id)
-                    await self.update_signup_role(event_id, user_id, None, None)
+                    return # No change
 
                 await connection.execute(
                     """
-                    INSERT INTO signups (event_id, user_id, rsvp_status) VALUES ($1, $2, $3)
-                    ON CONFLICT (event_id, user_id) DO UPDATE SET rsvp_status = EXCLUDED.rsvp_status;
+                    INSERT INTO signups (event_id, user_id, rsvp_status, timestamp)
+                    VALUES ($1, $2, $3, (NOW() AT TIME ZONE 'utc'))
+                    ON CONFLICT (event_id, user_id) DO UPDATE SET
+                        rsvp_status = $3,
+                        timestamp = (NOW() AT TIME ZONE 'utc');
                     """,
                     event_id, user_id, new_status
                 )
@@ -828,8 +556,9 @@ class Database:
                 await self.update_player_stats(user_id, old_status, new_status)
 
                 is_log_worthy = old_status is not None and (
-                    (old_status == RsvpStatus.ACCEPTED and new_status in [RsvpStatus.TENTATIVE, RsvpStatus.DECLINED]) or
-                    (old_status in [RsvpStatus.TENTATIVE, RsvpStatus.DECLINED] and new_status == RsvpStatus.ACCEPTED)
+                    old_status != new_status or
+                    new_status == RsvpStatus.ACCEPTED or
+                    new_status == RsvpStatus.DECLINED
                 )
 
                 if is_log_worthy:
@@ -840,89 +569,214 @@ class Database:
                         new_status=new_status
                     )
 
-                if new_status == RsvpStatus.ACCEPTED:
-                    await connection.execute(
-                        """
-                        INSERT INTO player_event_history (user_id, event_id, event_title, event_time, role_name, subclass_name)
-                        VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (user_id, event_id) DO NOTHING;
-                        """,
-                        user_id,
-                        event_id,
-                        event_and_signup_data['title'],
-                        event_and_signup_data['event_time'],
-                        event_and_signup_data['role_name'],
-                        event_and_signup_data['subclass_name']
-                    )
-                elif old_status == RsvpStatus.ACCEPTED:
-                    await connection.execute(
-                        "DELETE FROM player_event_history WHERE user_id = $1 AND event_id = $2;",
-                        user_id, event_id
-                    )
+                # --- START: MODIFICATION - Overhaul event history snapshot logic ---
+                # We only snapshot the RSVP status if the event has not started yet.
+                # This fulfills Requirement #4.
+                if event_and_signup_data['event_time'] > datetime.datetime.now(datetime.timezone.utc):
+                    if new_status in [RsvpStatus.ACCEPTED, RsvpStatus.TENTATIVE, RsvpStatus.DECLINED]:
+                        # Insert or update the player's RSVP status for this event
+                        await connection.execute(
+                            """
+                            INSERT INTO player_event_history (user_id, event_id, event_title, event_time, end_time, role_name, subclass_name, rsvp_status)
+                            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                            ON CONFLICT (user_id, event_id) DO UPDATE SET
+                                rsvp_status = EXCLUDED.rsvp_status,
+                                role_name = EXCLUDED.role_name,
+                                subclass_name = EXCLUDED.subclass_name,
+                                event_title = EXCLUDED.event_title,
+                                event_time = EXCLUDED.event_time,
+                                end_time = EXCLUDED.end_time;
+                            """,
+                            user_id,
+                            event_id,
+                            event_and_signup_data['title'],
+                            event_and_signup_data['event_time'],
+                            event_and_signup_data['end_time'],
+                            event_and_signup_data['role_name'],
+                            event_and_signup_data['subclass_name'],
+                            new_status
+                        )
+                    elif old_status in [RsvpStatus.ACCEPTED, RsvpStatus.TENTATIVE, RsvpStatus.DECLINED]:
+                        # If they are un-RSVP'ing (e.g. going from Accepted to nothing), remove their history entry
+                        await connection.execute(
+                            "DELETE FROM player_event_history WHERE user_id = $1 AND event_id = $2;",
+                            user_id, event_id
+                        )
+                # --- END: MODIFICATION ---
 
                 await self.flag_event_for_embed_update(event_id)
 
     async def get_upcoming_events(self) -> List[Dict]:
-        query = "SELECT * FROM events WHERE deleted_at IS NULL AND (is_recurring = FALSE OR parent_event_id IS NOT NULL) AND COALESCE(end_time, event_time + INTERVAL '2 hours') > (NOW() AT TIME ZONE 'utc' - INTERVAL '12 hours');"
+        query = "SELECT * FROM events WHERE end_time > (NOW() AT TIME ZONE 'utc') AND is_deleted = FALSE ORDER BY event_time ASC;"
         async with self.pool.acquire() as connection:
-            return [dict(row) for row in await connection.fetch(query)]
+            records = await connection.fetch(query)
+            return [dict(record) for record in records]
 
-    async def get_signups_for_event(self, event_id: int) -> List[Dict]:
-        query = "SELECT * FROM signups WHERE event_id = $1 ORDER BY role_name, subclass_name;"
-        async with self.pool.acquire() as conn:
-            return [dict(row) for row in await conn.fetch(query, event_id)]
-
-    async def get_signup(self, event_id: int, user_id: int) -> Optional[Dict]:
-        async with self.pool.acquire() as conn:
-            row = await conn.fetchrow("SELECT * FROM signups WHERE event_id = $1 AND user_id = $2", event_id, user_id)
-            return dict(row) if row else None
-
-    async def get_event_by_id(self, event_id: int, include_deleted: bool = False) -> Optional[Dict]:
-        query = "SELECT * FROM events WHERE event_id = $1"
-        if not include_deleted:
-            query += " AND deleted_at IS NULL"
-        query += ";"
-
-        async with self.pool.acquire() as conn:
-            row = await conn.fetchrow(query, event_id)
-            return dict(row) if row else None
-
-    async def update_signup_role(self, event_id: int, user_id: int, role_name: Optional[str], subclass_name: Optional[str]):
+    async def update_signup_role(self, event_id: int, user_id: int, role: str, subclass: Optional[str]):
+        query = """
+            UPDATE signups
+            SET role_name = $1, subclass_name = $2
+            WHERE event_id = $3 AND user_id = $4;
+        """
         async with self.pool.acquire() as connection:
-            async with connection.transaction():
-                await connection.execute(
-                    "UPDATE signups SET role_name = $1, subclass_name = $2 WHERE event_id = $3 AND user_id = $4;",
-                    role_name, subclass_name, event_id, user_id
-                )
+            await connection.execute(query, role, subclass, event_id, user_id)
+            # --- START: MODIFICATION - Update history snapshot ---
+            # Also update the history table if the event hasn't started
+            event_time = await connection.fetchval("SELECT event_time FROM events WHERE event_id = $1", event_id)
+            if event_time and event_time > datetime.datetime.now(datetime.timezone.utc):
                 await connection.execute(
                     """
                     UPDATE player_event_history
                     SET role_name = $1, subclass_name = $2
-                    WHERE user_id = $3 AND event_id = $4;
+                    WHERE event_id = $3 AND user_id = $4;
                     """,
-                    role_name, subclass_name, user_id, event_id
+                    role, subclass, event_id, user_id
                 )
+            # --- END: MODIFICATION ---
+            await self.flag_event_for_embed_update(event_id)
 
-    async def get_recurring_parent_events(self) -> List[Dict]:
-        query = "SELECT * FROM events WHERE is_recurring = TRUE AND parent_event_id IS NULL AND deleted_at IS NULL ORDER BY event_time DESC;"
+    async def promote_tentative_player(self, event_id: int, user_id: int, role: str, subclass: Optional[str]):
         async with self.pool.acquire() as connection:
-            return [dict(row) for row in await connection.fetch(query)]
+            async with connection.transaction():
+                signup = await self.get_signup(event_id, user_id)
+                if not signup: return
 
-    async def get_deleted_events(self) -> List[Dict]:
-        query = "SELECT * FROM events WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC;"
-        async with self.pool.acquire() as connection:
-            return [dict(row) for row in await connection.fetch(query)]
+                old_status = signup['rsvp_status']
+                if old_status == RsvpStatus.TENTATIVE:
+                    await self.set_rsvp(event_id, user_id, RsvpStatus.ACCEPTED)
+                    await self.update_signup_role(event_id, user_id, role, subclass)
 
-    async def get_latest_child_event(self, parent_event_id: int) -> Optional[Dict]:
-        query = "SELECT * FROM events WHERE parent_event_id = $1 AND deleted_at IS NULL ORDER BY event_time DESC LIMIT 1;"
+    async def remove_user_from_all_upcoming_signups(self, user_id: int):
         async with self.pool.acquire() as connection:
-            row = await connection.fetchrow(query, parent_event_id)
-            return dict(row) if row else None
+            async with connection.transaction():
+                # Get all upcoming events the user is signed up for
+                upcoming_signups = await connection.fetch(
+                    """
+                    SELECT s.event_id
+                    FROM signups s
+                    JOIN events e ON s.event_id = e.event_id
+                    WHERE s.user_id = $1 AND e.end_time > (NOW() AT TIME ZONE 'utc')
+                    """,
+                    user_id
+                )
+                
+                # Delete the signups
+                await connection.execute(
+                    """
+                    DELETE FROM signups s
+                    USING events e
+                    WHERE s.event_id = e.event_id
+                      AND s.user_id = $1 AND e.end_time > (NOW() AT TIME ZONE 'utc');
+                    """,
+                    user_id
+                )
+                
+                # Flag all affected events for an embed update
+                for signup in upcoming_signups:
+                    await self.flag_event_for_embed_update(signup['event_id'])
+                    
+    async def get_all_rsvpd_user_ids_for_event(self, event_id: int) -> List[int]:
+        query = "SELECT user_id FROM signups WHERE event_id = $1;"
+        async with self.pool.acquire() as connection:
+            records = await connection.fetch(query, event_id)
+            return [r['user_id'] for r in records]
+
+    # --- User Management ---
+    async def get_user_by_username(self, username: str) -> Optional[Dict]:
+        query = "SELECT * FROM users WHERE username = $1;"
+        async with self.pool.acquire() as connection:
+            record = await connection.fetchrow(query, username)
+            return dict(record) if record else None
+
+    async def get_user_by_id(self, user_id: int) -> Optional[Dict]:
+        query = "SELECT * FROM users WHERE id = $1;"
+        async with self.pool.acquire() as connection:
+            record = await connection.fetchrow(query, user_id)
+            return dict(record) if record else None
+            
+    async def get_all_users(self) -> List[Dict]:
+        query = "SELECT id, username, is_active, is_admin FROM users ORDER BY username;"
+        async with self.pool.acquire() as connection:
+            records = await connection.fetch(query)
+            return [dict(record) for record in records]
+
+    async def create_user(self, username: str, hashed_password: str, is_admin: bool = False) -> int:
+        query = "INSERT INTO users (username, hashed_password, is_admin) VALUES ($1, $2, $3) RETURNING id;"
+        async with self.pool.acquire() as connection:
+            user_id = await connection.fetchval(query, username, hashed_password, is_admin)
+            return user_id
+
+    async def update_user_password(self, user_id: int, new_hashed_password: str):
+        query = "UPDATE users SET hashed_password = $1 WHERE id = $2;"
+        async with self.pool.acquire() as connection:
+            await connection.execute(query, new_hashed_password, user_id)
+
+    async def update_user_status(self, user_id: int, is_active: Optional[bool], is_admin: Optional[bool]):
+        updates = []
+        params = [user_id]
+        
+        if is_active is not None:
+            params.append(is_active)
+            updates.append(f"is_active = ${len(params)}")
+        if is_admin is not None:
+            params.append(is_admin)
+            updates.append(f"is_admin = ${len(params)}")
+            
+        if not updates: return
+        
+        query = f"UPDATE users SET {', '.join(updates)} WHERE id = $1;"
+        async with self.pool.acquire() as connection:
+            await connection.execute(query, *params)
+            
+    async def delete_user(self, user_id: int):
+        query = "DELETE FROM users WHERE id = $1;"
+        async with self.pool.acquire() as connection:
+            await connection.execute(query, user_id)
+
+    # --- Player Stats & History ---
+    async def get_engagement_stats(self) -> List[Dict]:
+        """
+        Calculates engagement stats by aggregating raw signup data and joining it
+        to the full list of active players.
+        """
+        # --- START: MODIFICATION - Read directly from player_stats ---
+        # This query no longer calculates from the 'signups' table.
+        # It reads the persistent running totals directly from 'player_stats'.
+        query = """
+            SELECT
+                ps.user_id::text AS user_id,
+                ps.display_name,
+                ps.rating,
+                ps.is_active,
+                ps.last_signup_date,
+                ps.role_affinities,
+                ps.game_player_id,
+                COALESCE(ps.accepted_count, 0) AS accepted_count,
+                COALESCE(ps.tentative_count, 0) AS tentative_count,
+                COALESCE(ps.declined_count, 0) AS declined_count,
+                CASE
+                    WHEN ps.last_signup_date IS NOT NULL
+                    THEN EXTRACT(DAY FROM (NOW() AT TIME ZONE 'utc' - ps.last_signup_date))
+                    ELSE NULL
+                END AS days_since_last_signup
+            FROM
+                player_stats ps
+            WHERE
+                ps.is_active = TRUE
+            ORDER BY
+                ps.display_name;
+        """
+        # --- END: MODIFICATION ---
+        async with self.pool.acquire() as connection:
+            records = await connection.fetch(query)
+            return [dict(record) for record in records]
 
     async def update_player_stats(self, user_id: int, old_status: Optional[str], new_status: str):
         accepted_delta = 0
         tentative_delta = 0
         declined_delta = 0
 
+        # Calculate deltas for counters
         if new_status == RsvpStatus.ACCEPTED: accepted_delta += 1
         elif new_status == RsvpStatus.TENTATIVE: tentative_delta += 1
         elif new_status == RsvpStatus.DECLINED: declined_delta += 1
@@ -932,22 +786,20 @@ class Database:
         elif old_status == RsvpStatus.DECLINED: declined_delta -= 1
 
         last_signup_date_val = None
-        if new_status == RsvpStatus.ACCEPTED:
+        # --- START: MODIFICATION - Update last_signup_date for any valid RSVP ---
+        if new_status in [RsvpStatus.ACCEPTED, RsvpStatus.TENTATIVE, RsvpStatus.DECLINED]:
             last_signup_date_val = datetime.datetime.now(datetime.timezone.utc)
+        # --- END: MODIFICATION ---
 
         query = """
             INSERT INTO player_stats (user_id, accepted_count, tentative_count, declined_count, last_signup_date)
             VALUES ($1, $2, $3, $4, $5)
             ON CONFLICT (user_id) DO UPDATE SET
-                accepted_count = GREATEST(0, player_stats.accepted_count + EXCLUDED.accepted_count),
-                tentative_count = GREATEST(0, player_stats.tentative_count + EXCLUDED.tentative_count),
-                declined_count = GREATEST(0, player_stats.declined_count + EXCLUDED.declined_count),
-                last_signup_date = CASE
-                                    WHEN EXCLUDED.last_signup_date IS NOT NULL THEN EXCLUDED.last_signup_date
-                                    ELSE player_stats.last_signup_date
-                                   END;
+                accepted_count = player_stats.accepted_count + $2,
+                tentative_count = player_stats.tentative_count + $3,
+                declined_count = player_stats.declined_count + $4,
+                last_signup_date = COALESCE($5, player_stats.last_signup_date);
         """
-
         async with self.pool.acquire() as connection:
             await connection.execute(
                 query,
@@ -958,251 +810,444 @@ class Database:
                 last_signup_date_val
             )
 
-    async def get_accepted_events_for_user(self, user_id: int) -> List[Dict]:
+    # --- START: MODIFICATION - Rename function and update query ---
+    async def get_event_history_for_user(self, user_id: int) -> List[Dict]:
+        """
+        Retrieves all event history for a specific player from the persistent snapshot table.
+        """
         query = """
-            SELECT event_title, event_time, role_name, subclass_name
+            SELECT event_title, event_time, end_time, rsvp_status, role_name, subclass_name
             FROM player_event_history
             WHERE user_id = $1 ORDER BY event_time DESC;
         """
         async with self.pool.acquire() as connection:
             return [dict(row) for row in await connection.fetch(query, user_id)]
+    # --- END: MODIFICATION ---
 
-    async def get_all_rsvpd_user_ids_for_event(self, event_id: int) -> List[int]:
-        query = "SELECT user_id FROM signups WHERE event_id = $1;"
+    async def get_all_players_for_admin_panel(self) -> List[Dict]:
+        """Gets a simple list of all players, active or inactive."""
+        query = "SELECT user_id, display_name, rating, is_active, game_player_id FROM player_stats ORDER BY display_name;"
         async with self.pool.acquire() as connection:
-            records = await connection.fetch(query, event_id)
-            return [record['user_id'] for record in records]
+            return [dict(row) for row in await connection.fetch(query)]
 
-    async def create_reminder_job(self, job_id: uuid.UUID, user_ids: List[int]) -> None:
-        query = "INSERT INTO reminder_jobs (job_id, user_ids) VALUES ($1, $2);"
+    async def add_or_update_server_member(self, user_id: int):
+        query = """
+            INSERT INTO player_stats (user_id, is_active)
+            VALUES ($1, TRUE)
+            ON CONFLICT (user_id) DO UPDATE SET
+                is_active = TRUE;
+        """
         async with self.pool.acquire() as connection:
-            await connection.execute(query, job_id, user_ids)
-
-    async def get_reminder_job(self, job_id: uuid.UUID) -> Optional[List[int]]:
-        query = "SELECT user_ids FROM reminder_jobs WHERE job_id = $1;"
+            await connection.execute(query, user_id)
+            
+    async def deactivate_server_member(self, user_id: int):
+        query = "UPDATE player_stats SET is_active = FALSE WHERE user_id = $1;"
         async with self.pool.acquire() as connection:
-            record = await connection.fetchrow(query, job_id)
-            return record['user_ids'] if record else None
-
-    async def delete_reminder_job(self, job_id: uuid.UUID) -> None:
-        query = "DELETE FROM reminder_jobs WHERE job_id = $1;"
+            await connection.execute(query, user_id)
+            
+    async def sync_all_server_members(self, member_ids: List[int]):
+        query = """
+            INSERT INTO player_stats (user_id)
+            SELECT unnest($1::bigint[])
+            ON CONFLICT (user_id) DO NOTHING;
+        """
         async with self.pool.acquire() as connection:
-            await connection.execute(query, job_id)
+            await connection.execute(query, member_ids)
 
-    async def force_unlock_all_events(self):
-        query = "UPDATE events SET locked_by_user_id = NULL, locked_at = NULL WHERE locked_by_user_id IS NOT NULL;"
+    async def update_member_active_status(self, user_ids: List[int], is_active: bool):
+        query = "UPDATE player_stats SET is_active = $1 WHERE user_id = ANY($2);"
         async with self.pool.acquire() as connection:
-            await connection.execute(query)
-
-    async def get_all_roles_and_subclasses(self) -> Dict:
-        return {"roles": ROLES, "subclasses": SUBCLASSES}
-
-    async def create_squad(self, event_id: int, name: str, squad_type: str) -> int:
+            await connection.execute(query, is_active, user_ids)
+            
+    async def cache_player_display_names(self, member_data: List[Dict]):
+        """
+        Updates the display_name for multiple players at once using
+        an INSERT... ON CONFLICT batch operation.
+        """
+        query = """
+            INSERT INTO player_stats (user_id, display_name)
+            SELECT (d->>'id')::bigint, d->>'name'
+            FROM unnest($1::jsonb[]) AS t(d)
+            ON CONFLICT (user_id) DO UPDATE SET
+                display_name = EXCLUDED.display_name;
+        """
         async with self.pool.acquire() as connection:
-            return await connection.fetchval("INSERT INTO squads (event_id, name, squad_type) VALUES ($1, $2, $3) RETURNING squad_id;", event_id, name, squad_type)
+            # We must use the registered JSONB codec for this to work
+            await connection.execute(query, [member_data], types=[self._jsonb_codec])
 
-    async def add_squad_member(self, squad_id: int, user_id: int, assigned_role: str):
+    async def update_player_rating(self, user_id: int, rating: int):
+        query = "UPDATE player_stats SET rating = $1 WHERE user_id = $2;"
         async with self.pool.acquire() as connection:
-            await connection.execute("INSERT INTO squad_members (squad_id, user_id, assigned_role_name) VALUES ($1, $2, $3) ON CONFLICT (squad_id, user_id) DO UPDATE SET assigned_role_name = EXCLUDED.assigned_role_name;", squad_id, user_id, assigned_role)
+            await connection.execute(query, rating, user_id)
 
-    async def update_squad_member_role(self, squad_member_id: int, new_role: str):
-        async with self.pool.acquire() as conn:
-            await conn.execute("UPDATE squad_members SET assigned_role_name = $1 WHERE squad_member_id = $2", new_role, squad_member_id)
+    async def update_player_game_id(self, user_id: int, game_player_id: Optional[str]):
+        query = "UPDATE player_stats SET game_player_id = $1 WHERE user_id = $2;"
+        async with self.pool.acquire() as connection:
+            await connection.execute(query, game_player_id, user_id)
 
-    async def move_squad_member(self, squad_member_id: int, new_squad_id: int):
-        async with self.pool.acquire() as conn:
-            await conn.execute("UPDATE squad_members SET squad_id = $1 WHERE squad_member_id = $2", new_squad_id, squad_member_id)
+    async def update_player_affinities(self, squads: List[Dict]):
+        """
+        Updates the role_affinities for all players in a list of finalized squads.
+        This is a complex operation that reads, updates, and writes JSONB data.
+        """
+        async with self.pool.acquire() as connection:
+            async with connection.transaction():
+                all_member_ids = [int(m['user_id']) for s in squads for m in s['members']]
+                if not all_member_ids: return
 
-    async def get_squad_by_name(self, event_id: int, squad_name: str) -> Optional[Dict]:
-        async with self.pool.acquire() as conn:
-            row = await conn.fetchrow("SELECT * FROM squads WHERE event_id = $1 AND name = $2", event_id, squad_name)
+                # Step 1: Get existing affinities for all involved players
+                existing_data = await connection.fetch("SELECT user_id, role_affinities FROM player_stats WHERE user_id = ANY($1);", all_member_ids)
+                player_affinities = {}
+                for row in existing_data:
+                    player_affinities[row['user_id']] = row['role_affinities'] or {'roles': {}, 'squad_types': {}}
+                
+                # Step 2: Update affinities in memory
+                for squad in squads:
+                    squad_type = squad['squad_type']
+                    if squad_type == "Reserves": continue # Do not track reserves
+                    
+                    for member in squad['members']:
+                        user_id = int(member['user_id'])
+                        role = member['assigned_role_name']
+                        
+                        if user_id not in player_affinities:
+                            player_affinities[user_id] = {'roles': {}, 'squad_types': {}}
+                        
+                        aff = player_affinities[user_id]
+                        aff['roles'][role] = aff['roles'].get(role, 0) + 1
+                        aff['squad_types'][squad_type] = aff['squad_types'].get(squad_type, 0) + 1
+                
+                # Step 3: Batch update back to the database
+                update_data = [(user_id, aff) for user_id, aff in player_affinities.items()]
+                await connection.executemany(
+                    "UPDATE player_stats SET role_affinities = $2 WHERE user_id = $1;",
+                    update_data
+                )
+
+    # --- Squad Template Management ---
+    async def create_squad_template(self, guild_id: int, template_name: str, definitions: List[Any]) -> int:
+        async with self.pool.acquire() as connection:
+            async with connection.transaction():
+                template_id = await connection.fetchval(
+                    "INSERT INTO squad_templates (guild_id, template_name) VALUES ($1, $2) RETURNING template_id;",
+                    guild_id, template_name
+                )
+                
+                def_data = [(
+                    template_id, d.squad_name, d.default_count, d.squad_type, 
+                    d.naming_convention, d.source_rsvp_pool
+                ) for d in definitions]
+                
+                await connection.copy_records_to_table(
+                    'squad_template_definitions',
+                    records=def_data,
+                    columns=[
+                        'template_id', 'squad_name', 'default_count', 'squad_type', 
+                        'naming_convention', 'source_rsvp_pool'
+                    ]
+                )
+                return template_id
+
+    async def get_all_squad_templates(self) -> List[Dict]:
+        query = """
+            SELECT t.template_id, t.template_name, json_agg(
+                json_build_object(
+                    'definition_id', d.definition_id,
+                    'squad_name', d.squad_name,
+                    'default_count', d.default_count,
+                    'squad_type', d.squad_type,
+                    'naming_convention', d.naming_convention,
+                    'source_rsvp_pool', d.source_rsvp_pool
+                ) ORDER BY d.definition_id
+            ) as definitions
+            FROM squad_templates t
+            LEFT JOIN squad_template_definitions d ON t.template_id = d.template_id
+            GROUP BY t.template_id
+            ORDER BY t.template_name;
+        """
+        async with self.pool.acquire() as connection:
+            return [dict(row) for row in await connection.fetch(query)]
+
+    async def get_squad_template_by_id(self, template_id: int) -> Optional[Dict]:
+        query = """
+            SELECT t.template_id, t.template_name, json_agg(
+                json_build_object(
+                    'definition_id', d.definition_id,
+                    'squad_name', d.squad_name,
+                    'default_count', d.default_count,
+                    'squad_type', d.squad_type,
+                    'naming_convention', d.naming_convention,
+                    'source_rsvp_pool', d.source_rsvp_pool
+                ) ORDER BY d.definition_id
+            ) as definitions
+            FROM squad_templates t
+            LEFT JOIN squad_template_definitions d ON t.template_id = d.template_id
+            WHERE t.template_id = $1
+            GROUP BY t.template_id;
+        """
+        async with self.pool.acquire() as connection:
+            row = await connection.fetchrow(query, template_id)
             return dict(row) if row else None
 
+    async def update_squad_template(self, template_id: int, template_name: str, definitions: List[Any]):
+        async with self.pool.acquire() as connection:
+            async with connection.transaction():
+                # Update the template name
+                await connection.execute(
+                    "UPDATE squad_templates SET template_name = $1 WHERE template_id = $2;",
+                    template_name, template_id
+                )
+                # Delete old definitions
+                await connection.execute(
+                    "DELETE FROM squad_template_definitions WHERE template_id = $1;",
+                    template_id
+                )
+                # Insert new definitions
+                def_data = [(
+                    template_id, d.squad_name, d.default_count, d.squad_type, 
+                    d.naming_convention, d.source_rsvp_pool
+                ) for d in definitions]
+                
+                await connection.copy_records_to_table(
+                    'squad_template_definitions',
+                    records=def_data,
+                    columns=[
+                        'template_id', 'squad_name', 'default_count', 'squad_type', 
+                        'naming_convention', 'source_rsvp_pool'
+                    ]
+                )
+
+    async def delete_squad_template(self, template_id: int):
+        async with self.pool.acquire() as connection:
+            await connection.execute("DELETE FROM squad_templates WHERE template_id = $1;", template_id)
+
+    # --- Squad & Roster Management ---
+    async def create_squad(self, event_id: int, name: str, squad_type: str) -> int:
+        query = "INSERT INTO squads (event_id, name, squad_type) VALUES ($1, $2, $3) RETURNING squad_id;"
+        async with self.pool.acquire() as connection:
+            return await connection.fetchval(query, event_id, name, squad_type)
+
+    async def get_squad_by_name(self, event_id: int, name: str) -> Optional[Dict]:
+        query = "SELECT * FROM squads WHERE event_id = $1 AND name = $2;"
+        async with self.pool.acquire() as connection:
+            row = await connection.fetchrow(query, event_id, name)
+            return dict(row) if row else None
+
+    async def add_squad_member(self, squad_id: int, user_id: int, role_name: str):
+        query = "INSERT INTO squad_members (squad_id, user_id, assigned_role_name) VALUES ($1, $2, $3);"
+        async with self.pool.acquire() as connection:
+            await connection.execute(query, squad_id, user_id, role_name)
+            
+    async def get_squad_member_details(self, squad_member_id: int) -> Optional[Dict]:
+        query = "SELECT s.event_id, sm.user_id FROM squad_members sm JOIN squads s ON sm.squad_id = s.squad_id WHERE sm.squad_member_id = $1;"
+        async with self.pool.acquire() as connection:
+            row = await connection.fetchrow(query, squad_member_id)
+            return dict(row) if row else None
+
+    async def update_squad_member_role(self, squad_member_id: int, role_name: str):
+        query = "UPDATE squad_members SET assigned_role_name = $1 WHERE squad_member_id = $2;"
+        async with self.pool.acquire() as connection:
+            await connection.execute(query, role_name, squad_member_id)
+
+    async def update_squad_member_order(self, squad_id: int, ordered_member_ids: List[int]):
+        query = """
+            UPDATE squad_members sm
+            SET position = new_positions.position
+            FROM (SELECT unnest($1::int[]) AS member_id, generate_series(1, array_length($1, 1)) AS position) AS new_positions
+            WHERE sm.squad_id = $2 AND sm.squad_member_id = new_positions.member_id;
+        """
+        async with self.pool.acquire() as connection:
+            await connection.execute(query, ordered_member_ids, squad_id)
+            
+    async def move_squad_member(self, squad_member_id: int, new_squad_id: int):
+        query = "UPDATE squad_members SET squad_id = $1, position = 0 WHERE squad_member_id = $2;"
+        async with self.pool.acquire() as connection:
+            await connection.execute(query, new_squad_id, squad_member_id)
+
+    async def remove_user_from_all_squads(self, event_id: int, user_id: int):
+        query = """
+            DELETE FROM squad_members sm
+            USING squads s
+            WHERE sm.squad_id = s.squad_id
+              AND s.event_id = $1 AND sm.user_id = $2;
+        """
+        async with self.pool.acquire() as connection:
+            await connection.execute(query, event_id, user_id)
+            
     async def update_squad_member_task(self, squad_member_id: int, task: Optional[str]):
         query = "UPDATE squad_members SET startup_task = $1 WHERE squad_member_id = $2;"
         async with self.pool.acquire() as connection:
             await connection.execute(query, task, squad_member_id)
-
-    async def get_event_lock_status(self, event_id: int) -> Optional[Dict]:
-        query = "SELECT e.locked_by_user_id, e.locked_at, u.username as locked_by_username FROM events e LEFT JOIN users u ON e.locked_by_user_id = u.id WHERE e.event_id = $1;"
-        async with self.pool.acquire() as conn:
-            row = await conn.fetchrow(query, event_id)
-            return dict(row) if row else None
-
-    async def lock_event(self, event_id: int, user_id: int):
-        query = "UPDATE events SET locked_by_user_id = $1, locked_at = (NOW() AT TIME ZONE 'utc') WHERE event_id = $2;"
-        async with self.pool.acquire() as conn:
-            await conn.execute(query, user_id, event_id)
-
-    async def unlock_event(self, event_id: int):
-        query = "UPDATE events SET locked_by_user_id = NULL, locked_at = NULL WHERE event_id = $1;"
-        async with self.pool.acquire() as conn:
-            await conn.execute(query, event_id)
-
-    async def get_active_events_with_threads(self) -> List[Dict]:
+            
+    async def save_finalized_roster(self, event_id: int, roster_data: List[Dict]):
         query = """
-            SELECT event_id, guild_id, thread_id FROM events
-            WHERE thread_created = TRUE
-              AND thread_id IS NOT NULL
-              AND deleted_at IS NULL
-              AND event_time > (NOW() AT TIME ZONE 'utc');
+            INSERT INTO event_final_rosters (event_id, roster_data)
+            VALUES ($1, $2)
+            ON CONFLICT (event_id) DO UPDATE SET
+                roster_data = EXCLUDED.roster_data,
+                finalized_at = (NOW() AT TIME ZONE 'utc');
         """
         async with self.pool.acquire() as connection:
-            return [dict(row) for row in await connection.fetch(query)]
+            await connection.execute(query, event_id, roster_data, types=[None, self._jsonb_codec])
 
-    async def get_active_events_with_message_id(self) -> List[Dict]:
-        query = """
-            SELECT event_id, title, channel_id, message_id, mention_role_ids
-            FROM events
-            WHERE deleted_at IS NULL
-              AND message_id IS NOT NULL
-              AND event_time > (NOW() AT TIME ZONE 'utc' - INTERVAL '2 hours');
+    # --- Match Stats Management ---
+    async def check_match_exists(self, match_id: str) -> bool:
+        query = "SELECT 1 FROM match_uploads WHERE match_id = $1;"
+        async with self.pool.acquire() as connection:
+            return await connection.fetchval(query, match_id) is not None
+
+    async def insert_match_data(self, match_id: str, event_name: str, event_date: datetime.date, uploaded_by_user_id: int, match_stats: List[Dict]):
+        async with self.pool.acquire() as connection:
+            async with connection.transaction():
+                # Step 1: Create the parent match record
+                await connection.execute(
+                    """
+                    INSERT INTO match_uploads (match_id, event_name, event_date, uploaded_by_user_id)
+                    VALUES ($1, $2, $3, $4);
+                    """,
+                    match_id, event_name, event_date, uploaded_by_user_id
+                )
+
+                # Step 2: Get all known game_player_ids from player_stats
+                player_id_map_rows = await connection.fetch("SELECT game_player_id, user_id FROM player_stats WHERE game_player_id IS NOT NULL;")
+                player_id_map = {row['game_player_id']: row['user_id'] for row in player_id_map_rows}
+
+                # Step 3: Prepare the match history records
+                records_to_insert = []
+                for row in match_stats:
+                    game_player_id = row.get('PlayerID')
+                    if not game_player_id: continue # Skip rows without a PlayerID
+                    
+                    discord_user_id = player_id_map.get(game_player_id)
+                    
+                    records_to_insert.append((
+                        match_id,
+                        row.get('PlayerName', 'Unknown'),
+                        game_player_id,
+                        discord_user_id,
+                        _safe_int(row.get('Kills')),
+                        _safe_int(row.get('Deaths')),
+                        _safe_int(row.get('CombatEffectiveness')),
+                        _safe_int(row.get('OffensiveScore')),
+                        _safe_int(row.get('DefensiveScore')),
+                        _safe_int(row.get('SupportScore'))
+                    ))
+
+                # Step 4: Batch insert all records
+                await connection.copy_records_to_table(
+                    'match_history',
+                    records=records_to_insert,
+                    columns=[
+                        'match_id', 'player_name', 'game_player_id', 'discord_user_id',
+                        'kills', 'deaths', 'combat_effectiveness', 'offensive_score',
+                        'defensive_score', 'support_score'
+                    ]
+                )
+
+    async def calculate_leaderboards(self) -> Dict[str, List[Dict]]:
+        # Define the metrics we want to sum
+        metrics = ["kills", "combat_effectiveness", "support_score", "offensive_score", "defensive_score"]
+        leaderboards = {}
+
+        base_query = """
+            SELECT
+                COALESCE(ps.display_name, mh.player_name) AS player_name,
+                mh.discord_user_id::text,
+                SUM(mh.{metric}) AS total_value
+            FROM match_history mh
+            LEFT JOIN player_stats ps ON mh.discord_user_id = ps.user_id
+            WHERE mh.{metric} IS NOT NULL
+            GROUP BY COALESCE(ps.display_name, mh.player_name), mh.discord_user_id
+            HAVING SUM(mh.{metric}) > 0
+            ORDER BY total_value DESC
+            LIMIT 10;
         """
         async with self.pool.acquire() as connection:
-            return [dict(row) for row in await connection.fetch(query)]
-
-    async def get_signups_for_roster_page(self, event_id: int) -> List[Dict]:
+            for metric in metrics:
+                query = base_query.format(metric=metric)
+                rows = await connection.fetch(query)
+                leaderboards[metric] = [dict(row) for row in rows]
+        
+        return leaderboards
+        
+    async def get_full_player_export_data(self) -> List[Dict]:
         """
-        Gets all signups for an event for the web UI roster.
-        It joins with player_stats to get cached display names for performance and
-        casts user_id to text to match the API's data model.
+        Gets a comprehensive dataset of all players, their stats, and their entire
+        event history from the snapshot table for CSV export.
         """
         query = """
             SELECT
-                s.user_id::text AS user_id, -- Cast to string for Pydantic model
-                s.role_name,
-                s.subclass_name,
-                s.rsvp_status,
-                COALESCE(ps.display_name, s.user_id::text) AS display_name
-            FROM
-                signups s
-            LEFT JOIN
-                player_stats ps ON s.user_id = ps.user_id
-            WHERE
-                s.event_id = $1 AND ps.is_active = TRUE
-            ORDER BY
-                s.role_name, s.subclass_name;
-            """
-        async with self.pool.acquire() as conn:
-            return [dict(row) for row in await conn.fetch(query, event_id)]
-
-    async def get_past_events_with_tentatives(self) -> List[Dict]:
-        query = """
-            SELECT s.event_id, s.user_id FROM signups s
-            JOIN events e ON s.event_id = e.event_id
-            WHERE s.rsvp_status = 'Tentative' AND e.end_time < (NOW() AT TIME ZONE 'utc');
+                ps.user_id::text,
+                ps.display_name,
+                ps.accepted_count,
+                ps.tentative_count,
+                ps.declined_count,
+                ps.last_signup_date,
+                ps.rating,
+                COALESCE(
+                    (SELECT json_agg(
+                        json_build_object(
+                            'event_title', peh.event_title,
+                            'event_time', peh.event_time,
+                            'role_name', peh.role_name,
+                            'subclass_name', peh.subclass_name
+                        ) ORDER BY peh.event_time DESC
+                    )
+                    FROM player_event_history peh
+                    WHERE peh.user_id = ps.user_id
+                    ),
+                    '[]'::json
+                ) AS event_history
+            FROM player_stats ps
+            WHERE ps.is_active = TRUE;
         """
         async with self.pool.acquire() as connection:
             return [dict(row) for row in await connection.fetch(query)]
 
-    async def set_thread_creation_hours(self, guild_id: int, hours: int):
+    # --- Event Lock Management ---
+    async def lock_event(self, event_id: int, user_id: int):
         query = """
-            INSERT INTO guilds (guild_id, thread_creation_hours) VALUES ($1, $2)
-            ON CONFLICT (guild_id) DO UPDATE SET thread_creation_hours = EXCLUDED.thread_creation_hours;
+            INSERT INTO event_locks (event_id, locked_by_user_id, locked_at)
+            VALUES ($1, $2, (NOW() AT TIME ZONE 'utc'))
+            ON CONFLICT (event_id) DO UPDATE SET
+                locked_by_user_id = $2,
+                locked_at = (NOW() AT TIME ZONE 'utc');
         """
         async with self.pool.acquire() as connection:
-            await connection.execute(query, guild_id, hours)
+            await connection.execute(query, event_id, user_id)
 
-    async def get_events_for_thread_creation(self) -> List[dict]:
-        query = "SELECT e.event_id, e.guild_id, e.channel_id, e.message_id, e.title, e.event_time FROM events e JOIN guilds g ON e.guild_id = g.guild_id WHERE e.thread_created = FALSE AND e.deleted_at IS NULL AND (NOW() AT TIME ZONE 'utc') >= (e.event_time - (g.thread_creation_hours * INTERVAL '1 hour'));"
+    async def unlock_event(self, event_id: int):
+        query = "DELETE FROM event_locks WHERE event_id = $1;"
         async with self.pool.acquire() as connection:
-            return [dict(row) for row in await connection.fetch(query)]
+            await connection.execute(query, event_id)
 
-    async def mark_thread_created(self, event_id: int, thread_id: int):
-        query = "UPDATE events SET thread_created = TRUE, thread_id = $1 WHERE event_id = $2;"
-        async with self.pool.acquire() as connection:
-            await connection.execute(query, thread_id, event_id)
-
-    async def get_finished_events_for_cleanup(self) -> List[dict]:
+    async def get_event_lock_status(self, event_id: int) -> Optional[Dict]:
         query = """
-            SELECT event_id, thread_id, message_id, channel_id
-            FROM events
-            WHERE
-                COALESCE(end_time, event_time + INTERVAL '2 hours') < (NOW() AT TIME ZONE 'utc' - INTERVAL '2 hours')
-            AND (
-                is_recurring = FALSE
-                OR
-                parent_event_id IS NOT NULL
-            );
+            SELECT el.locked_by_user_id, el.locked_at, u.username AS locked_by_username
+            FROM event_locks el
+            JOIN users u ON el.locked_by_user_id = u.id
+            WHERE el.event_id = $1;
         """
         async with self.pool.acquire() as connection:
-            return [dict(row) for row in await connection.fetch(query)]
-
-    async def soft_delete_event(self, event_id: int):
-        query = "UPDATE events SET deleted_at = (NOW() AT TIME ZONE 'utc') WHERE event_id = $1;"
-        async with self.pool.acquire() as connection:
-            await connection.execute(query, event_id)
-
-    async def restore_event(self, event_id: int):
-        query = "UPDATE events SET deleted_at = NULL WHERE event_id = $1;"
-        async with self.pool.acquire() as connection:
-            await connection.execute(query, event_id)
-
-    async def get_events_for_purging(self) -> List[Dict]:
-        query = "SELECT event_id FROM events WHERE deleted_at IS NOT NULL AND deleted_at <= (NOW() AT TIME ZONE 'utc' - INTERVAL '7 days');"
-        async with self.pool.acquire() as connection:
-            return [dict(row) for row in await connection.fetch(query)]
-
-    async def delete_event(self, event_id: int):
-        async with self.pool.acquire() as conn:
-            await conn.execute("DELETE FROM events WHERE event_id = $1", event_id)
-
-    async def get_events_for_recreation(self) -> List[dict]:
-        query = "SELECT * FROM events WHERE is_recurring = TRUE AND parent_event_id IS NULL AND deleted_at IS NULL;"
-        async with self.pool.acquire() as connection:
-            return [dict(row) for row in await connection.fetch(query)]
-
-    async def update_last_recreated_at(self, event_id: int):
-        query = "UPDATE events SET last_recreated_at = (NOW() AT TIME ZONE 'utc') WHERE event_id = $1;"
-        async with self.pool.acquire() as connection:
-            await connection.execute(query, event_id)
-
-    async def get_squad_by_id(self, squad_id: int) -> Optional[dict]:
-        async with self.pool.acquire() as conn:
-            row = await conn.fetchrow("SELECT * FROM squads WHERE squad_id = $1", squad_id)
+            row = await connection.fetchrow(query, event_id)
             return dict(row) if row else None
-
-    async def remove_user_from_all_squads(self, event_id: int, user_id: int):
-        async with self.pool.acquire() as conn:
-            await conn.execute("DELETE FROM squad_members WHERE user_id = $1 AND squad_id IN (SELECT squad_id FROM squads WHERE event_id = $2)", user_id, event_id)
-
-    async def get_squad_member_details(self, squad_member_id: int) -> Optional[Dict]:
-        async with self.pool.acquire() as conn:
-            row = await conn.fetchrow("SELECT sm.user_id, s.event_id FROM squad_members sm JOIN squads s ON sm.squad_id = s.squad_id WHERE sm.squad_member_id = $1", squad_member_id)
-            return dict(row) if row else None
-
-    async def flag_event_for_embed_update(self, event_id: int):
-        await self.pool.execute("UPDATE events SET needs_embed_update = TRUE WHERE event_id = $1;", event_id)
-
-    async def get_events_for_embed_update(self) -> List[Dict]:
-        query = "SELECT event_id, channel_id, message_id FROM events WHERE needs_embed_update = TRUE AND message_id IS NOT NULL AND deleted_at IS NULL;"
+            
+    async def force_unlock_all_events(self):
+        query = "DELETE FROM event_locks;"
         async with self.pool.acquire() as connection:
-            return [dict(row) for row in await connection.fetch(query)]
+            await connection.execute(query)
 
-    async def clear_embed_update_flag(self, event_id: int):
-        await self.pool.execute("UPDATE events SET needs_embed_update = FALSE WHERE event_id = $1;", event_id)
-
+    # --- Final Roster & Squad Management ---
     async def get_squads_with_members(self, event_id: int) -> List[Dict]:
         """
-        Gets all squads for an event and their members. If a Reserves squad
-        does not exist for the event, it will be created automatically.
+        Retrieves all squads for an event and aggregates their members
+        into a JSON array, ordered by their position.
         """
         async with self.pool.acquire() as connection:
-            # First, check if a reserves squad exists for this event
-            reserves_exists = await connection.fetchval(
-                "SELECT EXISTS (SELECT 1 FROM squads WHERE event_id = $1 AND name = 'Reserves');",
-                event_id
-            )
-
-            # If it doesn't exist, create it now
-            if not reserves_exists:
-                await self.create_squad(event_id, "Reserves", "Reserves")
-
-            # Now, fetch all squads for the event, which will include the Reserves squad
             query = """
-                SELECT
-                    s.squad_id,
-                    s.name,
+                SELECT 
+                    s.squad_id, 
+                    s.name, 
                     s.squad_type,
                     COALESCE(
                         json_agg(
