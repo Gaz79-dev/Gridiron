@@ -99,7 +99,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const userId = row.dataset.userId;
             const playerName = row.dataset.playerName;
             // --- UPDATE: Add player name as a query parameter ---
-            window.location.href = `/stats/player/${userId}?name=${encodeURIComponent(playerName)}`;
+            window.location.href = `/engagement/player/${userId}?name=${encodeURIComponent(playerName)}`;
         }
     });
 
