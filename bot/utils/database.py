@@ -77,17 +77,39 @@ class Database:
         self.pool = None
         self._jsonb_codec = None
 
+    # --- START: FIX 2 - Add Codec Registration Function ---
+    async def _register_jsonb_codec(self, connection):
+        """Registers JSONB codec for a new connection and caches the OID."""
+        await connection.set_type_codec(
+            'jsonb',
+            encoder=self._encode_jsonb,
+            decoder=self._decode_jsonb,
+            schema='pg_catalog',
+            format='binary'
+        )
+        # Cache the OID if not already cached.
+        # This is needed for copy_records_to_table to function correctly.
+        if self._jsonb_codec is None:
+            self._jsonb_codec = await connection.fetchval(
+                "SELECT oid FROM pg_type WHERE typname = 'jsonb'"
+            )
+    # --- END: FIX 2 ---
+
     async def connect(self):
         """Establishes the database connection pool."""
         try:
+            # --- START: FIX 2 - Register Codec on Pool Init ---
             self.pool = await asyncpg.create_pool(
                 user=os.getenv("POSTGRES_USER"),
                 password=os.getenv("POSTGRES_PASSWORD"),
                 database=os.getenv("POSTGRES_DB"),
                 host=os.getenv("POSTGRES_HOST"),
-                port=os.getenv("POSTGRES_PORT")
+                port=os.getenv("POSTGRES_PORT"),
+                init=self._register_jsonb_codec  # <-- This fixes the JSON validation errors
             )
-            # Run setup to register codecs and create tables
+            # --- END: FIX 2 ---
+            
+            # Run setup to create tables
             await self._initial_setup()
             print("Database connection pool established and tables ensured.")
         except Exception as e:
@@ -96,8 +118,9 @@ class Database:
     async def _initial_setup(self):
         async with self.pool.acquire() as connection:
             async with connection.transaction():
-                # Get and register the JSONB codec
-                self._jsonb_codec = await self._get_jsonb_codec(connection)
+                # --- START: FIX 2 - Remove Codec logic from here ---
+                # The JSONB codec is now registered in the pool's 'init' function
+                # --- END: FIX 2 ---
                 
                 await connection.execute("""
                     CREATE TABLE IF NOT EXISTS guild_settings (
@@ -133,6 +156,12 @@ class Database:
                     );
                 """)
                 
+                # --- START: FIX 1 - Add missing ALTER TABLE commands ---
+                # This will patch the existing database schema
+                await connection.execute("ALTER TABLE events ADD COLUMN IF NOT EXISTS is_deleted BOOLEAN DEFAULT FALSE;")
+                await connection.execute("ALTER TABLE events ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP WITH TIME ZONE;")
+                # --- END: FIX 1 ---
+
                 await connection.execute("""
                     CREATE TABLE IF NOT EXISTS signups (
                         signup_id SERIAL PRIMARY KEY,
@@ -274,17 +303,22 @@ class Database:
                 """)
                 await connection.execute("CREATE INDEX IF NOT EXISTS idx_match_history_game_player_id ON match_history(game_player_id);")
 
+                # --- START: FIX 1 - Add Event Locks Table ---
+                # This table was also missing, causing errors on the main page
+                await connection.execute("""
+                    CREATE TABLE IF NOT EXISTS event_locks (
+                        event_id INT PRIMARY KEY REFERENCES events(event_id) ON DELETE CASCADE,
+                        locked_by_user_id INT NOT NULL REFERENCES users(id),
+                        locked_at TIMESTAMP WITH TIME ZONE DEFAULT (NOW() AT TIME ZONE 'utc')
+                    );
+                """)
+                # --- END: FIX 1 ---
+
     async def _get_jsonb_codec(self, connection):
-        """Fetches and registers a JSONB codec for the connection."""
-        await connection.set_type_codec(
-            'jsonb',
-            encoder=self._encode_jsonb,
-            decoder=self._decode_jsonb,
-            schema='pg_catalog',
-            format='binary'
-        )
-        # Fetch the OID of the 'jsonb' type for this connection
-        return await connection.fetchval("SELECT oid FROM pg_type WHERE typname = 'jsonb'")
+        """DEPRECATED: This logic is now in _register_jsonb_codec."""
+        # This function is no longer called but is safe to leave
+        # for now, as we've removed its call from _initial_setup.
+        pass
 
     def _encode_jsonb(self, value):
         """Encodes a Python object to JSONB binary format."""
@@ -873,7 +907,12 @@ class Database:
         """
         async with self.pool.acquire() as connection:
             # We must use the registered JSONB codec for this to work
-            await connection.execute(query, [member_data], types=[self._jsonb_codec])
+            if self._jsonb_codec:
+                await connection.execute(query, [member_data], types=[self._jsonb_codec])
+            else:
+                # Fallback in case codec isn't ready, though it should be.
+                await connection.execute(query, json.dumps(member_data))
+
 
     async def update_player_rating(self, user_id: int, rating: int):
         query = "UPDATE player_stats SET rating = $1 WHERE user_id = $2;"
@@ -1088,7 +1127,12 @@ class Database:
                 finalized_at = (NOW() AT TIME ZONE 'utc');
         """
         async with self.pool.acquire() as connection:
-            await connection.execute(query, event_id, roster_data, types=[None, self._jsonb_codec])
+            # We must use the registered JSONB codec for this to work
+            if self._jsonb_codec:
+                await connection.execute(query, event_id, roster_data, types=[None, self._jsonb_codec])
+            else:
+                await connection.execute(query, event_id, json.dumps(roster_data))
+
 
     # --- Match Stats Management ---
     async def check_match_exists(self, match_id: str) -> bool:
