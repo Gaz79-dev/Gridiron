@@ -246,12 +246,19 @@ class Scheduler(commands.Cog):
                 if not thread: continue
 
                 signups = await self.db.get_signups_for_event(event['event_id'])
-                accepted_user_ids = {s['user_id'] for s in signups if s['rsvp_status'] == RsvpStatus.ACCEPTED}
+                
+                # --- START: MODIFICATION ---
+                # Now include both Accepted and Tentative users
+                user_ids_to_sync = {
+                    s['user_id'] for s in signups 
+                    if s['rsvp_status'] in [RsvpStatus.ACCEPTED, RsvpStatus.TENTATIVE]
+                }
+                # --- END: MODIFICATION ---
 
                 thread_member_ids = {member.id for member in await thread.fetch_members()}
 
-                users_to_add = accepted_user_ids - thread_member_ids
-                users_to_remove = thread_member_ids - accepted_user_ids
+                users_to_add = user_ids_to_sync - thread_member_ids
+                users_to_remove = thread_member_ids - user_ids_to_sync
 
                 for user_id in users_to_add:
                     try:
@@ -317,10 +324,17 @@ class Scheduler(commands.Cog):
             print(f"  [Process:{event_id}] SUCCESS: Discord API returned a thread object. ID: {discussion_thread.id}")
 
             signups = await self.db.get_signups_for_event(event_id)
-            accepted_user_ids = [s['user_id'] for s in signups if s['rsvp_status'] == RsvpStatus.ACCEPTED]
+            
+            # --- START: MODIFICATION ---
+            # Now include both Accepted and Tentative users
+            user_ids_to_add = [
+                s['user_id'] for s in signups 
+                if s['rsvp_status'] in [RsvpStatus.ACCEPTED, RsvpStatus.TENTATIVE]
+            ]
+            # --- END: MODIFICATION ---
 
-            print(f"  [Process:{event_id}] Adding {len(accepted_user_ids)} members to the private thread...")
-            for user_id in accepted_user_ids:
+            print(f"  [Process:{event_id}] Adding {len(user_ids_to_add)} members to the private thread...")
+            for user_id in user_ids_to_add:
                 try:
                     member = await parent_channel.guild.fetch_member(user_id)
                     if member:
@@ -333,8 +347,8 @@ class Scheduler(commands.Cog):
 
             event_embed = await create_event_embed(self.bot, event_id, self.db)
             welcome_message = ""
-            if accepted_user_ids:
-                mentions = ' '.join([f'<@{user_id}>' for user_id in accepted_user_ids])
+            if user_ids_to_add:
+                mentions = ' '.join([f'<@{user_id}>' for user_id in user_ids_to_add])
                 welcome_message = f"Welcome, attendees! {mentions}"
 
             print(f"  [Process:{event_id}] Sending combined welcome message and embed to new thread...")
