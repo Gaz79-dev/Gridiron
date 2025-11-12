@@ -194,4 +194,12 @@ class Leaderboard(BaseModel):
 
 class SquadReorderRequest(BaseModel):
     ordered_member_ids: List[int]
+
+class PlayerEventHistoryEntry(BaseModel):
+    event_title: str
+    event_time: datetime
+    end_time: Optional[datetime] = None
+    rsvp_status: Optional[str] = None
+    role_name: Optional[str] = None
+    subclass_name: Optional[str] = None
 # --- FIX END ---
