@@ -27,11 +27,20 @@ document.addEventListener('DOMContentLoaded', () => {
         return;
     }
 
-    // --- START: MODIFICATION - Update fetch URL ---
+    // --- START: FIX ---
+    // The API endpoint was renamed from /accepted-events to /event-history
+    // in bot/api/stats.py. This updates the fetch call to match.
     fetch(`/api/stats/player/${userId}/event-history`, { headers })
-    // --- END: MODIFICATION ---
+    // --- END: FIX ---
         .then(response => {
-            if (!response.ok) throw new Error('Failed to fetch event history');
+            if (!response.ok) {
+                // --- START: FIX ---
+                // Add more detailed error logging
+                console.error('API Response Status:', response.status);
+                response.json().then(err => console.error('API Error Detail:', err.detail));
+                throw new Error(`Failed to fetch event history (${response.status})`);
+                // --- END: FIX ---
+            }
             return response.json();
         })
         .then(data => {
