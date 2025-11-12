@@ -21,11 +21,15 @@ document.addEventListener('DOMContentLoaded', () => {
     // --- END ADDITION ---
 
     if (!userId) {
-        tableBody.innerHTML = '<tr><td colspan="4" class="text-center p-8 text-red-400">Could not identify the player.</td></tr>';
+        // --- START: MODIFICATION - Update colspan ---
+        tableBody.innerHTML = '<tr><td colspan="6" class="text-center p-8 text-red-400">Could not identify the player.</td></tr>';
+        // --- END: MODIFICATION ---
         return;
     }
 
-    fetch(`/api/stats/player/${userId}/accepted-events`, { headers })
+    // --- START: MODIFICATION - Update fetch URL ---
+    fetch(`/api/stats/player/${userId}/event-history`, { headers })
+    // --- END: MODIFICATION ---
         .then(response => {
             if (!response.ok) throw new Error('Failed to fetch event history');
             return response.json();
@@ -33,27 +37,44 @@ document.addEventListener('DOMContentLoaded', () => {
         .then(data => {
             tableBody.innerHTML = '';
             if (data.length === 0) {
-                tableBody.innerHTML = '<tr><td colspan="4" class="text-center p-8">This player has not accepted any events.</td></tr>';
+                // --- START: MODIFICATION - Update colspan ---
+                tableBody.innerHTML = '<tr><td colspan="6" class="text-center p-8">This player has no event history.</td></tr>';
+                // --- END: MODIFICATION ---
                 return;
             }
             data.forEach(event => {
                 const tr = document.createElement('tr');
                 tr.className = 'border-b border-gray-700';
-                const eventDate = new Date(event.event_time).toLocaleString('en-GB', {
+                
+                // --- START: MODIFICATION - Render new columns ---
+                const eventStart = new Date(event.event_time).toLocaleString('en-GB', {
                     day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit'
                 });
-                // --- UPDATE: Add new columns for Role and Class ---
+                const eventEnd = event.end_time ? new Date(event.end_time).toLocaleString('en-GB', {
+                    day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit'
+                }) : 'N/A';
+
+                let rsvpClass = '';
+                if (event.rsvp_status === 'Accepted') rsvpClass = 'text-green-400';
+                if (event.rsvp_status === 'Tentative') rsvpClass = 'text-yellow-400';
+                if (event.rsvp_status === 'Declined') rsvpClass = 'text-red-400';
+
                 tr.innerHTML = `
                     <td class="px-6 py-4 whitespace-nowrap">${event.event_title}</td>
-                    <td class="px-6 py-4 whitespace-nowrap">${eventDate}</td>
+                    <td class="px-6 py-4 whitespace-nowrap">${eventStart}</td>
+                    <td class="px-6 py-4 whitespace-nowrap">${eventEnd}</td>
+                    <td class="px-6 py-4 whitespace-nowrap font-bold ${rsvpClass}">${event.rsvp_status || 'N/A'}</td>
                     <td class="px-6 py-4 whitespace-nowrap">${event.role_name || 'N/A'}</td>
                     <td class="px-6 py-4 whitespace-nowrap">${event.subclass_name || 'N/A'}</td>
                 `;
+                // --- END: MODIFICATION ---
                 tableBody.appendChild(tr);
             });
         })
         .catch(error => {
             console.error('Error loading event history:', error);
-            tableBody.innerHTML = '<tr><td colspan="4" class="text-center p-8 text-red-400">Could not load event history.</td></tr>';
+            // --- START: MODIFICATION - Update colspan ---
+            tableBody.innerHTML = '<tr><td colspan="6" class="text-center p-8 text-red-400">Could not load event history.</td></tr>';
+            // --- END: MODIFICATION ---
         });
 });
