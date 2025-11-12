@@ -411,12 +411,24 @@ class Database:
             await connection.execute(query, squad_id, ordered_member_ids)
 
     async def cache_player_display_names(self, member_data: List[Dict]):
-        """Updates the cached display names for a list of members."""
+        """
+        Updates the display_name for multiple players at once using
+        an INSERT... ON CONFLICT batch operation.
+        
+        Args:
+            member_data: List of dicts with 'id' (user_id) and 'name' (display_name) keys
+        """
+        query = """
+            INSERT INTO player_stats (user_id, display_name)
+            SELECT (d->>'id')::bigint, d->>'name'
+            FROM unnest($1::jsonb[]) AS t(d)
+            ON CONFLICT (user_id) DO UPDATE SET
+                display_name = EXCLUDED.display_name;
+        """
         async with self.pool.acquire() as connection:
-            await connection.executemany(
-                "UPDATE player_stats SET display_name = $1 WHERE user_id = $2;",
-                [(m['name'], m['id']) for m in member_data]
-            )
+            # Convert Python dicts to JSONB strings for asyncpg
+            jsonb_data = [json.dumps(item) for item in member_data]
+            await connection.execute(query, jsonb_data)
 
     async def check_match_exists(self, match_id: str) -> bool:
         """Checks if a match with the given signature has already been uploaded."""
