@@ -48,33 +48,57 @@ def _safe_float(value: Any) -> Optional[float]:
 
 
 async def _send_rsvp_log_message(user_id: int, event_title: str, old_status: str, new_status: str):
-    """(Helper) Sends a log of an RSVP change to a webhook."""
-    webhook_url = os.getenv("RSVP_LOG_WEBHOOK")
-    if not webhook_url:
+    log_channel_id = os.getenv("EVENT_LOG_CHANNEL_ID")
+    bot_token = os.getenv("DISCORD_TOKEN")
+    guild_id = os.getenv("GUILD_ID")
+
+    if not all([log_channel_id, bot_token, guild_id]):
+        print("Log channel, bot token, or guild ID not configured. Skipping log message.")
         return
 
+    headers = {"Authorization": f"Bot {bot_token}"}
+    member_name = f"ID: {user_id}"
+    
+    async with httpx.AsyncClient() as client:
+        try:
+            url = f"https://discord.com/api/v10/guilds/{guild_id}/members/{user_id}"
+            response = await client.get(url, headers=headers)
+            if response.is_success:
+                member_data = response.json()
+                member_name = member_data.get('nick') or member_data['user'].get('global_name') or member_data['user']['username']
+        except Exception as e:
+            print(f"Could not fetch member name for logging: {e}")
+
+    color = 0
+    if new_status == RsvpStatus.ACCEPTED:
+        color = 3066993  # Green
+    elif new_status in [RsvpStatus.TENTATIVE, RsvpStatus.DECLINED]:
+        color = 15158332 # Red
+
     embed = {
-        "title": "RSVP Change Detected",
-        "color": 0x00FF00 if new_status == RsvpStatus.ACCEPTED else 0xFF0000,
+        "title": "RSVP Status Change",
+        "color": color,
         "fields": [
-            {"name": "Event", "value": event_title, "inline": False},
-            {"name": "User", "value": f"<@{user_id}>", "inline": True},
-            {"name": "Old Status", "value": old_status or "None", "inline": True},
-            {"name": "New Status", "value": new_status, "inline": True}
+            {"name": "Player", "value": member_name, "inline": True},
+            {"name": "Event", "value": event_title, "inline": True},
+            {"name": "Status Change", "value": f"**{old_status or 'None'}** → **{new_status}**", "inline": False},
         ],
         "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat()
     }
 
     try:
+        url = f"https://discord.com/api/v10/channels/{log_channel_id}/messages"
         async with httpx.AsyncClient() as client:
-            await client.post(webhook_url, json={"embeds": [embed]})
+            response = await client.post(url, headers=headers, json={"embeds": [embed]})
+            response.raise_for_status()
     except Exception as e:
-        print(f"Failed to send RSVP log webhook: {e}")
+        print(f"Failed to send log message to Discord: {e}")
 
 class Database:
     """Handles all database operations."""
-    def __init__(self):
+    def __init__(self, bot=None):
         self.pool = None
+        self.bot = bot
 
     async def connect(self):
         """Establishes the database connection pool."""
@@ -149,6 +173,9 @@ class Database:
                         UNIQUE(event_id, user_id)
                     );
                 """)
+                
+                # Patch signups table to ensure timestamp column exists
+                await connection.execute("ALTER TABLE signups ADD COLUMN IF NOT EXISTS timestamp TIMESTAMP WITH TIME ZONE DEFAULT (NOW() AT TIME ZONE 'utc');")
 
                 await connection.execute("""
                     CREATE TABLE IF NOT EXISTS users (
@@ -329,6 +356,13 @@ class Database:
             query += " AND is_deleted = FALSE"
         async with self.pool.acquire() as connection:
             record = await connection.fetchrow(query, event_id)
+            return dict(record) if record else None
+
+    async def get_event_by_message_id(self, message_id: int) -> Optional[Dict]:
+        """Retrieve an event by its Discord message ID."""
+        query = "SELECT * FROM events WHERE message_id = $1 AND is_deleted = FALSE"
+        async with self.pool.acquire() as connection:
+            record = await connection.fetchrow(query, message_id)
             return dict(record) if record else None
 
     async def get_active_events_with_message_id(self) -> List[Dict]:
@@ -530,12 +564,15 @@ class Database:
                 old_status = event_and_signup_data['rsvp_status']
 
                 if old_status == new_status:
+                    print(f"[set_rsvp] No change for user {user_id} on event {event_id}: already {new_status}")
                     return # No change
+
+                print(f"[set_rsvp] Processing RSVP change for user {user_id} on event {event_id}: {old_status} -> {new_status}")
 
                 await connection.execute(
                     """
-                    INSERT INTO signups (event_id, user_id, rsvp_status, timestamp)
-                    VALUES ($1, $2, $3, (NOW() AT TIME ZONE 'utc'))
+                    INSERT INTO signups (event_id, user_id, rsvp_status)
+                    VALUES ($1, $2, $3)
                     ON CONFLICT (event_id, user_id) DO UPDATE SET
                         rsvp_status = $3,
                         timestamp = (NOW() AT TIME ZONE 'utc');
@@ -545,19 +582,27 @@ class Database:
 
                 await self.update_player_stats(user_id, old_status, new_status)
 
-                is_log_worthy = old_status is not None and (
-                    old_status != new_status or
-                    new_status == RsvpStatus.ACCEPTED or
-                    new_status == RsvpStatus.DECLINED
-                )
-
-                if is_log_worthy:
+                # --- START: FIX ---
+                # The `if self.bot:` check was incorrect. The _send_rsvp_log_message
+                # function is a standalone helper that uses `httpx` and environment
+                # variables. It does not (and should not) depend on the `self.bot` object.
+                # The call was also passing `self.bot` as the first argument, which
+                # does not match the function's signature.
+                #
+                # The correct fix is to just call the function directly with the
+                # arguments it expects, as it's self-contained.
+                print(f"[set_rsvp] Checking if should log: old_status={old_status}, new_status={new_status}, old_status is not None={old_status is not None}, different={old_status != new_status}")
+                if old_status is not None and old_status != new_status:
+                    print(f"[set_rsvp] Calling _send_rsvp_log_message for user {user_id}")
                     await _send_rsvp_log_message(
                         user_id=user_id,
                         event_title=event_and_signup_data['title'],
                         old_status=old_status,
                         new_status=new_status
                     )
+                else:
+                    print(f"[set_rsvp] Skipping log - conditions not met")
+                # --- END: FIX ---
 
                 # --- START: MODIFICATION - Overhaul event history snapshot logic ---
                 # We only snapshot the RSVP status if the event has not started yet.
@@ -759,7 +804,28 @@ class Database:
         # --- END: MODIFICATION ---
         async with self.pool.acquire() as connection:
             records = await connection.fetch(query)
-            return [dict(record) for record in records]
+            # Parse role_affinities from JSON string if needed
+            result = []
+            for record in records:
+                row_dict = dict(record)
+                # Handle role_affinities JSON string conversion (including double-encoded JSON)
+                if row_dict.get('role_affinities'):
+                    if isinstance(row_dict['role_affinities'], str):
+                        try:
+                            # Try to parse once
+                            parsed = json.loads(row_dict['role_affinities'])
+                            # If it's still a string, parse again (double-encoded)
+                            if isinstance(parsed, str):
+                                row_dict['role_affinities'] = json.loads(parsed)
+                            else:
+                                row_dict['role_affinities'] = parsed
+                        except (json.JSONDecodeError, TypeError):
+                            row_dict['role_affinities'] = {}
+                    # If it's already a dict, leave it as-is
+                elif row_dict.get('role_affinities') is None:
+                    row_dict['role_affinities'] = {}
+                result.append(row_dict)
+            return result
     
     async def update_player_stats(self, user_id: int, old_status: Optional[str], new_status: str):
         accepted_delta = 0
@@ -862,8 +928,9 @@ class Database:
                 display_name = EXCLUDED.display_name;
         """
         async with self.pool.acquire() as connection:
-            # asyncpg will handle the JSONB array automatically
-            await connection.execute(query, member_data)
+            # Convert Python dicts to JSONB strings for asyncpg
+            jsonb_data = [json.dumps(item) for item in member_data]
+            await connection.execute(query, jsonb_data)
     
     async def update_player_rating(self, user_id: int, rating: int):
         query = "UPDATE player_stats SET rating = $1 WHERE user_id = $2;"
@@ -957,8 +1024,19 @@ class Database:
             ORDER BY t.template_name;
         """
         async with self.pool.acquire() as connection:
-            # asyncpg will automatically parse the json_agg
-            return [dict(row) for row in await connection.fetch(query)]
+            results = []
+            for row in await connection.fetch(query):
+                row_dict = dict(row)
+                # Parse definitions if it's a JSON string
+                if isinstance(row_dict.get('definitions'), str):
+                    try:
+                        row_dict['definitions'] = json.loads(row_dict['definitions'])
+                    except json.JSONDecodeError:
+                        row_dict['definitions'] = []
+                elif row_dict.get('definitions') is None:
+                    row_dict['definitions'] = []
+                results.append(row_dict)
+            return results
     
     async def get_squad_template_by_id(self, template_id: int) -> Optional[Dict]:
         query = """
@@ -979,7 +1057,18 @@ class Database:
         """
         async with self.pool.acquire() as connection:
             row = await connection.fetchrow(query, template_id)
-            return dict(row) if row else None
+            if not row:
+                return None
+            row_dict = dict(row)
+            # Parse definitions if it's a JSON string
+            if isinstance(row_dict.get('definitions'), str):
+                try:
+                    row_dict['definitions'] = json.loads(row_dict['definitions'])
+                except json.JSONDecodeError:
+                    row_dict['definitions'] = []
+            elif row_dict.get('definitions') is None:
+                row_dict['definitions'] = []
+            return row_dict
     
     async def update_squad_template(self, template_id: int, template_name: str, definitions: List[Any]):
         async with self.pool.acquire() as connection:
@@ -1264,7 +1353,20 @@ class Database:
                     s.squad_id;
             """
             records = await connection.fetch(query, event_id)
-            return [dict(record) for record in records]
+            # Parse members array if it's a JSON string
+            result = []
+            for record in records:
+                row_dict = dict(record)
+                # Handle members JSON string conversion
+                if isinstance(row_dict.get('members'), str):
+                    try:
+                        row_dict['members'] = json.loads(row_dict['members'])
+                    except json.JSONDecodeError:
+                        row_dict['members'] = []
+                elif row_dict.get('members') is None:
+                    row_dict['members'] = []
+                result.append(row_dict)
+            return result
     
     async def delete_squads_for_event(self, event_id: int):
         async with self.pool.acquire() as connection:
