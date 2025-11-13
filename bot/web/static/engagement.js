@@ -8,7 +8,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const tableBody = document.getElementById('stats-table-body');
     const searchInput = document.getElementById('search-input');
     let allStats = [];
-    let currentSort = { column: 'days_since_last_signup', order: 'desc' };
+    let currentSort = { column: 'accepted_count', order: 'desc' };
 
     const renderTable = (stats) => {
         tableBody.innerHTML = '';
