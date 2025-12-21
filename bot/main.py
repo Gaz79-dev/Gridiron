@@ -10,7 +10,8 @@ from fastapi.middleware.cors import CORSMiddleware
 
 # Use absolute imports from the 'bot' package root
 from bot.utils.database import Database
-from bot.api.routers import events, users, squads, stats, players
+# --- UPDATE: Added white_chats to imports ---
+from bot.api.routers import events, users, squads, stats, players, white_chats
 from bot.api.routers import templates as templates_router
 from bot.api import auth
 
@@ -48,36 +49,37 @@ async def lifespan(app: FastAPI):
     if app.state.db:
         await app.state.db.close()
 
-# --- FastAPI App Setup ---
-app = FastAPI(lifespan=lifespan)
-templates_dir = BASE_DIR / "web/templates"
-app.mount("/static", StaticFiles(directory=str(BASE_DIR / "web/static")), name="static")
-templates = Jinja2Templates(directory=str(templates_dir))
+# --- FastAPI App Initialization ---
+app = FastAPI(title="Squad Builder API", lifespan=lifespan)
 
-origins = [
-    "https://squadbuilder.rdg-clan.co.uk",
-    "http://localhost",
-    "http://localhost:8000",
-]
+# Mount static files (CSS, JS, Images)
+# Ensure the 'static' directory exists inside 'bot/web' or wherever you placed it relative to main.py
+app.mount("/static", StaticFiles(directory=os.path.join(BASE_DIR, "../web/static")), name="static")
 
+templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "../web/templates"))
+
+# --- CORS Middleware ---
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origins=["*"],  # Adjust this in production!
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Include all the API routers
+# --- Register API Routers ---
 app.include_router(auth.router)
-app.include_router(users.router)
 app.include_router(events.router)
 app.include_router(squads.router)
+app.include_router(users.router)
 app.include_router(stats.router)
-app.include_router(templates_router.router)
 app.include_router(players.router)
+app.include_router(templates_router.router)
+# --- UPDATE: Register the White Chats router ---
+app.include_router(white_chats.router)
 
-# --- Web Page Routes ---
+# --- HTML Page Routes ---
+
 @app.get("/login", tags=["HTML"], summary="Serves the login page")
 async def login_page(request: Request):
     return templates.TemplateResponse("login.html", {"request": request})
@@ -111,3 +113,6 @@ async def events_page(request: Request):
 @app.get("/players", tags=["HTML"], summary="Serves the player ratings page")
 async def players_page(request: Request):
     return templates.TemplateResponse("players.html", {"request": request})
+
+if __name__ == "__main__":
+    uvicorn.run("bot.main:app", host="0.0.0.0", port=8000, reload=True)
