@@ -53,7 +53,7 @@ async def _send_rsvp_log_message(user_id: int, event_title: str, old_status: str
     guild_id = os.getenv("GUILD_ID")
 
     if not all([log_channel_id, bot_token, guild_id]):
-        print("Log channel, bot token, or guild ID not configured. Skipping log message.")
+        # print("Log channel, bot token, or guild ID not configured. Skipping log message.")
         return
 
     headers = {"Authorization": f"Bot {bot_token}"}
@@ -310,6 +310,27 @@ class Database:
                         locked_at TIMESTAMP WITH TIME ZONE DEFAULT (NOW() AT TIME ZONE 'utc')
                     );
                 """)
+                
+                # --- WHITE CHATS (Parties) START ---
+                await connection.execute("""
+                    CREATE TABLE IF NOT EXISTS white_chats (
+                        id SERIAL PRIMARY KEY,
+                        event_id INT REFERENCES events(event_id) ON DELETE CASCADE,
+                        name TEXT NOT NULL,
+                        created_at TIMESTAMP WITH TIME ZONE DEFAULT (NOW() AT TIME ZONE 'utc')
+                    );
+                """)
+
+                await connection.execute("""
+                    CREATE TABLE IF NOT EXISTS white_chat_members (
+                        id SERIAL PRIMARY KEY,
+                        white_chat_id INT REFERENCES white_chats(id) ON DELETE CASCADE,
+                        user_id BIGINT NOT NULL,
+                        added_at TIMESTAMP WITH TIME ZONE DEFAULT (NOW() AT TIME ZONE 'utc'),
+                        UNIQUE(white_chat_id, user_id)
+                    );
+                """)
+                # --- WHITE CHATS (Parties) END ---
 
     # --- Guild Settings ---
     async def set_thread_creation_hours(self, guild_id: int, hours: int):
@@ -1371,6 +1392,103 @@ class Database:
     async def delete_squads_for_event(self, event_id: int):
         async with self.pool.acquire() as connection:
             await connection.execute("DELETE FROM squads WHERE event_id = $1;", event_id)
+
+    # --- WHITE CHAT (Party) METHODS ---
+    async def create_white_chat_group(self, event_id: int, name: str) -> int:
+        """Creates a new White Chat group for an event."""
+        async with self.pool.acquire() as connection:
+            return await connection.fetchval(
+                "INSERT INTO white_chats (event_id, name) VALUES ($1, $2) RETURNING id;",
+                event_id, name
+            )
+
+    async def delete_white_chats_for_event(self, event_id: int):
+        """Deletes all white chat groups for an event."""
+        async with self.pool.acquire() as connection:
+            await connection.execute("DELETE FROM white_chats WHERE event_id = $1;", event_id)
+
+    async def add_white_chat_member(self, white_chat_id: int, user_id: int):
+        """Adds a user to a white chat group."""
+        async with self.pool.acquire() as connection:
+            await connection.execute("""
+                INSERT INTO white_chat_members (white_chat_id, user_id)
+                VALUES ($1, $2)
+                ON CONFLICT (white_chat_id, user_id) DO NOTHING;
+            """, white_chat_id, user_id)
+
+    async def remove_white_chat_member(self, white_chat_id: int, user_id: int):
+        """Removes a user from a specific white chat group."""
+        async with self.pool.acquire() as connection:
+            await connection.execute(
+                "DELETE FROM white_chat_members WHERE white_chat_id = $1 AND user_id = $2;",
+                white_chat_id, user_id
+            )
+
+    async def remove_user_from_all_white_chats(self, event_id: int, user_id: int):
+        """Removes a user from ANY white chat associated with a specific event."""
+        async with self.pool.acquire() as connection:
+            await connection.execute("""
+                DELETE FROM white_chat_members wcm
+                USING white_chats wc
+                WHERE wcm.white_chat_id = wc.id
+                AND wc.event_id = $1
+                AND wcm.user_id = $2;
+            """, event_id, user_id)
+
+    async def cleanup_white_chat_memberships(self, event_id: int):
+        """
+        Removes users from white chats if they are no longer in the 'Accepted' list for the event.
+        Used during roster refresh.
+        """
+        async with self.pool.acquire() as connection:
+            await connection.execute("""
+                DELETE FROM white_chat_members wcm
+                USING white_chats wc
+                WHERE wcm.white_chat_id = wc.id
+                AND wc.event_id = $1
+                AND wcm.user_id NOT IN (
+                    SELECT user_id FROM signups 
+                    WHERE event_id = $1 AND rsvp_status = 'Accepted'
+                );
+            """, event_id)
+
+    async def get_white_chats_with_members(self, event_id: int) -> List[Dict]:
+        """Retrieves all white chats for an event, including member details."""
+        async with self.pool.acquire() as connection:
+            query = """
+                SELECT 
+                    wc.id, wc.name,
+                    COALESCE(
+                        json_agg(
+                            json_build_object(
+                                'user_id', wcm.user_id::text,
+                                'display_name', COALESCE(ps.display_name, wcm.user_id::text),
+                                'game_player_id', ps.game_player_id
+                            ) ORDER BY ps.display_name
+                        ) FILTER (WHERE wcm.user_id IS NOT NULL),
+                        '[]'
+                    ) as members
+                FROM white_chats wc
+                LEFT JOIN white_chat_members wcm ON wc.id = wcm.white_chat_id
+                LEFT JOIN player_stats ps ON wcm.user_id = ps.user_id
+                WHERE wc.event_id = $1
+                GROUP BY wc.id
+                ORDER BY wc.id;
+            """
+            records = await connection.fetch(query, event_id)
+            
+            result = []
+            for record in records:
+                row_dict = dict(record)
+                if isinstance(row_dict.get('members'), str):
+                    try:
+                        row_dict['members'] = json.loads(row_dict['members'])
+                    except json.JSONDecodeError:
+                        row_dict['members'] = []
+                elif row_dict.get('members') is None:
+                    row_dict['members'] = []
+                result.append(row_dict)
+            return result
     
     async def close(self):
         if self.pool: await self.pool.close(); print("Database connection pool closed.")
