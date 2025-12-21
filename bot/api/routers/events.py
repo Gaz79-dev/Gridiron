@@ -311,6 +311,12 @@ async def refresh_event_roster(event_id: int, request: RosterUpdateRequest, db: 
     users_to_remove = current_member_ids - accepted_user_ids
     for user_id in users_to_remove:
         await db.remove_user_from_all_squads(event_id, user_id)
+    
+    # --- NEW: Cleanup White Chats ---
+    # Automatically remove users from white chats if they are no longer Accepted for the event.
+    await db.cleanup_white_chat_memberships(event_id)
+    # -------------------------------
+
     squads_with_members = await db.get_squads_with_members(event_id)
     all_current_db_member_ids = {int(member['user_id']) for squad in squads_with_members for member in squad.get('members', [])}
     new_users = accepted_user_ids - all_current_db_member_ids
@@ -354,4 +360,3 @@ async def send_draft_embed(
     Sends a squad composition embed to a Discord channel without triggering any learning.
     """
     await _send_embed_to_discord(event_id, request, db, is_draft=True)
-
