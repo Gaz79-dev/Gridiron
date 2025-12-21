@@ -1,6 +1,6 @@
 import re
 from collections import defaultdict
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Any
 import json
 
 # Use absolute imports from the 'bot' package root
@@ -25,10 +25,15 @@ ROLE_PRIORITY = [
 
 # --- AI Helper Functions ---
 
-def _calculate_suitability_score(player_stats: Dict, target_squad_type: str, target_role: str) -> float:
+def _calculate_suitability_score(player_stats: Dict[str, Any], target_squad_type: str, target_role: str) -> float:
     """
     Calculates a player's suitability for a specific role and squad type.
     """
+    # Safety Check: Ensure player_stats is actually a dictionary
+    if not isinstance(player_stats, dict):
+        print(f"WARNING: _calculate_suitability_score received non-dict player_stats: {type(player_stats)} - {player_stats}")
+        return 0.0
+
     # Weights for the scoring algorithm
     SIGNUP_MATCH_WEIGHT = 0.50  # High priority: Did they sign up for this role?
     RATING_WEIGHT = 0.30        # Medium priority: Are they a highly rated player?
@@ -36,32 +41,47 @@ def _calculate_suitability_score(player_stats: Dict, target_squad_type: str, tar
     SQUAD_AFFINITY_WEIGHT = 0.05
 
     # 1. Signup Match Score (0 or 100)
-    # We strip spaces/case just in case, though DB usually keeps them clean.
-    signup_role = player_stats.get('subclass_name', '')
+    # Safely get subclass_name
+    signup_role = player_stats.get('subclass_name')
+    if signup_role is None:
+        signup_role = ''
+    
     signup_match = 1.0 if signup_role == target_role else 0.0
 
     # 2. Rating Score
-    rating = player_stats.get('rating', 50)
+    rating = player_stats.get('rating')
+    if not isinstance(rating, (int, float)):
+        rating = 50
 
     # 3. Affinity Scores (Learning from history)
     affinities_raw = player_stats.get('role_affinities')
     affinities = {}
     
+    # Robust parsing logic
     if isinstance(affinities_raw, str):
         try:
-            affinities = json.loads(affinities_raw)
-        except json.JSONDecodeError:
+            parsed = json.loads(affinities_raw)
+            if isinstance(parsed, dict):
+                affinities = parsed
+        except (json.JSONDecodeError, TypeError):
             affinities = {} 
     elif isinstance(affinities_raw, dict):
         affinities = affinities_raw
         
-    squad_counts = affinities.get('squad_types', {})
-    role_counts = affinities.get('roles', {})
+    # Ensure affinities is strictly a dict before calling .get()
+    if not isinstance(affinities, dict):
+        affinities = {}
 
-    total_squad_placements = sum(squad_counts.values())
+    squad_counts = affinities.get('squad_types')
+    if not isinstance(squad_counts, dict): squad_counts = {}
+    
+    role_counts = affinities.get('roles')
+    if not isinstance(role_counts, dict): role_counts = {}
+
+    total_squad_placements = sum(squad_counts.values()) if squad_counts else 0
     squad_affinity = (squad_counts.get(target_squad_type, 0) / total_squad_placements) if total_squad_placements > 0 else 0
 
-    total_role_placements = sum(role_counts.values())
+    total_role_placements = sum(role_counts.values()) if role_counts else 0
     role_affinity = (role_counts.get(target_role, 0) / total_role_placements) if total_role_placements > 0 else 0
 
     # Composite Score Calculation
@@ -108,9 +128,6 @@ async def run_ai_draft(db: Database, event_id: int, request: SquadBuildRequest) 
     current_squads_list = await db.get_squads_with_members(event_id)
     current_squads_map = {s['name']: s for s in current_squads_list}
     
-    # We DO NOT need to fetch 'get_all_players_for_admin_panel' here.
-    # The signups list below contains all the rich data (affinities, rating) we need.
-    
     template = await db.get_squad_template_by_id(request.template_id)
     if not template:
         raise ValueError("Squad template not found.")
@@ -155,8 +172,11 @@ async def run_ai_draft(db: Database, event_id: int, request: SquadBuildRequest) 
     # The remaining players are now correctly available for placement
     available_player_pools = defaultdict(list)
     for player_data in available_players_map.values():
-        pool_key = player_data.get('role_name') or "Unassigned"
-        available_player_pools[pool_key].append(player_data)
+        if isinstance(player_data, dict):
+            pool_key = player_data.get('role_name') or "Unassigned"
+            available_player_pools[pool_key].append(player_data)
+        else:
+            print(f"Skipping invalid player data in pool: {player_data}")
         
     # 4. FILL NEWLY CREATED SQUADS using a squad-centric approach
     for squad_name in desired_squad_names:
@@ -170,7 +190,8 @@ async def run_ai_draft(db: Database, event_id: int, request: SquadBuildRequest) 
             squad_size = 6 if definition['squad_type'] == "Infantry" else 3 if definition['squad_type'] == "Armour" else 2
             
             # Get the correct pool of players for this squad
-            eligible_players = available_player_pools[definition['source_rsvp_pool']]
+            pool_key = definition.get('source_rsvp_pool', 'Unassigned')
+            eligible_players = available_player_pools[pool_key]
             
             roles_to_fill = ROLE_PRIORITY
             if definition['squad_type'] == "Armour":
@@ -188,7 +209,8 @@ async def run_ai_draft(db: Database, event_id: int, request: SquadBuildRequest) 
                 best_player = None
                 highest_score = -1
                 
-                for player in eligible_players:
+                # Iterate over a copy to allow safe removal
+                for player in eligible_players[:]:
                     # Pass the player object directly. It has the affinities data.
                     score = _calculate_suitability_score(player, definition['squad_type'], role)
                     if score > highest_score:
@@ -197,13 +219,13 @@ async def run_ai_draft(db: Database, event_id: int, request: SquadBuildRequest) 
                 
                 if best_player:
                     # CRITICAL FIX: Explicitly assign the role for this slot to the player object
-                    # This ensures that even if they signed up as AT, if we slot them as Rifleman,
-                    # they are saved as Rifleman.
-                    best_player['assigned_role_name'] = role
+                    if isinstance(best_player, dict):
+                        best_player['assigned_role_name'] = role
                     
-                    new_squad_members.append(best_player)
-                    class_counts[role] += 1
-                    eligible_players.remove(best_player)
+                        new_squad_members.append(best_player)
+                        class_counts[role] += 1
+                        if best_player in eligible_players:
+                            eligible_players.remove(best_player)
             
             new_squads_map[squad_name] = new_squad_members
 
@@ -217,16 +239,18 @@ async def run_ai_draft(db: Database, event_id: int, request: SquadBuildRequest) 
         
         squad_id = await db.create_squad(event_id, squad_name, definition['squad_type'])
         for member in new_squads_map.get(squad_name, []):
-            # We prioritize the assigned_role_name we set in the loop above
-            assigned_role = member.get('assigned_role_name') or member.get('subclass_name') or 'Unassigned'
-            await db.add_squad_member(squad_id, int(member['user_id']), assigned_role)
+            if isinstance(member, dict):
+                # We prioritize the assigned_role_name we set in the loop above
+                assigned_role = member.get('assigned_role_name') or member.get('subclass_name') or 'Unassigned'
+                await db.add_squad_member(squad_id, int(member['user_id']), assigned_role)
 
     # Add any leftover players to a new Reserves squad
     reserves_id = await db.create_squad(event_id, "Reserves", "Reserves")
     remaining_players = [p for pool in available_player_pools.values() for p in pool]
     for player in remaining_players:
-        # Fallback to signup class for reserves
-        assigned_role = player.get('subclass_name') or player.get('role_name') or 'Unassigned'
-        await db.add_squad_member(reserves_id, int(player['user_id']), assigned_role)
+        if isinstance(player, dict):
+            # Fallback to signup class for reserves
+            assigned_role = player.get('subclass_name') or player.get('role_name') or 'Unassigned'
+            await db.add_squad_member(reserves_id, int(player['user_id']), assigned_role)
 
     return await db.get_squads_with_members(event_id)
