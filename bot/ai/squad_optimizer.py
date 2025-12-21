@@ -1,3 +1,4 @@
+import re
 from collections import defaultdict
 from typing import List, Dict, Optional
 import json
@@ -28,21 +29,32 @@ def _calculate_suitability_score(player_stats: Dict, target_squad_type: str, tar
     """
     Calculates a player's suitability for a specific role and squad type.
     """
-    RATING_WEIGHT = 0.60
-    SQUAD_AFFINITY_WEIGHT = 0.15
-    ROLE_AFFINITY_WEIGHT = 0.25
+    # Weights for the scoring algorithm
+    SIGNUP_MATCH_WEIGHT = 0.50  # High priority: Did they sign up for this role?
+    RATING_WEIGHT = 0.30        # Medium priority: Are they a highly rated player?
+    ROLE_AFFINITY_WEIGHT = 0.15 # Low priority: Do they play this role often?
+    SQUAD_AFFINITY_WEIGHT = 0.05
 
+    # 1. Signup Match Score (0 or 100)
+    # We strip spaces/case just in case, though DB usually keeps them clean.
+    signup_role = player_stats.get('subclass_name', '')
+    signup_match = 1.0 if signup_role == target_role else 0.0
+
+    # 2. Rating Score
     rating = player_stats.get('rating', 50)
+
+    # 3. Affinity Scores (Learning from history)
     affinities_raw = player_stats.get('role_affinities')
     affinities = {}
+    
     if isinstance(affinities_raw, str):
         try:
             affinities = json.loads(affinities_raw)
         except json.JSONDecodeError:
-            affinities = {} # Default to empty if JSON is malformed
+            affinities = {} 
     elif isinstance(affinities_raw, dict):
         affinities = affinities_raw
-    # affinities = player_stats.get('role_affinities', {}) <--- DELETE THIS LINE
+        
     squad_counts = affinities.get('squad_types', {})
     role_counts = affinities.get('roles', {})
 
@@ -52,18 +64,18 @@ def _calculate_suitability_score(player_stats: Dict, target_squad_type: str, tar
     total_role_placements = sum(role_counts.values())
     role_affinity = (role_counts.get(target_role, 0) / total_role_placements) if total_role_placements > 0 else 0
 
+    # Composite Score Calculation
     suitability_score = (
+        (signup_match * 100 * SIGNUP_MATCH_WEIGHT) +
         (rating * RATING_WEIGHT) +
-        (squad_affinity * 100 * SQUAD_AFFINITY_WEIGHT) +
-        (role_affinity * 100 * ROLE_AFFINITY_WEIGHT)
+        (role_affinity * 100 * ROLE_AFFINITY_WEIGHT) +
+        (squad_affinity * 100 * SQUAD_AFFINITY_WEIGHT)
     )
+    
     return suitability_score
-
-import re # Add this import at the top of your file
 
 def get_squad_iteration(base_name: str, existing_names: List[str], convention: str, group_index: int) -> str:
     """Gets the next available name for a squad, avoiding collisions."""
-    # Find the highest existing count for this base name and group index
     highest_count = 0
     for name in existing_names:
         if name.startswith(base_name):
@@ -74,7 +86,6 @@ def get_squad_iteration(base_name: str, existing_names: List[str], convention: s
             elif convention == 'alpha':
                 match = re.search(r' ([A-Z])$', name)
                 if match:
-                    # Convert letter back to a number (A=1, B=2)
                     num = ord(match.group(1)) - ord('A') + 1
                     highest_count = max(highest_count, num)
 
@@ -96,8 +107,9 @@ async def run_ai_draft(db: Database, event_id: int, request: SquadBuildRequest) 
     # 1. GET CURRENT & DESIRED STATE
     current_squads_list = await db.get_squads_with_members(event_id)
     current_squads_map = {s['name']: s for s in current_squads_list}
-    player_stats_records = await db.get_all_players_for_admin_panel()
-    player_stats_map = {str(p['user_id']): p for p in player_stats_records}
+    
+    # We DO NOT need to fetch 'get_all_players_for_admin_panel' here.
+    # The signups list below contains all the rich data (affinities, rating) we need.
     
     template = await db.get_squad_template_by_id(request.template_id)
     if not template:
@@ -123,10 +135,10 @@ async def run_ai_draft(db: Database, event_id: int, request: SquadBuildRequest) 
         if convention == 'numeric':
             numeric_group_index += 1
             
-    # 3. RECONCILE: Fetch ALL accepted players first, then handle preserved squads.
+    # 3. RECONCILE: Fetch ALL accepted players first
     new_squads_map = {}
     
-    # Get all players who have accepted the event signup
+    # Get all players who have accepted. This list INCLUDES rating and role_affinities.
     all_accepted_signups = await db.get_signups_for_roster_page(event_id)
     available_players_map = {
         int(p['user_id']): p for p in all_accepted_signups if p['rsvp_status'] == RsvpStatus.ACCEPTED
@@ -169,18 +181,26 @@ async def run_ai_draft(db: Database, event_id: int, request: SquadBuildRequest) 
             # Fill the squad role-by-role using AI score
             for role in roles_to_fill:
                 if len(new_squad_members) >= squad_size: break
+                
+                # STRICT CHECK: Do not add if we are already at the limit for this role
                 if class_counts[role] >= CLASS_LIMITS.get(role, 99): continue
 
                 best_player = None
                 highest_score = -1
+                
                 for player in eligible_players:
-                    player_stats = player_stats_map.get(str(player['user_id']), {})
-                    score = _calculate_suitability_score(player_stats, definition['squad_type'], role)
+                    # Pass the player object directly. It has the affinities data.
+                    score = _calculate_suitability_score(player, definition['squad_type'], role)
                     if score > highest_score:
                         highest_score = score
                         best_player = player
                 
                 if best_player:
+                    # CRITICAL FIX: Explicitly assign the role for this slot to the player object
+                    # This ensures that even if they signed up as AT, if we slot them as Rifleman,
+                    # they are saved as Rifleman.
+                    best_player['assigned_role_name'] = role
+                    
                     new_squad_members.append(best_player)
                     class_counts[role] += 1
                     eligible_players.remove(best_player)
@@ -197,7 +217,7 @@ async def run_ai_draft(db: Database, event_id: int, request: SquadBuildRequest) 
         
         squad_id = await db.create_squad(event_id, squad_name, definition['squad_type'])
         for member in new_squads_map.get(squad_name, []):
-            # The member object could be from get_squads_with_members OR get_signups_for_roster_page
+            # We prioritize the assigned_role_name we set in the loop above
             assigned_role = member.get('assigned_role_name') or member.get('subclass_name') or 'Unassigned'
             await db.add_squad_member(squad_id, int(member['user_id']), assigned_role)
 
@@ -205,7 +225,8 @@ async def run_ai_draft(db: Database, event_id: int, request: SquadBuildRequest) 
     reserves_id = await db.create_squad(event_id, "Reserves", "Reserves")
     remaining_players = [p for pool in available_player_pools.values() for p in pool]
     for player in remaining_players:
-        assigned_role = player.get('assigned_role_name') or player.get('subclass_name') or 'Unassigned'
+        # Fallback to signup class for reserves
+        assigned_role = player.get('subclass_name') or player.get('role_name') or 'Unassigned'
         await db.add_squad_member(reserves_id, int(player['user_id']), assigned_role)
 
     return await db.get_squads_with_members(event_id)
