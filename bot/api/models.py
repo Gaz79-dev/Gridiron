@@ -203,3 +203,21 @@ class PlayerEventHistoryEntry(BaseModel):
     role_name: Optional[str] = None
     subclass_name: Optional[str] = None
 # --- FIX END ---
+
+# --- White Chat (Party) Models ---
+class WhiteChatMember(BaseModel):
+    user_id: str
+    display_name: str
+    game_player_id: Optional[str] = None
+
+class WhiteChat(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    name: str
+    members: List[WhiteChatMember] = []
+
+class WhiteChatCreateRequest(BaseModel):
+    count: int
+
+class WhiteChatMemberRequest(BaseModel):
+    user_id: str
