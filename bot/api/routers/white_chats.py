@@ -1,10 +1,10 @@
-import discord
+import os
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Body, status
-from typing import List, Dict
+from typing import List, Dict, Any
 
-from discord.ext import commands
 from bot.api import auth
-from bot.api.dependencies import get_db, get_bot
+from bot.api.dependencies import get_db
 from bot.utils.database import Database
 from bot.api.models import WhiteChat, WhiteChatCreateRequest, WhiteChatMemberRequest
 
@@ -13,6 +13,9 @@ router = APIRouter(
     tags=["white-chats"],
     dependencies=[Depends(auth.get_current_active_user)],
 )
+
+# Load Bot Token
+BOT_TOKEN = os.getenv("DISCORD_TOKEN")
 
 @router.get("/event/{event_id}", response_model=List[WhiteChat])
 async def get_white_chats(event_id: int, db: Database = Depends(get_db)):
@@ -54,17 +57,6 @@ async def add_member(
     Adds a user to a white chat group.
     Ensures the user is removed from any other white chat in the same event first.
     """
-    # 1. We need the event_id to ensure exclusivity (user can only be in one party per event)
-    # We can fetch the event_id by looking up the white_chat
-    # Since we don't have a direct 'get_white_chat' method that returns event_id easily exposed,
-    # we can run a quick query or assume the frontend handles it. 
-    # However, for safety, let's look up the event ID.
-    
-    # We'll fetch all chats for the event to find which one this ID belongs to
-    # (A bit inefficient but safe without adding new DB methods)
-    # Actually, let's just use a direct SQL check if possible, or rely on the cleanup logic.
-    # To be robust, let's assume we need to clean up first.
-    
     # Efficient approach: Fetch the white chat to get the event_id
     async with db.pool.acquire() as conn:
         event_id = await conn.fetchval("SELECT event_id FROM white_chats WHERE id = $1", white_chat_id)
@@ -98,21 +90,18 @@ async def remove_member(
 async def send_white_chat_notification(
     event_id: int,
     channel_id_payload: Dict[str, str] = Body(...),
-    db: Database = Depends(get_db),
-    bot: commands.Bot = Depends(get_bot)
+    db: Database = Depends(get_db)
 ):
     """
     Generates a Discord Embed listing all white chats and members, and sends it to the specified channel.
+    Uses HTTP requests to Discord API to avoid needing a Bot instance in the Web process.
     """
     channel_id_str = channel_id_payload.get("channel_id")
     if not channel_id_str:
         raise HTTPException(status_code=400, detail="channel_id is required")
-        
-    try:
-        channel_id = int(channel_id_str)
-        channel = bot.get_channel(channel_id) or await bot.fetch_channel(channel_id)
-    except (ValueError, discord.NotFound, discord.Forbidden):
-        raise HTTPException(status_code=400, detail="Invalid Channel ID or Bot missing permissions.")
+    
+    if not BOT_TOKEN:
+        raise HTTPException(status_code=500, detail="Bot token not configured on server.")
 
     # 1. Fetch Data
     event = await db.get_event_by_id(event_id)
@@ -123,37 +112,49 @@ async def send_white_chat_notification(
     if not parties:
         raise HTTPException(status_code=400, detail="No white chats created for this event.")
 
-    # 2. Build Embed
-    embed = discord.Embed(
-        title=f"Competitive Voice Channels - {event['title']}",
-        description="Please join your assigned white chat/party voice channel.",
-        color=0xFFFFFF, # White color
-        timestamp=discord.utils.utcnow()
-    )
-
+    # 2. Build Embed Dictionary (Raw JSON for Discord API)
+    fields = []
     for party in parties:
         member_list = party.get("members", [])
         if not member_list:
             content = "*Empty*"
         else:
-            # Format: Display Name
-            # We could optionally add game_player_id if needed, but names are usually sufficient for Discord
             lines = []
             for m in member_list:
                 lines.append(f"• {m['display_name']}")
             content = "\n".join(lines)
         
-        embed.add_field(
-            name=f"⚪ {party['name']}",
-            value=content,
-            inline=True
-        )
+        fields.append({
+            "name": f"⚪ {party['name']}",
+            "value": content,
+            "inline": True
+        })
 
-    # 3. Send Message
-    try:
-        await channel.send(embed=embed)
-    except Exception as e:
-        print(f"Error sending white chat embed: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to send Discord message: {str(e)}")
+    embed = {
+        "title": f"Competitive Voice Channels - {event['title']}",
+        "description": "Please join your assigned white chat/party voice channel.",
+        "color": 16777215, # White color (0xFFFFFF)
+        "fields": fields
+    }
+
+    payload = {
+        "embeds": [embed]
+    }
+
+    # 3. Send Message via HTTP
+    url = f"https://discord.com/api/v10/channels/{channel_id_str}/messages"
+    headers = {"Authorization": f"Bot {BOT_TOKEN}"}
+
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.post(url, headers=headers, json=payload)
+            response.raise_for_status()
+        except httpx.HTTPStatusError as e:
+            print(f"Error sending white chat embed to Discord: {e}")
+            print(f"Response: {e.response.text}")
+            raise HTTPException(status_code=502, detail=f"Failed to send Discord message: {e.response.text}")
+        except Exception as e:
+            print(f"Unexpected error sending white chat embed: {e}")
+            raise HTTPException(status_code=500, detail="Internal server error sending message.")
 
     return {"message": "White chat notification sent successfully."}
