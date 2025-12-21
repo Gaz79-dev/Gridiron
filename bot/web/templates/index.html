@@ -26,78 +26,70 @@
                 <a href="/stats" class="text-gray-300 hover:text-white px-3 py-2 rounded-md text-sm font-medium">Match Stats</a>
                 <a href="/engagement" class="text-gray-300 hover:text-white px-3 py-2 rounded-md text-sm font-medium">Engagement</a>
                 <a href="/events" class="text-gray-300 hover:text-white px-3 py-2 rounded-md text-sm font-medium">Events</a>
-                <a href="/admin" id="admin-link" class="text-gray-300 hover:text-white px-3 py-2 rounded-md text-sm font-medium hidden">Admin</a>
+                <a href="/admin" id="admin-link" class="hidden text-gray-300 hover:text-white px-3 py-2 rounded-md text-sm font-medium">Admin</a>
                 <button id="logout-btn" class="text-gray-300 hover:text-white px-3 py-2 rounded-md text-sm font-medium">Logout</button>
             </div>
         </nav>
     </header>
 
-    <main class="container mx-auto px-6 py-8">
-        
-        <section id="controls-section" class="bg-gray-800 p-6 rounded-lg shadow-md mb-8">
-            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 items-end">
-                <div>
-                    <label for="event-dropdown" class="block text-sm font-medium mb-1">Select Event</label>
-                    <select id="event-dropdown" class="w-full bg-gray-700 border border-gray-600 rounded-md p-2 text-white focus:ring-blue-500 focus:border-blue-500">
-                        <option value="">-- Choose an Event --</option>
-                        </select>
-                </div>
+    <div id="lock-overlay" class="hidden flex items-center justify-center">
+        <div class="text-center p-8 bg-gray-800 rounded-lg shadow-xl">
+            <h2 class="text-2xl font-bold text-yellow-400 mb-4">Event Locked</h2>
+            <p id="lock-message" class="text-lg"></p>
+            <button id="clear-lock-btn" class="mt-6 bg-gray-600 hover:bg-gray-700 text-white font-bold py-2 px-4 rounded-md">
+                Acknowledge & Select New Event
+            </button>
+        </div>
+    </div>
 
-                <div>
-                    <label for="template-dropdown" class="block text-sm font-medium mb-1">Squad Template</label>
-                    <select id="template-dropdown" class="w-full bg-gray-700 border border-gray-600 rounded-md p-2 text-white">
-                        <option value="">-- Choose a Template --</option>
-                        </select>
+    <div id="main-content">
+        <main class="container mx-auto px-6 py-8">
+            <section id="event-selection" class="bg-gray-800 p-6 rounded-lg shadow-md mb-8">
+                <h2 class="text-xl font-semibold mb-4 text-white">Step 1: Select an Event</h2>
+                <select id="event-dropdown" class="w-full p-2 bg-gray-700 border border-gray-600 rounded-md">
+                    <option>Loading events...</option>
+                </select>
+            </section>
+
+            <section id="roster-and-build" class="hidden grid grid-cols-1 md:grid-cols-3 gap-8 mb-8">
+                <div class="md:col-span-1 bg-gray-800 p-6 rounded-lg shadow-md">
+                    <h2 class="text-xl font-semibold mb-4 text-white">Event Roster</h2>
+                    <div id="roster-list" class="space-y-2 max-h-96 overflow-y-auto"></div>
                 </div>
-                
-                 <div id="build-form" class="hidden flex gap-2">
-                    <button id="build-btn" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-md h-10 self-end w-full">
+                <div class="md:col-span-2 bg-gray-800 p-6 rounded-lg shadow-md">
+                    <h2 class="text-xl font-semibold mb-4 text-white">Step 2: Define Squads</h2>
+                    
+                    <div class="mb-4">
+                        <label for="template-dropdown" class="block text-sm font-medium">Load Squad Template</label>
+                        <select id="template-dropdown" class="w-full p-2 bg-gray-700 border border-gray-600 rounded-md mt-1">
+                            <option value="">-- Manual Build --</option>
+                        </select>
+                    </div>
+                    
+                    <form id="build-form" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 border-t border-gray-700 pt-4">
+                        </form>
+                     <button id="build-btn" class="mt-6 w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-md transition duration-300">
                         Build Squads
                     </button>
                 </div>
+            </section>
 
-                <div class="flex gap-2 justify-end">
-                     <button id="refresh-roster-btn" class="bg-yellow-600 hover:bg-yellow-700 text-white font-bold py-2 px-4 rounded-md h-10" title="Refresh Roster & Remove Invalid Players">
-                        Refresh
+            <section id="workshop-section" class="hidden bg-gray-800 p-6 rounded-lg shadow-md">
+                <div class="flex justify-between items-center mb-4">
+                    <div>
+                        <h2 class="text-xl font-semibold text-white">Step 3: Finalize and Send</h2>
+                        <p class="text-sm text-gray-400 mt-1">
+                            Team Size: <span id="team-size-counter" class="font-bold text-white">0</span>
+                        </p>
+                    </div>
+                    <button id="refresh-roster-btn" class="bg-purple-600 hover:bg-purple-700 text-white font-bold py-2 px-4 rounded-md text-sm">
+                        Refresh Roster
                     </button>
                 </div>
-            </div>
-        </section>
 
-        <section id="roster-and-build" class="grid grid-cols-1 lg:grid-cols-4 gap-6 hidden">
-            <div id="roster-section" class="lg:col-span-1 bg-gray-800 p-4 rounded-lg shadow-md h-fit max-h-[80vh] overflow-y-auto">
-                <h2 class="text-xl font-bold text-white mb-4 border-b border-gray-700 pb-2">Roster</h2>
-                <div id="roster-list" class="space-y-2">
-                    </div>
-            </div>
+                <div id="workshop-area" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 mb-6"></div>
 
-            <div id="workshop-section" class="lg:col-span-3 bg-gray-800 p-4 rounded-lg shadow-md flex flex-col min-h-[600px]">
-                <div class="flex justify-between items-center mb-4 border-b border-gray-700 pb-2">
-                    <h2 class="text-xl font-bold text-white">Squad Workshop</h2>
-                    <div class="flex gap-2">
-                         <div class="flex items-center mr-4">
-                            <label for="channel-dropdown" class="text-sm mr-2">Target Channel:</label>
-                            <select id="channel-dropdown" class="bg-gray-700 border border-gray-600 rounded px-2 py-1 text-sm w-40">
-                                <option value="">Select Channel...</option>
-                            </select>
-                        </div>
-                         <button id="send-draft-btn" class="bg-blue-500 hover:bg-blue-600 text-white font-bold py-1 px-3 rounded text-sm">
-                            Send Draft Embed
-                        </button>
-                        <button id="finalize-btn" class="bg-green-600 hover:bg-green-700 text-white font-bold py-1 px-3 rounded text-sm">
-                            Finalize to Discord
-                        </button>
-                    </div>
-                </div>
-
-                <div id="workshop-area" class="flex-grow space-y-4">
-                    <div class="text-center text-gray-500 mt-20">
-                        <p class="text-xl">Select a Template and Click "Build Squads"</p>
-                        <p class="text-sm mt-2">Or wait for the admin to load the squads.</p>
-                    </div>
-                </div>
-
-                <div id="white-chat-section" class="mt-8 pt-6 border-t border-gray-700 hidden">
+                <div id="white-chat-section" class="mb-6 pt-6 border-t border-gray-700 hidden">
                     <div class="flex justify-between items-center mb-4">
                         <h2 class="text-xl font-bold text-white">White Chat / Party Manager</h2>
                         <div class="flex items-center gap-2">
@@ -119,34 +111,57 @@
                     <div id="white-chats-list" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                         </div>
                 </div>
+                <div class="flex items-center my-4">
+                    <input id="mention-attendees-checkbox" type="checkbox" class="h-4 w-4 text-blue-600 bg-gray-700 border-gray-600 rounded">
+                    <label for="mention-attendees-checkbox" class="ml-2 block text-sm font-medium text-gray-300">
+                        Mention all accepted attendees in the message?
+                    </label>
                 </div>
-        </section>
-
-    </main>
-
-    <div id="lock-overlay" class="hidden flex flex-col items-center justify-center text-white">
-        <svg class="w-16 h-16 mb-4 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path>
-        </svg>
-        <h2 class="text-2xl font-bold mb-2">Event Locked</h2>
-        <p class="text-lg">This event is currently being edited by <span id="locked-by-user" class="font-bold text-yellow-400">another admin</span>.</p>
-        <p class="text-sm text-gray-400 mt-2">Please wait for them to finish.</p>
-        <button id="force-unlock-btn" class="mt-8 bg-red-700 hover:bg-red-800 text-white font-bold py-2 px-6 rounded hidden">
-            Force Unlock (Admin)
-        </button>
+                
+                <div class="border-t border-gray-700 pt-6">
+                    <div class="flex flex-col sm:flex-row gap-4">
+                        <select id="channel-dropdown" class="flex-grow p-2 bg-gray-700 border border-gray-600 rounded-md"></select>
+                        <button id="send-draft-btn" class="bg-gray-600 hover:bg-gray-700 text-white font-bold py-2 px-4 rounded-md transition duration-300">
+                            Send Draft Embed
+                        </button>
+                        <button id="finalize-btn" class="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-md transition duration-300">
+                            Finalize Squads & Learn
+                        </button>
+                    </div>
+                    <p class="text-xs text-gray-500 mt-2 text-center sm:text-left">Use 'Send Draft' for feedback. Use 'Finalize' to send the official lineup and teach the AI for future events.</p>
+                </div>
+                </section>
+        </main>
     </div>
 
-    <div id="task-modal" class="hidden fixed inset-0 bg-gray-900 bg-opacity-75 flex items-center justify-center z-50">
+    <div id="edit-member-modal" class="hidden fixed inset-0 bg-gray-900 bg-opacity-75 flex items-center justify-center z-50">
         <div class="bg-gray-800 p-8 rounded-lg shadow-xl w-full max-w-md">
-            <h2 class="text-xl font-semibold mb-4 text-white">Set Startup Task</h2>
-            <form id="task-form">
-                <input type="hidden" id="task-modal-member-id">
+            <h2 class="text-xl font-semibold mb-4 text-white">Edit Member: <span id="modal-member-name" class="font-bold"></span></h2>
+            <form id="edit-member-form">
+                <input type="hidden" id="modal-member-id">
                 <div>
-                    <label for="task-input" class="block text-sm font-medium">Task / Note</label>
-                    <input type="text" id="task-input" class="mt-1 block w-full bg-gray-700 border-gray-600 rounded-md p-2 text-white" placeholder="e.g. Build Nodes">
+                    <label for="modal-role-select" class="block text-sm font-medium">New Role</label>
+                    <select id="modal-role-select" required class="mt-1 block w-full bg-gray-700 border-gray-600 rounded-md py-2 px-3"></select>
                 </div>
                 <div class="mt-6 flex justify-end space-x-4">
-                    <button type="button" id="task-cancel-btn" class="bg-gray-600 hover:bg-gray-700 text-white font-bold py-2 px-4 rounded-md">Cancel</button>
+                    <button type="button" id="modal-cancel-btn" class="bg-gray-600 hover:bg-gray-700 text-white font-bold py-2 px-4 rounded-md">Cancel</button>
+                    <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-md">Save Changes</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div id="assign-task-modal" class="hidden fixed inset-0 bg-gray-900 bg-opacity-75 flex items-center justify-center z-50">
+        <div class="bg-gray-800 p-8 rounded-lg shadow-xl w-full max-w-md">
+            <h2 class="text-xl font-semibold mb-4 text-white">Assign Task: <span id="task-modal-member-name" class="font-bold"></span></h2>
+            <form id="assign-task-form">
+                <input type="hidden" id="task-modal-member-id">
+                <div>
+                    <label for="modal-task-select" class="block text-sm font-medium">Startup Task</label>
+                    <select id="modal-task-select" class="mt-1 block w-full bg-gray-700 border-gray-600 rounded-md py-2 px-3"></select>
+                </div>
+                <div class="mt-6 flex justify-end space-x-4">
+                    <button type="button" id="task-modal-cancel-btn" class="bg-gray-600 hover:bg-gray-700 text-white font-bold py-2 px-4 rounded-md">Cancel</button>
                     <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-md">Save Task</button>
                 </div>
             </form>
@@ -164,14 +179,14 @@
                 </div>
                 <div class="mt-6 flex justify-end space-x-4">
                     <button type="button" id="promote-modal-cancel-btn" class="bg-gray-600 hover:bg-gray-700 text-white font-bold py-2 px-4 rounded-md">Cancel</button>
-                    <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-md">Promote & Add to Reserves</button>
+                    <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-md">Promote to Accepted</button>
                 </div>
             </form>
         </div>
     </div>
 
     <script src="/static/auth.js"></script>
-    <script src="/static/main-v2.js"></script>
+    <script src="/static/main-v2.js?v=3"></script>
     <script src="/static/white_chats.js"></script>
 </body>
 </html>
