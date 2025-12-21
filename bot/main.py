@@ -10,7 +10,6 @@ from fastapi.middleware.cors import CORSMiddleware
 
 # Use absolute imports from the 'bot' package root
 from bot.utils.database import Database
-# --- UPDATE: Added white_chats to imports ---
 from bot.api.routers import events, users, squads, stats, players, white_chats
 from bot.api.routers import templates as templates_router
 from bot.api import auth
@@ -19,11 +18,10 @@ from bot.api import auth
 load_dotenv()
 
 # --- Define Base Directory ---
+# This resolves to /usr/src/app/bot inside the container
 BASE_DIR = Path(__file__).resolve().parent
 
 # --- App State & Lifespan for the Web Server ---
-# bot/main.py
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
@@ -52,16 +50,32 @@ async def lifespan(app: FastAPI):
 # --- FastAPI App Initialization ---
 app = FastAPI(title="Squad Builder API", lifespan=lifespan)
 
-# Mount static files (CSS, JS, Images)
-# Ensure the 'static' directory exists inside 'bot/web' or wherever you placed it relative to main.py
-app.mount("/static", StaticFiles(directory=os.path.join(BASE_DIR, "../web/static")), name="static")
+# --- FIX: Corrected Paths for Gridiron/bot/web structure ---
+# Since main.py is in 'bot/', and web is in 'bot/web/', we just look in 'web/...'
+static_dir = os.path.join(BASE_DIR, "web/static")
+templates_dir = os.path.join(BASE_DIR, "web/templates")
 
-templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "../web/templates"))
+# Ensure directories exist to prevent crash loops if something is missing
+if not os.path.isdir(static_dir):
+    print(f"⚠️  WARNING: Static directory not found at {static_dir}. Creating empty fallback.")
+    os.makedirs(static_dir, exist_ok=True)
+
+if not os.path.isdir(templates_dir):
+    print(f"⚠️  WARNING: Templates directory not found at {templates_dir}. Creating empty fallback.")
+    os.makedirs(templates_dir, exist_ok=True)
+
+print(f"✅ Serving Static Files from: {static_dir}")
+print(f"✅ Serving Templates from: {templates_dir}")
+
+# Mount static files (CSS, JS, Images)
+app.mount("/static", StaticFiles(directory=static_dir), name="static")
+
+templates = Jinja2Templates(directory=templates_dir)
 
 # --- CORS Middleware ---
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Adjust this in production!
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -75,7 +89,6 @@ app.include_router(users.router)
 app.include_router(stats.router)
 app.include_router(players.router)
 app.include_router(templates_router.router)
-# --- UPDATE: Register the White Chats router ---
 app.include_router(white_chats.router)
 
 # --- HTML Page Routes ---
@@ -92,7 +105,6 @@ async def main_page(request: Request):
 async def admin_page(request: Request):
     return templates.TemplateResponse("admin.html", {"request": request})
 
-# --- FIX START: Rename old stats page to engagement and add new stats page ---
 @app.get("/engagement", tags=["HTML"], summary="Serves the engagement stats page")
 async def engagement_page(request: Request):
     return templates.TemplateResponse("engagement.html", {"request": request})
@@ -104,7 +116,6 @@ async def player_detail_page(request: Request, user_id: int):
 @app.get("/stats", tags=["HTML"], summary="Serves the new match stats and leaderboards page")
 async def stats_page(request: Request):
     return templates.TemplateResponse("stats.html", {"request": request})
-# --- FIX END ---
 
 @app.get("/events", tags=["HTML"], summary="Serves the event management page")
 async def events_page(request: Request):
