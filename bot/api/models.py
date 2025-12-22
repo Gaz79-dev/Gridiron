@@ -231,3 +231,6 @@ class TransportAssignments(BaseModel):
 class TransportEmbedRequest(BaseModel):
     channel_id: str
     assignments: Dict[str, List[str]]
+
+class TransportAssignments(BaseModel):
+    assignments: Dict[str, List[str]]
