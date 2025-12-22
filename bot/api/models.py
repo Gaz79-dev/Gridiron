@@ -123,7 +123,7 @@ class SquadTemplateCreate(BaseModel):
     template_name: str
     definitions: List[SquadTemplateDefinition]
 
-# --- Player Statistics Models (Updated for AI & Stats) ---
+# --- Player Statistics Models ---
 
 class PlayerStats(BaseModel):
     user_id: str
@@ -136,7 +136,6 @@ class PlayerStats(BaseModel):
     rating: int
     is_active: bool
     role_affinities: Optional[Dict] = None
-    # --- FIX: Add new field for game ID ---
     game_player_id: Optional[str] = None
 
 class AcceptedEvent(BaseModel):
@@ -167,10 +166,8 @@ class PlayerAdminInfo(BaseModel):
     display_name: str
     rating: int
     is_active: bool
-    # --- FIX: Add new field for game ID ---
     game_player_id: Optional[str] = None
 
-# --- FIX START: New models for Match Stats feature ---
 class PlayerGameIdUpdate(BaseModel):
     user_id: str
     game_player_id: Optional[str] = None
@@ -202,7 +199,6 @@ class PlayerEventHistoryEntry(BaseModel):
     rsvp_status: Optional[str] = None
     role_name: Optional[str] = None
     subclass_name: Optional[str] = None
-# --- FIX END ---
 
 # --- White Chat (Party) Models ---
 class WhiteChatMember(BaseModel):
@@ -221,3 +217,9 @@ class WhiteChatCreateRequest(BaseModel):
 
 class WhiteChatMemberRequest(BaseModel):
     user_id: str
+
+# --- Transport Models ---
+class TransportEmbedRequest(BaseModel):
+    channel_id: str
+    # Map of HQ Name (e.g. "HQ1") to list of Squad Names assigned to it
+    assignments: Dict[str, List[str]]
