@@ -37,6 +37,43 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    // NEW: Listen for checkbox changes to enforce exclusivity
+    if (transportContainer) {
+        transportContainer.addEventListener('change', (e) => {
+            if (e.target.classList.contains('transport-squad-checkbox')) {
+                updateCheckboxStates();
+            }
+        });
+    }
+
+    // --- Logic: Prevent Duplicate Selections ---
+    function updateCheckboxStates() {
+        const allCheckboxes = document.querySelectorAll('.transport-squad-checkbox');
+        
+        // 1. Find out which squads are currently selected
+        const selectedSquads = new Set();
+        allCheckboxes.forEach(cb => {
+            if (cb.checked) {
+                selectedSquads.add(cb.value);
+            }
+        });
+
+        // 2. Disable those squads in other lists
+        allCheckboxes.forEach(cb => {
+            if (!cb.checked) {
+                if (selectedSquads.has(cb.value)) {
+                    cb.disabled = true;
+                    cb.parentElement.classList.add('opacity-50', 'cursor-not-allowed');
+                    cb.parentElement.title = "Squad already assigned to another HQ";
+                } else {
+                    cb.disabled = false;
+                    cb.parentElement.classList.remove('opacity-50', 'cursor-not-allowed');
+                    cb.parentElement.removeAttribute('title');
+                }
+            }
+        });
+    }
+
     // --- Data Loading ---
     async function loadTransportData(eventId) {
         try {
@@ -127,13 +164,14 @@ document.addEventListener('DOMContentLoaded', () => {
             
             squadList.forEach(squadName => {
                 const label = document.createElement('label');
-                label.className = 'flex items-center space-x-2 text-sm cursor-pointer hover:bg-gray-700 p-1 rounded';
+                label.className = 'flex items-center space-x-2 text-sm cursor-pointer hover:bg-gray-700 p-1 rounded transition-opacity';
                 
                 const checkbox = document.createElement('input');
                 checkbox.type = 'checkbox';
                 checkbox.value = squadName;
                 checkbox.dataset.hq = hq; // To identify which HQ this belongs to
-                checkbox.className = 'form-checkbox h-4 w-4 text-blue-500 bg-gray-700 border-gray-500 rounded';
+                // NEW: Added specific class for the update logic
+                checkbox.className = 'form-checkbox h-4 w-4 text-blue-500 bg-gray-700 border-gray-500 rounded transport-squad-checkbox';
 
                 const span = document.createElement('span');
                 span.textContent = squadName;
@@ -148,6 +186,9 @@ document.addEventListener('DOMContentLoaded', () => {
         });
 
         transportContainer.appendChild(grid);
+        
+        // Initial run to ensure clean state
+        updateCheckboxStates();
     }
 
     // --- Sending ---
