@@ -223,3 +223,11 @@ class TransportEmbedRequest(BaseModel):
     channel_id: str
     # Map of HQ Name (e.g. "HQ1") to list of Squad Names assigned to it
     assignments: Dict[str, List[str]]
+
+class TransportAssignments(BaseModel):
+    # Dictionary mapping 'HQ1' -> ['Squad 1', 'Squad 2']
+    assignments: Dict[str, List[str]]
+
+class TransportEmbedRequest(BaseModel):
+    channel_id: str
+    assignments: Dict[str, List[str]]
