@@ -14,7 +14,7 @@ from bot.api.dependencies import get_db
 from bot.api.models import (
     Event, Signup, Squad, SquadBuildRequest, RosterUpdateRequest, 
     SendEmbedRequest, Channel, User, EventLockStatus, EventUpdate, PromoteRequest, SquadReorderRequest,
-    TransportEmbedRequest
+    TransportEmbedRequest, TransportAssignments
 )
 from bot.cogs.event_management import EMOJI_MAPPING
 
@@ -30,7 +30,7 @@ BOT_TOKEN = os.getenv("DISCORD_TOKEN")
 LOCK_TIMEOUT_MINUTES = 15
 
 
-# ... [Keep existing _create_team_sheet_embeds function] ...
+# --- HELPER FUNCTIONS ---
 def _create_team_sheet_embeds(request: SendEmbedRequest, event_details: Optional[Dict], is_draft: bool) -> List[Dict]:
     """
     Builds the main team embed and a separate reserves embed, using an efficient layout.
@@ -52,7 +52,7 @@ def _create_team_sheet_embeds(request: SendEmbedRequest, event_details: Optional
 
     squads_for_display = [s for s in request.squads if s.squad_type != "Reserves"]
     
-    # --- START FIX: Efficient 2-column layout logic ---
+    # Efficient 2-column layout logic
     for i in range(0, len(squads_for_display), 2):
         # First squad in the pair
         squad1 = squads_for_display[i]
@@ -81,7 +81,6 @@ def _create_team_sheet_embeds(request: SendEmbedRequest, event_details: Optional
         else:
             # If there's an odd number of squads, add a blank field to keep alignment.
             main_embed["fields"].append({"name": "\u200b", "value": "\u200b", "inline": True})
-    # --- END FIX ---
 
     # --- Reserves Embed ---
     reserves_embed = None
@@ -158,7 +157,6 @@ async def _send_embed_to_discord(event_id: int, request: SendEmbedRequest, db: D
             print(f"Response body: {e.response.text}")
             raise HTTPException(status_code=502, detail=f"Failed to send embed to Discord: {e.response.text}")
 
-# --- Helper for Nodes Embed ---
 def _create_nodes_embed(event_details: Dict, members: List[Dict]) -> Dict:
     """
     Creates a specialized embed for Node building tasks.
@@ -195,7 +193,6 @@ def _create_nodes_embed(event_details: Dict, members: List[Dict]) -> Dict:
         
     return embed
 
-# --- Helper for Transport Embed ---
 def _create_transport_embed(event_details: Dict, members: List[Dict], squad_assignments: Dict[str, List[str]]) -> Dict:
     """
     Creates an embed showing Drivers and Squad Deployments per HQ.
@@ -258,8 +255,6 @@ async def check_event_lock(event_id: int, current_user: User = Depends(auth.get_
     )
 
 # --- API Routes ---
-
-# ... [Keep existing routes: promote-tentative, get_events, recurring, deleted, channels, event details, lock/unlock] ...
 
 @router.post("/{event_id}/promote-tentative", response_model=List[Squad], dependencies=[Depends(check_event_lock)])
 async def promote_tentative_player(event_id: int, request: PromoteRequest, db: Database = Depends(get_db)):
@@ -477,7 +472,29 @@ async def send_nodes_embed(
             
     return
 
-# --- NEW: Transport Embed Endpoint ---
+# --- NEW: Transport Assignments Endpoints (Persistence) ---
+
+@router.get("/{event_id}/transport", response_model=TransportAssignments)
+async def get_transport_assignments(event_id: int, db: Database = Depends(get_db)):
+    """
+    Retrieves the saved transport assignments for an event.
+    """
+    assignments = await db.get_transport_assignments(event_id)
+    return TransportAssignments(assignments=assignments)
+
+@router.post("/{event_id}/transport", status_code=204)
+async def save_transport_assignments(
+    event_id: int,
+    request: TransportAssignments,
+    db: Database = Depends(get_db)
+):
+    """
+    Saves the transport assignments to the database.
+    """
+    await db.save_transport_assignments(event_id, request.assignments)
+    return
+
+# --- UPDATED: Transport Embed Endpoint ---
 @router.post("/{event_id}/send-transport-embed", status_code=204)
 async def send_transport_embed(
     event_id: int,
@@ -486,11 +503,16 @@ async def send_transport_embed(
 ):
     """
     Generates and sends the 'Transport & Deployment' embed based on task assignments and user input.
+    Also saves the current assignments to the database.
     """
     event_details = await db.get_event_by_id(event_id)
     if not event_details:
         raise HTTPException(status_code=404, detail="Event not found")
         
+    # 1. SAVE to Database first
+    await db.save_transport_assignments(event_id, request.assignments)
+
+    # 2. Get data for embed
     squads = await db.get_squads_with_members(event_id)
     all_members = [m for s in squads for m in s.get('members', [])]
     
