@@ -119,7 +119,7 @@
                 </div>
                 
                 <div class="border-t border-gray-700 pt-6">
-                    <div class="flex flex-col sm:flex-row gap-4">
+                    <div class="flex flex-col sm:flex-row gap-4 items-center">
                         <select id="channel-dropdown" class="flex-grow p-2 bg-gray-700 border border-gray-600 rounded-md"></select>
                         <button id="send-draft-btn" class="bg-gray-600 hover:bg-gray-700 text-white font-bold py-2 px-4 rounded-md transition duration-300">
                             Send Draft Embed
@@ -127,10 +127,15 @@
                         <button id="finalize-btn" class="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-md transition duration-300">
                             Finalize Squads & Learn
                         </button>
+                        
+                        <div class="w-px h-6 bg-gray-600 mx-2"></div>
+                        <button id="send-nodes-btn" class="bg-orange-600 hover:bg-orange-700 text-white font-bold py-2 px-4 rounded-md transition duration-300" title="Send Nodes Building Plan">
+                            Send Nodes Plan
+                        </button>
                     </div>
                     <p class="text-xs text-gray-500 mt-2 text-center sm:text-left">Use 'Send Draft' for feedback. Use 'Finalize' to send the official lineup and teach the AI for future events.</p>
                 </div>
-                </section>
+            </section>
         </main>
     </div>
 
@@ -188,5 +193,6 @@
     <script src="/static/auth.js"></script>
     <script src="/static/main-v2.js?v=3"></script>
     <script src="/static/white_chats.js"></script>
+    <script src="/static/nodes.js"></script>
 </body>
 </html>
