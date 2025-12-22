@@ -5,7 +5,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const transportSection = document.getElementById('transport-section');
     const transportContainer = document.getElementById('transport-builder-area');
     const sendTransportBtn = document.getElementById('send-transport-btn');
-    const saveTransportBtn = document.getElementById('save-transport-btn'); // NEW
+    // We look for the status span instead of a save button now
+    const saveStatusSpan = document.getElementById('transport-save-status');
 
     // Config
     const HQS = ['HQ1', 'HQ2', 'HQ3'];
@@ -18,7 +19,8 @@ document.addEventListener('DOMContentLoaded', () => {
     // State
     let squadList = [];
     let drivers = { HQ1: [], HQ2: [], HQ3: [] };
-    let savedAssignments = { HQ1: [], HQ2: [], HQ3: [] }; // Store loaded state
+    let savedAssignments = { HQ1: [], HQ2: [], HQ3: [] };
+    let saveTimeout = null; // For debounce timer
 
     // --- Listeners ---
     if (eventDropdown) {
@@ -39,17 +41,13 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    if (saveTransportBtn) {
-        saveTransportBtn.addEventListener('click', async () => {
-            await saveTransportAssignments();
-        });
-    }
-
-    // NEW: Listen for checkbox changes to enforce exclusivity
+    // --- MAIN LOGIC FIX ---
+    // Listen for checkbox changes to enforce exclusivity AND Auto-Save
     if (transportContainer) {
         transportContainer.addEventListener('change', (e) => {
             if (e.target.classList.contains('transport-squad-checkbox')) {
                 updateCheckboxStates();
+                triggerAutoSave(); // <--- This was missing in your file
             }
         });
     }
@@ -82,9 +80,61 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    // --- Logic: Auto-Save ---
+    function triggerAutoSave() {
+        // If a save is already pending, cancel it so we don't spam the server
+        if (saveTimeout) clearTimeout(saveTimeout);
+        
+        // Visual feedback immediately
+        if (saveStatusSpan) {
+            saveStatusSpan.textContent = 'Saving...';
+            saveStatusSpan.className = 'text-yellow-400 text-sm animate-pulse';
+        }
+
+        // Wait 1 second after the last click before actually saving
+        saveTimeout = setTimeout(async () => {
+            await saveTransportAssignments();
+        }, 1000);
+    }
+
+    async function saveTransportAssignments() {
+        const eventId = eventDropdown.value;
+        if (!eventId) return;
+
+        const assignments = collectAssignments();
+
+        try {
+            const response = await fetch(`/api/events/${eventId}/transport`, {
+                method: 'POST',
+                headers,
+                body: JSON.stringify({ assignments })
+            });
+
+            if (!response.ok) throw new Error('Failed to save');
+            
+            // Update local state
+            savedAssignments = assignments;
+            
+            // Visual feedback
+            if (saveStatusSpan) {
+                saveStatusSpan.textContent = 'All changes saved';
+                saveStatusSpan.className = 'text-green-400 text-sm';
+            }
+
+        } catch (error) {
+            console.error("Auto-save failed:", error);
+            if (saveStatusSpan) {
+                saveStatusSpan.textContent = 'Error saving changes!';
+                saveStatusSpan.className = 'text-red-400 text-sm font-bold';
+            }
+        }
+    }
+
     // --- Data Loading ---
     async function loadTransportData(eventId) {
         try {
+            if (saveStatusSpan) saveStatusSpan.textContent = ''; // Clear status
+
             // Parallel fetch: Squads AND Saved Assignments
             const [squadsRes, assignmentsRes] = await Promise.all([
                 fetch(`/api/events/${eventId}/squads`, { headers }),
@@ -192,7 +242,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 const checkbox = document.createElement('input');
                 checkbox.type = 'checkbox';
                 checkbox.value = squadName;
-                checkbox.dataset.hq = hq;
+                checkbox.dataset.hq = hq; // To identify which HQ this belongs to
                 checkbox.className = 'form-checkbox h-4 w-4 text-blue-500 bg-gray-700 border-gray-500 rounded transport-squad-checkbox';
                 
                 // Pre-check if in saved list
@@ -231,43 +281,6 @@ document.addEventListener('DOMContentLoaded', () => {
         return assignments;
     }
 
-    // --- Actions ---
-    async function saveTransportAssignments() {
-        const eventId = eventDropdown.value;
-        if (!eventId) return;
-
-        const assignments = collectAssignments();
-
-        try {
-            saveTransportBtn.disabled = true;
-            saveTransportBtn.textContent = 'Saving...';
-
-            const response = await fetch(`/api/events/${eventId}/transport`, {
-                method: 'POST',
-                headers,
-                body: JSON.stringify({ assignments })
-            });
-
-            if (!response.ok) throw new Error('Failed to save');
-            
-            // Update local state
-            savedAssignments = assignments;
-            
-            // Visual feedback
-            const originalText = saveTransportBtn.textContent;
-            saveTransportBtn.textContent = 'Saved!';
-            setTimeout(() => { 
-                saveTransportBtn.textContent = 'Save Selection'; 
-                saveTransportBtn.disabled = false;
-            }, 1000);
-
-        } catch (error) {
-            alert(`Save failed: ${error.message}`);
-            saveTransportBtn.disabled = false;
-            saveTransportBtn.textContent = 'Save Selection';
-        }
-    }
-
     async function sendTransportEmbed() {
         const eventId = eventDropdown.value;
         const channelId = channelDropdown ? channelDropdown.value : null;
@@ -276,6 +289,10 @@ document.addEventListener('DOMContentLoaded', () => {
             alert("Please select an event and a target Discord channel.");
             return;
         }
+
+        // Force a save before sending, just in case auto-save is pending
+        if (saveTimeout) clearTimeout(saveTimeout);
+        await saveTransportAssignments();
 
         const assignments = collectAssignments();
         const payload = {
@@ -299,10 +316,6 @@ document.addEventListener('DOMContentLoaded', () => {
             }
 
             alert('Transport & Deployment embed sent to Discord!');
-            
-            // Since send also saves, update local state
-            savedAssignments = assignments;
-
         } catch (error) {
             alert(`Error: ${error.message}`);
         } finally {
