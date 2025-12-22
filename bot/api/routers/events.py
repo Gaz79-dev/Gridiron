@@ -13,7 +13,8 @@ from bot.api import auth
 from bot.api.dependencies import get_db
 from bot.api.models import (
     Event, Signup, Squad, SquadBuildRequest, RosterUpdateRequest, 
-    SendEmbedRequest, Channel, User, EventLockStatus, EventUpdate, PromoteRequest, SquadReorderRequest
+    SendEmbedRequest, Channel, User, EventLockStatus, EventUpdate, PromoteRequest, SquadReorderRequest,
+    TransportEmbedRequest
 )
 from bot.cogs.event_management import EMOJI_MAPPING
 
@@ -27,6 +28,7 @@ router = APIRouter(
 GUILD_ID = os.getenv("GUILD_ID")
 BOT_TOKEN = os.getenv("DISCORD_TOKEN")
 LOCK_TIMEOUT_MINUTES = 15
+
 
 # ... [Keep existing _create_team_sheet_embeds function] ...
 def _create_team_sheet_embeds(request: SendEmbedRequest, event_details: Optional[Dict], is_draft: bool) -> List[Dict]:
@@ -120,7 +122,7 @@ def _create_team_sheet_embeds(request: SendEmbedRequest, event_details: Optional
 
 async def _send_embed_to_discord(event_id: int, request: SendEmbedRequest, db: Database, is_draft: bool):
     """
-    Handles the logic for sending embeds to Discord, now using the helper function.
+    Handles the logic for sending embeds to Discord.
     """
     if not BOT_TOKEN:
         raise HTTPException(status_code=500, detail="Bot token not configured on server.")
@@ -139,7 +141,6 @@ async def _send_embed_to_discord(event_id: int, request: SendEmbedRequest, db: D
             content_str = ' '.join([f'<@{uid}>' for uid in accepted_ids])
             allowed_mentions = {"users": [str(uid) for uid in accepted_ids]}
 
-    # Use the new helper to generate the embeds
     embeds_to_send = _create_team_sheet_embeds(request, event_details, is_draft)
 
     payload = {
@@ -161,7 +162,6 @@ async def _send_embed_to_discord(event_id: int, request: SendEmbedRequest, db: D
 def _create_nodes_embed(event_details: Dict, members: List[Dict]) -> Dict:
     """
     Creates a specialized embed for Node building tasks.
-    Filters tasks for HQ1/HQ2/HQ3 and Supply/Engineer roles.
     """
     nodes_data = {"HQ1": [], "HQ2": [], "HQ3": []}
     
@@ -170,14 +170,10 @@ def _create_nodes_embed(event_details: Dict, members: List[Dict]) -> Dict:
         if not task:
             continue
             
-        # Regex to capture HQ number and the rest of the task
-        # Matches "HQ1 Supplies", "HQ2 Nodes Engineer", etc.
         match = re.match(r'HQ([1-3])\s+(.*)', task, re.IGNORECASE)
         if match:
             hq_num = f"HQ{match.group(1)}"
             rest_of_task = match.group(2).lower()
-            
-            # Filter: Only care about Supplies and Engineers/Nodes
             if "supplies" in rest_of_task or "engineer" in rest_of_task or "nodes" in rest_of_task:
                 nodes_data[hq_num].append(f"• {m['display_name']} ({m.get('startup_task')})")
 
@@ -195,6 +191,52 @@ def _create_nodes_embed(event_details: Dict, members: List[Dict]) -> Dict:
             "name": f"__**{hq} Nodes**__", 
             "value": value, 
             "inline": True 
+        })
+        
+    return embed
+
+# --- Helper for Transport Embed ---
+def _create_transport_embed(event_details: Dict, members: List[Dict], squad_assignments: Dict[str, List[str]]) -> Dict:
+    """
+    Creates an embed showing Drivers and Squad Deployments per HQ.
+    """
+    drivers_map = {"HQ1": [], "HQ2": [], "HQ3": []}
+    
+    # 1. Find Drivers
+    for m in members:
+        task = m.get('startup_task')
+        if not task: continue
+        
+        # Regex to find 'HQx ... Driver'
+        match = re.match(r'HQ([1-3])\s+(.*)', task, re.IGNORECASE)
+        if match:
+            hq_num = f"HQ{match.group(1)}"
+            rest_of_task = match.group(2).lower()
+            if "driver" in rest_of_task or "transport" in rest_of_task:
+                 drivers_map[hq_num].append(m['display_name'])
+
+    embed = {
+        "title": f"Transport & Deployment - {event_details['title']}",
+        "description": "Transport assignments and squad deployment locations.",
+        "color": 3066993, # Green
+        "fields": []
+    }
+    
+    for hq in ["HQ1", "HQ2", "HQ3"]:
+        # Drivers
+        drivers = drivers_map.get(hq, [])
+        driver_text = ", ".join(drivers) if drivers else "*None assigned*"
+        
+        # Squads
+        squads = squad_assignments.get(hq, [])
+        squad_text = "\n".join([f"• {s}" for s in squads]) if squads else "*None*"
+        
+        content = f"**Drivers:** {driver_text}\n\n**Squads:**\n{squad_text}"
+        
+        embed["fields"].append({
+            "name": f"__**{hq} Location**__",
+            "value": content,
+            "inline": True
         })
         
     return embed
@@ -217,7 +259,7 @@ async def check_event_lock(event_id: int, current_user: User = Depends(auth.get_
 
 # --- API Routes ---
 
-# ... [Keep existing routes promote-tentative, get_events, recurring, deleted, channels, event details] ...
+# ... [Keep existing routes: promote-tentative, get_events, recurring, deleted, channels, event details, lock/unlock] ...
 
 @router.post("/{event_id}/promote-tentative", response_model=List[Squad], dependencies=[Depends(check_event_lock)])
 async def promote_tentative_player(event_id: int, request: PromoteRequest, db: Database = Depends(get_db)):
@@ -355,9 +397,8 @@ async def refresh_event_roster(event_id: int, request: RosterUpdateRequest, db: 
     for user_id in users_to_remove:
         await db.remove_user_from_all_squads(event_id, user_id)
     
-    # --- NEW: Cleanup White Chats ---
+    # Cleanup White Chats
     await db.cleanup_white_chat_memberships(event_id)
-    # -------------------------------
 
     squads_with_members = await db.get_squads_with_members(event_id)
     all_current_db_member_ids = {int(member['user_id']) for squad in squads_with_members for member in squad.get('members', [])}
@@ -385,7 +426,7 @@ async def finalize_squads_and_learn(
     try:
         squads_for_learning = [s.model_dump() for s in request.squads]
         await db.update_player_affinities(squads_for_learning)
-        # --- NEW: Save the finalized roster snapshot ---
+        # Save the finalized roster snapshot
         await db.save_finalized_roster(event_id, squads_for_learning)
         print(f"AI learning and roster snapshot triggered for event {event_id}.")
     except Exception as e:
@@ -398,12 +439,8 @@ async def send_draft_embed(
     db: Database = Depends(get_db),
     lock_check: None = Depends(check_event_lock)
 ):
-    """
-    Sends a squad composition embed to a Discord channel without triggering any learning.
-    """
     await _send_embed_to_discord(event_id, request, db, is_draft=True)
     
-# --- NEW ENDPOINT: Send Nodes Embed ---
 @router.post("/{event_id}/send-nodes-embed", status_code=204)
 async def send_nodes_embed(
     event_id: int,
@@ -421,14 +458,11 @@ async def send_nodes_embed(
     if not event_details:
         raise HTTPException(status_code=404, detail="Event not found")
         
-    # Fetch all squads and members to get the tasks
     squads = await db.get_squads_with_members(event_id)
     all_members = [m for s in squads for m in s.get('members', [])]
     
-    # Generate the nodes embed
     nodes_embed = _create_nodes_embed(event_details, all_members)
     
-    # Send via HTTP to Discord
     url = f"https://discord.com/api/v10/channels/{channel_id}/messages"
     headers = {"Authorization": f"Bot {BOT_TOKEN}"}
     payload = {"embeds": [nodes_embed]}
@@ -440,5 +474,38 @@ async def send_nodes_embed(
         except httpx.HTTPStatusError as e:
             print(f"Error sending nodes embed: {e}")
             raise HTTPException(status_code=502, detail=f"Failed to send nodes embed to Discord: {e.response.text}")
+            
+    return
+
+# --- NEW: Transport Embed Endpoint ---
+@router.post("/{event_id}/send-transport-embed", status_code=204)
+async def send_transport_embed(
+    event_id: int,
+    request: TransportEmbedRequest,
+    db: Database = Depends(get_db)
+):
+    """
+    Generates and sends the 'Transport & Deployment' embed based on task assignments and user input.
+    """
+    event_details = await db.get_event_by_id(event_id)
+    if not event_details:
+        raise HTTPException(status_code=404, detail="Event not found")
+        
+    squads = await db.get_squads_with_members(event_id)
+    all_members = [m for s in squads for m in s.get('members', [])]
+    
+    transport_embed = _create_transport_embed(event_details, all_members, request.assignments)
+    
+    url = f"https://discord.com/api/v10/channels/{request.channel_id}/messages"
+    headers = {"Authorization": f"Bot {BOT_TOKEN}"}
+    payload = {"embeds": [transport_embed]}
+    
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.post(url, headers=headers, json=payload)
+            response.raise_for_status()
+        except httpx.HTTPStatusError as e:
+            print(f"Error sending transport embed: {e}")
+            raise HTTPException(status_code=502, detail=f"Failed to send transport embed to Discord: {e.response.text}")
             
     return
