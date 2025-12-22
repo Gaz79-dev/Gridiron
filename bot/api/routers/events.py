@@ -2,7 +2,8 @@ import os
 import httpx
 import datetime
 import asyncio
-from fastapi import APIRouter, Depends, HTTPException, status
+import re
+from fastapi import APIRouter, Depends, HTTPException, Body, status
 from typing import List, Optional, Dict
 
 # Use absolute imports from the 'bot' package root
@@ -27,8 +28,7 @@ GUILD_ID = os.getenv("GUILD_ID")
 BOT_TOKEN = os.getenv("DISCORD_TOKEN")
 LOCK_TIMEOUT_MINUTES = 15
 
-
-# --- CORRECTED HELPER FUNCTION ---
+# ... [Keep existing _create_team_sheet_embeds function] ...
 def _create_team_sheet_embeds(request: SendEmbedRequest, event_details: Optional[Dict], is_draft: bool) -> List[Dict]:
     """
     Builds the main team embed and a separate reserves embed, using an efficient layout.
@@ -157,6 +157,47 @@ async def _send_embed_to_discord(event_id: int, request: SendEmbedRequest, db: D
             print(f"Response body: {e.response.text}")
             raise HTTPException(status_code=502, detail=f"Failed to send embed to Discord: {e.response.text}")
 
+# --- Helper for Nodes Embed ---
+def _create_nodes_embed(event_details: Dict, members: List[Dict]) -> Dict:
+    """
+    Creates a specialized embed for Node building tasks.
+    Filters tasks for HQ1/HQ2/HQ3 and Supply/Engineer roles.
+    """
+    nodes_data = {"HQ1": [], "HQ2": [], "HQ3": []}
+    
+    for m in members:
+        task = m.get('startup_task')
+        if not task:
+            continue
+            
+        # Regex to capture HQ number and the rest of the task
+        # Matches "HQ1 Supplies", "HQ2 Nodes Engineer", etc.
+        match = re.match(r'HQ([1-3])\s+(.*)', task, re.IGNORECASE)
+        if match:
+            hq_num = f"HQ{match.group(1)}"
+            rest_of_task = match.group(2).lower()
+            
+            # Filter: Only care about Supplies and Engineers/Nodes
+            if "supplies" in rest_of_task or "engineer" in rest_of_task or "nodes" in rest_of_task:
+                nodes_data[hq_num].append(f"• {m['display_name']} ({m.get('startup_task')})")
+
+    embed = {
+        "title": f"Nodes Building Plan - {event_details['title']}",
+        "description": "Assignments for building 3 sets of nodes at start of match.",
+        "color": 15105570, # Orange-ish
+        "fields": []
+    }
+    
+    for hq in ["HQ1", "HQ2", "HQ3"]:
+        assignments = nodes_data.get(hq, [])
+        value = "\n".join(assignments) if assignments else "*No assignments*"
+        embed["fields"].append({
+            "name": f"__**{hq} Nodes**__", 
+            "value": value, 
+            "inline": True 
+        })
+        
+    return embed
 
 # --- Locking Dependency ---
 async def check_event_lock(event_id: int, current_user: User = Depends(auth.get_current_admin_user), db: Database = Depends(get_db)):
@@ -175,6 +216,8 @@ async def check_event_lock(event_id: int, current_user: User = Depends(auth.get_
     )
 
 # --- API Routes ---
+
+# ... [Keep existing routes promote-tentative, get_events, recurring, deleted, channels, event details] ...
 
 @router.post("/{event_id}/promote-tentative", response_model=List[Squad], dependencies=[Depends(check_event_lock)])
 async def promote_tentative_player(event_id: int, request: PromoteRequest, db: Database = Depends(get_db)):
@@ -313,7 +356,6 @@ async def refresh_event_roster(event_id: int, request: RosterUpdateRequest, db: 
         await db.remove_user_from_all_squads(event_id, user_id)
     
     # --- NEW: Cleanup White Chats ---
-    # Automatically remove users from white chats if they are no longer Accepted for the event.
     await db.cleanup_white_chat_memberships(event_id)
     # -------------------------------
 
@@ -360,3 +402,43 @@ async def send_draft_embed(
     Sends a squad composition embed to a Discord channel without triggering any learning.
     """
     await _send_embed_to_discord(event_id, request, db, is_draft=True)
+    
+# --- NEW ENDPOINT: Send Nodes Embed ---
+@router.post("/{event_id}/send-nodes-embed", status_code=204)
+async def send_nodes_embed(
+    event_id: int,
+    channel_payload: Dict[str, str] = Body(...),
+    db: Database = Depends(get_db)
+):
+    """
+    Generates and sends the 'Nodes Building Plan' embed based on existing task assignments.
+    """
+    channel_id = channel_payload.get('channel_id')
+    if not channel_id:
+         raise HTTPException(status_code=400, detail="channel_id is required")
+         
+    event_details = await db.get_event_by_id(event_id)
+    if not event_details:
+        raise HTTPException(status_code=404, detail="Event not found")
+        
+    # Fetch all squads and members to get the tasks
+    squads = await db.get_squads_with_members(event_id)
+    all_members = [m for s in squads for m in s.get('members', [])]
+    
+    # Generate the nodes embed
+    nodes_embed = _create_nodes_embed(event_details, all_members)
+    
+    # Send via HTTP to Discord
+    url = f"https://discord.com/api/v10/channels/{channel_id}/messages"
+    headers = {"Authorization": f"Bot {BOT_TOKEN}"}
+    payload = {"embeds": [nodes_embed]}
+    
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.post(url, headers=headers, json=payload)
+            response.raise_for_status()
+        except httpx.HTTPStatusError as e:
+            print(f"Error sending nodes embed: {e}")
+            raise HTTPException(status_code=502, detail=f"Failed to send nodes embed to Discord: {e.response.text}")
+            
+    return
