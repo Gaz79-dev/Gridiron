@@ -14,7 +14,7 @@ from bot.api.dependencies import get_db
 from bot.api.models import (
     Event, Signup, Squad, SquadBuildRequest, RosterUpdateRequest, 
     SendEmbedRequest, Channel, User, EventLockStatus, EventUpdate, PromoteRequest, SquadReorderRequest,
-    TransportEmbedRequest, TransportAssignments
+    TransportEmbedRequest, TransportAssignments  # <--- Added TransportAssignments here
 )
 from bot.cogs.event_management import EMOJI_MAPPING
 
@@ -494,7 +494,6 @@ async def save_transport_assignments(
     await db.save_transport_assignments(event_id, request.assignments)
     return
 
-# --- UPDATED: Transport Embed Endpoint ---
 @router.post("/{event_id}/send-transport-embed", status_code=204)
 async def send_transport_embed(
     event_id: int,
