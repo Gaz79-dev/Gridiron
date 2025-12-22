@@ -5,6 +5,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const transportSection = document.getElementById('transport-section');
     const transportContainer = document.getElementById('transport-builder-area');
     const sendTransportBtn = document.getElementById('send-transport-btn');
+    const saveTransportBtn = document.getElementById('save-transport-btn'); // NEW
 
     // Config
     const HQS = ['HQ1', 'HQ2', 'HQ3'];
@@ -17,6 +18,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // State
     let squadList = [];
     let drivers = { HQ1: [], HQ2: [], HQ3: [] };
+    let savedAssignments = { HQ1: [], HQ2: [], HQ3: [] }; // Store loaded state
 
     // --- Listeners ---
     if (eventDropdown) {
@@ -34,6 +36,12 @@ document.addEventListener('DOMContentLoaded', () => {
     if (sendTransportBtn) {
         sendTransportBtn.addEventListener('click', async () => {
             await sendTransportEmbed();
+        });
+    }
+
+    if (saveTransportBtn) {
+        saveTransportBtn.addEventListener('click', async () => {
+            await saveTransportAssignments();
         });
     }
 
@@ -77,9 +85,21 @@ document.addEventListener('DOMContentLoaded', () => {
     // --- Data Loading ---
     async function loadTransportData(eventId) {
         try {
-            const response = await fetch(`/api/events/${eventId}/squads`, { headers });
-            if (!response.ok) throw new Error('Failed to load squads');
-            const squads = await response.json();
+            // Parallel fetch: Squads AND Saved Assignments
+            const [squadsRes, assignmentsRes] = await Promise.all([
+                fetch(`/api/events/${eventId}/squads`, { headers }),
+                fetch(`/api/events/${eventId}/transport`, { headers })
+            ]);
+
+            if (!squadsRes.ok) throw new Error('Failed to load squads');
+            const squads = await squadsRes.json();
+            
+            if (assignmentsRes.ok) {
+                const data = await assignmentsRes.json();
+                savedAssignments = data.assignments || { HQ1: [], HQ2: [], HQ3: [] };
+            } else {
+                savedAssignments = { HQ1: [], HQ2: [], HQ3: [] };
+            }
             
             processSquadData(squads);
             renderTransportBuilder();
@@ -162,6 +182,9 @@ document.addEventListener('DOMContentLoaded', () => {
             const squadContainer = document.createElement('div');
             squadContainer.className = 'bg-gray-800 p-2 rounded max-h-40 overflow-y-auto space-y-1';
             
+            // Get saved list for this HQ to pre-check
+            const preCheckedSquads = new Set(savedAssignments[hq] || []);
+
             squadList.forEach(squadName => {
                 const label = document.createElement('label');
                 label.className = 'flex items-center space-x-2 text-sm cursor-pointer hover:bg-gray-700 p-1 rounded transition-opacity';
@@ -169,9 +192,13 @@ document.addEventListener('DOMContentLoaded', () => {
                 const checkbox = document.createElement('input');
                 checkbox.type = 'checkbox';
                 checkbox.value = squadName;
-                checkbox.dataset.hq = hq; // To identify which HQ this belongs to
-                // NEW: Added specific class for the update logic
+                checkbox.dataset.hq = hq;
                 checkbox.className = 'form-checkbox h-4 w-4 text-blue-500 bg-gray-700 border-gray-500 rounded transport-squad-checkbox';
+                
+                // Pre-check if in saved list
+                if (preCheckedSquads.has(squadName)) {
+                    checkbox.checked = true;
+                }
 
                 const span = document.createElement('span');
                 span.textContent = squadName;
@@ -187,21 +214,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
         transportContainer.appendChild(grid);
         
-        // Initial run to ensure clean state
+        // Initial run to ensure clean state and enforce exclusivity based on loaded data
         updateCheckboxStates();
     }
 
-    // --- Sending ---
-    async function sendTransportEmbed() {
-        const eventId = eventDropdown.value;
-        const channelId = channelDropdown ? channelDropdown.value : null;
-
-        if (!eventId || !channelId) {
-            alert("Please select an event and a target Discord channel.");
-            return;
-        }
-
-        // Collect Assignments
+    function collectAssignments() {
         const assignments = { HQ1: [], HQ2: [], HQ3: [] };
         const checkboxes = transportContainer.querySelectorAll('input[type="checkbox"]:checked');
         
@@ -211,7 +228,56 @@ document.addEventListener('DOMContentLoaded', () => {
                 assignments[hq].push(cb.value);
             }
         });
+        return assignments;
+    }
 
+    // --- Actions ---
+    async function saveTransportAssignments() {
+        const eventId = eventDropdown.value;
+        if (!eventId) return;
+
+        const assignments = collectAssignments();
+
+        try {
+            saveTransportBtn.disabled = true;
+            saveTransportBtn.textContent = 'Saving...';
+
+            const response = await fetch(`/api/events/${eventId}/transport`, {
+                method: 'POST',
+                headers,
+                body: JSON.stringify({ assignments })
+            });
+
+            if (!response.ok) throw new Error('Failed to save');
+            
+            // Update local state
+            savedAssignments = assignments;
+            
+            // Visual feedback
+            const originalText = saveTransportBtn.textContent;
+            saveTransportBtn.textContent = 'Saved!';
+            setTimeout(() => { 
+                saveTransportBtn.textContent = 'Save Selection'; 
+                saveTransportBtn.disabled = false;
+            }, 1000);
+
+        } catch (error) {
+            alert(`Save failed: ${error.message}`);
+            saveTransportBtn.disabled = false;
+            saveTransportBtn.textContent = 'Save Selection';
+        }
+    }
+
+    async function sendTransportEmbed() {
+        const eventId = eventDropdown.value;
+        const channelId = channelDropdown ? channelDropdown.value : null;
+
+        if (!eventId || !channelId) {
+            alert("Please select an event and a target Discord channel.");
+            return;
+        }
+
+        const assignments = collectAssignments();
         const payload = {
             channel_id: channelId,
             assignments: assignments
@@ -233,6 +299,10 @@ document.addEventListener('DOMContentLoaded', () => {
             }
 
             alert('Transport & Deployment embed sent to Discord!');
+            
+            // Since send also saves, update local state
+            savedAssignments = assignments;
+
         } catch (error) {
             alert(`Error: ${error.message}`);
         } finally {
