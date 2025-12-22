@@ -23,7 +23,7 @@ class RsvpStatus:
     TENTATIVE = "Tentative"
     DECLINED = "Declined"
 
-# --- FIX START: Helper function to safely convert CSV strings to numbers ---
+# --- Helper function to safely convert CSV strings to numbers ---
 def _safe_int(value: Any) -> Optional[int]:
     """Safely converts a value to an integer, returning None if conversion fails."""
     if value is None:
@@ -44,7 +44,6 @@ def _safe_float(value: Any) -> Optional[float]:
         return float(value)
     except (ValueError, TypeError):
         return None
-# --- FIX END ---
 
 
 async def _send_rsvp_log_message(user_id: int, event_title: str, old_status: str, new_status: str):
@@ -331,6 +330,17 @@ class Database:
                     );
                 """)
                 # --- WHITE CHATS (Parties) END ---
+
+                # --- NEW: Transport Assignments Table ---
+                await connection.execute("""
+                    CREATE TABLE IF NOT EXISTS transport_assignments (
+                        assignment_id SERIAL PRIMARY KEY,
+                        event_id INT NOT NULL REFERENCES events(event_id) ON DELETE CASCADE,
+                        hq_name VARCHAR(10) NOT NULL, -- HQ1, HQ2, HQ3
+                        squad_name VARCHAR(255) NOT NULL,
+                        UNIQUE(event_id, squad_name)
+                    );
+                """)
 
     # --- Guild Settings ---
     async def set_thread_creation_hours(self, guild_id: int, hours: int):
@@ -1488,6 +1498,46 @@ class Database:
                 elif row_dict.get('members') is None:
                     row_dict['members'] = []
                 result.append(row_dict)
+            return result
+
+    # --- Transport Assignment Methods ---
+    async def save_transport_assignments(self, event_id: int, assignments: Dict[str, List[str]]):
+        """
+        Saves transport assignments.
+        assignments is a dict: {'HQ1': ['Squad A', 'Squad B'], 'HQ2': ...}
+        """
+        async with self.pool.acquire() as connection:
+            async with connection.transaction():
+                # 1. Clear existing assignments for this event
+                await connection.execute("DELETE FROM transport_assignments WHERE event_id = $1;", event_id)
+                
+                # 2. Insert new assignments
+                records = []
+                for hq, squad_list in assignments.items():
+                    for squad_name in squad_list:
+                        records.append((event_id, hq, squad_name))
+                
+                if records:
+                    await connection.executemany("""
+                        INSERT INTO transport_assignments (event_id, hq_name, squad_name)
+                        VALUES ($1, $2, $3)
+                        ON CONFLICT (event_id, squad_name) DO UPDATE SET hq_name = EXCLUDED.hq_name;
+                    """, records)
+
+    async def get_transport_assignments(self, event_id: int) -> Dict[str, List[str]]:
+        """
+        Retrieves transport assignments for an event.
+        Returns: {'HQ1': ['Squad A'], 'HQ2': [], ...}
+        """
+        query = "SELECT hq_name, squad_name FROM transport_assignments WHERE event_id = $1 ORDER BY hq_name, squad_name;"
+        async with self.pool.acquire() as connection:
+            records = await connection.fetch(query, event_id)
+            
+            result = {"HQ1": [], "HQ2": [], "HQ3": []}
+            for r in records:
+                hq = r['hq_name']
+                if hq in result:
+                    result[hq].append(r['squad_name'])
             return result
     
     async def close(self):
