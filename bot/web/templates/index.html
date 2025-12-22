@@ -89,6 +89,31 @@
 
                 <div id="workshop-area" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 mb-6"></div>
 
+                <div class="flex items-center my-4">
+                    <input id="mention-attendees-checkbox" type="checkbox" class="h-4 w-4 text-blue-600 bg-gray-700 border-gray-600 rounded">
+                    <label for="mention-attendees-checkbox" class="ml-2 block text-sm font-medium text-gray-300">
+                        Mention all accepted attendees in the message?
+                    </label>
+                </div>
+                
+                <div class="border-t border-gray-700 pt-6 mb-6">
+                    <div class="flex flex-col sm:flex-row gap-4 items-center">
+                        <select id="channel-dropdown" class="flex-grow p-2 bg-gray-700 border border-gray-600 rounded-md"></select>
+                        <button id="send-draft-btn" class="bg-gray-600 hover:bg-gray-700 text-white font-bold py-2 px-4 rounded-md transition duration-300">
+                            Send Draft Embed
+                        </button>
+                        <button id="finalize-btn" class="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-md transition duration-300">
+                            Finalize Squads & Learn
+                        </button>
+                        
+                        <div class="w-px h-6 bg-gray-600 mx-2"></div>
+                        <button id="send-nodes-btn" class="bg-orange-600 hover:bg-orange-700 text-white font-bold py-2 px-4 rounded-md transition duration-300" title="Send Nodes Building Plan">
+                            Send Nodes Plan
+                        </button>
+                    </div>
+                    <p class="text-xs text-gray-500 mt-2 text-center sm:text-left">Use 'Send Draft' for feedback. Use 'Finalize' to send the official lineup.</p>
+                </div>
+
                 <div id="white-chat-section" class="mb-6 pt-6 border-t border-gray-700 hidden">
                     <div class="flex justify-between items-center mb-4">
                         <h2 class="text-xl font-bold text-white">White Chat / Party Manager</h2>
@@ -111,31 +136,19 @@
                     <div id="white-chats-list" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                         </div>
                 </div>
-                <div class="flex items-center my-4">
-                    <input id="mention-attendees-checkbox" type="checkbox" class="h-4 w-4 text-blue-600 bg-gray-700 border-gray-600 rounded">
-                    <label for="mention-attendees-checkbox" class="ml-2 block text-sm font-medium text-gray-300">
-                        Mention all accepted attendees in the message?
-                    </label>
-                </div>
                 
-                <div class="border-t border-gray-700 pt-6">
-                    <div class="flex flex-col sm:flex-row gap-4 items-center">
-                        <select id="channel-dropdown" class="flex-grow p-2 bg-gray-700 border border-gray-600 rounded-md"></select>
-                        <button id="send-draft-btn" class="bg-gray-600 hover:bg-gray-700 text-white font-bold py-2 px-4 rounded-md transition duration-300">
-                            Send Draft Embed
-                        </button>
-                        <button id="finalize-btn" class="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-md transition duration-300">
-                            Finalize Squads & Learn
-                        </button>
-                        
-                        <div class="w-px h-6 bg-gray-600 mx-2"></div>
-                        <button id="send-nodes-btn" class="bg-orange-600 hover:bg-orange-700 text-white font-bold py-2 px-4 rounded-md transition duration-300" title="Send Nodes Building Plan">
-                            Send Nodes Plan
+                <div id="transport-section" class="pt-6 border-t border-gray-700 hidden">
+                    <div class="flex justify-between items-center mb-4">
+                        <h2 class="text-xl font-bold text-white">Transport & Deployment</h2>
+                        <button id="send-transport-btn" class="bg-teal-600 hover:bg-teal-700 text-white font-bold py-1 px-3 rounded text-sm transition-colors">
+                            Send Transport Plan
                         </button>
                     </div>
-                    <p class="text-xs text-gray-500 mt-2 text-center sm:text-left">Use 'Send Draft' for feedback. Use 'Finalize' to send the official lineup and teach the AI for future events.</p>
+                    
+                    <div id="transport-builder-area">
+                        </div>
                 </div>
-            </section>
+                </section>
         </main>
     </div>
 
@@ -194,5 +207,6 @@
     <script src="/static/main-v2.js?v=3"></script>
     <script src="/static/white_chats.js"></script>
     <script src="/static/nodes.js"></script>
+    <script src="/static/transport.js"></script>
 </body>
 </html>
