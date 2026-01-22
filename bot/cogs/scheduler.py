@@ -17,7 +17,8 @@ class Scheduler(commands.Cog):
         self.bot = bot
         self.db = db
         print("[Scheduler Cog] Initialized. Starting tasks...")
-        #self.check_event_messages.start()
+        # --- FIX: Uncommented the self-healing task ---
+        self.check_event_messages.start()
         self.create_event_threads.start()
         self.recreate_recurring_events.start()
         self.cleanup_finished_events.start()
@@ -26,12 +27,12 @@ class Scheduler(commands.Cog):
         self.process_tentatives.start()
         self.update_event_embeds.start()
         self.sync_player_database.start()
-        # --- FIX: Start the new name caching task ---
         self.cache_player_names.start()
 
     def cog_unload(self):
         """Cleanly cancels all tasks when the cog is unloaded."""
-        #self.check_event_messages.cancel()
+        # --- FIX: Uncommented the self-healing cancel ---
+        self.check_event_messages.cancel()
         self.create_event_threads.cancel()
         self.recreate_recurring_events.cancel()
         self.cleanup_finished_events.cancel()
@@ -40,10 +41,7 @@ class Scheduler(commands.Cog):
         self.process_tentatives.cancel()
         self.update_event_embeds.cancel()
         self.sync_player_database.cancel()
-        # --- FIX: Cancel the new name caching task ---
         self.cache_player_names.cancel()
-
-    # In bot/cogs/scheduler.py
 
     @tasks.loop(minutes=10)
     async def cache_player_names(self):
@@ -60,7 +58,6 @@ class Scheduler(commands.Cog):
             return
 
         try:
-            # --- THIS LINE IS THE FIX ---
             active_players = await self.db.get_engagement_stats()
             if not active_players:
                 print("[Name Cache] No active players in the database to cache.")
@@ -76,7 +73,6 @@ class Scheduler(commands.Cog):
                             'name': member.display_name
                         })
                 except discord.NotFound:
-                    # If member left, their name won't be updated, which is fine.
                     continue
             
             if member_data_to_cache:
@@ -113,19 +109,13 @@ class Scheduler(commands.Cog):
             return
 
         try:
-            # Step 1: Get the list of members who SHOULD be active from Discord
             member_ids_with_role = {member.id for member in role.members if not member.bot}
-
-            # Step 2: Get the list of players who ARE CURRENTLY active in the DB
             currently_active_players = await self.db.get_engagement_stats()
-            # --- THIS IS THE LINE THAT FIXES THE ERROR ---
             currently_active_ids = {int(player['user_id']) for player in currently_active_players}
 
-            # Step 3: Calculate who needs to be changed
             ids_to_activate = list(member_ids_with_role - currently_active_ids)
             ids_to_deactivate = list(currently_active_ids - member_ids_with_role)
 
-            # Step 4: Perform small, targeted updates
             if ids_to_activate:
                 await self.db.update_member_active_status(ids_to_activate, True)
                 print(f"[Player Sync] Activated {len(ids_to_activate)} new member(s).")
@@ -173,41 +163,45 @@ class Scheduler(commands.Cog):
             print(f"[Scheduler] FATAL ERROR in update_event_embeds loop: {e}")
             traceback.print_exc()
 
-    #@tasks.loop(minutes=3)
-    #async def check_event_messages(self):
-    #    """
-    #    Periodically checks if the message for an active event still exists.
-    #    If not, it re-posts it. This acts as a self-healing mechanism.
-    #    """
-    #    print("\n[Scheduler] Running check_event_messages loop...")
-    #    try:
-    #        active_events = await self.db.get_active_events_with_message_id()
-    #        if not active_events:
-    #            print("[Scheduler] No active events with messages to check.")
-    #            return
-    #
-    #        print(f"[Scheduler] Checking {len(active_events)} active event message(s)...")
-    #        for event in active_events:
-    #            try:
-    #                channel = self.bot.get_channel(event['channel_id']) or await self.bot.fetch_channel(event['channel_id'])
-    #                await channel.fetch_message(event['message_id'])
-    #            except discord.NotFound:
-    #                print(f"  [Self-Heal] Message for event {event['event_id']} ('{event['title']}') not found. Re-posting...")
-    #                try:
-    #                    embed = await create_event_embed(self.bot, event['event_id'], self.db)
-    #                    view = PersistentEventView(self.db)
-    #                    content = " ".join([f"<@&{rid}>" for rid in event.get('mention_role_ids', [])])
-    #
-    #                    new_message = await channel.send(content=content, embed=embed, view=view)
-    #                    await self.db.update_event_message_id(event['event_id'], new_message.id)
-    #                    print(f"  [Self-Heal] Successfully re-posted message for event {event['event_id']}.")
-    #                except Exception as post_error:
-    #                    print(f"  [Self-Heal] FAILED to re-post message for event {event['event_id']}: {post_error}")
-    #            except Exception as e:
-    #                print(f"  [Self-Heal] Error checking message for event {event['event_id']}: {e}")
-    #    except Exception as e:
-    #        print(f"[Scheduler] FATAL ERROR in check_event_messages loop: {e}")
-    #        traceback.print_exc()
+    # --- FIX: Uncommented the self-healing loop ---
+    @tasks.loop(minutes=3)
+    async def check_event_messages(self):
+        """
+        Periodically checks if the message for an active event still exists.
+        If not, it re-posts it. This acts as a self-healing mechanism.
+        """
+        print("\n[Scheduler] Running check_event_messages loop...")
+        try:
+            active_events = await self.db.get_active_events_with_message_id()
+            if not active_events:
+                print("[Scheduler] No active events with messages to check.")
+                return
+
+            print(f"[Scheduler] Checking {len(active_events)} active event message(s)...")
+            for event in active_events:
+                try:
+                    channel = self.bot.get_channel(event['channel_id']) or await self.bot.fetch_channel(event['channel_id'])
+                    await channel.fetch_message(event['message_id'])
+                except discord.NotFound:
+                    print(f"  [Self-Heal] Message for event {event['event_id']} ('{event['title']}') not found. Re-posting...")
+                    try:
+                        embed = await create_event_embed(self.bot, event['event_id'], self.db)
+                        view = PersistentEventView(self.db)
+                        
+                        # Fix: Safe handling for roles
+                        roles = event.get('mention_role_ids') or []
+                        content = " ".join([f"<@&{rid}>" for rid in roles])
+
+                        new_message = await channel.send(content=content, embed=embed, view=view)
+                        await self.db.update_event_message_id(event['event_id'], new_message.id)
+                        print(f"  [Self-Heal] Successfully re-posted message for event {event['event_id']}.")
+                    except Exception as post_error:
+                        print(f"  [Self-Heal] FAILED to re-post message for event {event['event_id']}: {post_error}")
+                except Exception as e:
+                    print(f"  [Self-Heal] Error checking message for event {event['event_id']}: {e}")
+        except Exception as e:
+            print(f"[Scheduler] FATAL ERROR in check_event_messages loop: {e}")
+            traceback.print_exc()
 
     @tasks.loop(hours=1)
     async def process_tentatives(self):
@@ -247,13 +241,10 @@ class Scheduler(commands.Cog):
 
                 signups = await self.db.get_signups_for_event(event['event_id'])
                 
-                # --- START: MODIFICATION ---
-                # Now include both Accepted and Tentative users
                 user_ids_to_sync = {
                     s['user_id'] for s in signups 
                     if s['rsvp_status'] in [RsvpStatus.ACCEPTED, RsvpStatus.TENTATIVE]
                 }
-                # --- END: MODIFICATION ---
 
                 thread_member_ids = {member.id for member in await thread.fetch_members()}
 
@@ -325,13 +316,10 @@ class Scheduler(commands.Cog):
 
             signups = await self.db.get_signups_for_event(event_id)
             
-            # --- START: MODIFICATION ---
-            # Now include both Accepted and Tentative users
             user_ids_to_add = [
                 s['user_id'] for s in signups 
                 if s['rsvp_status'] in [RsvpStatus.ACCEPTED, RsvpStatus.TENTATIVE]
             ]
-            # --- END: MODIFICATION ---
 
             print(f"  [Process:{event_id}] Adding {len(user_ids_to_add)} members to the private thread...")
             for user_id in user_ids_to_add:
@@ -427,24 +415,44 @@ class Scheduler(commands.Cog):
         target_channel_id = latest_child['channel_id'] if latest_child else parent_event['channel_id']
         child_data['channel_id'] = target_channel_id
 
+        # --- FIX START: Atomic creation and safe role handling ---
+        child_id = None
         try:
+            # 1. Create Event in DB
             child_id = await self.db.create_event(
                 parent_event['guild_id'], target_channel_id, parent_event['creator_id'], child_data
             )
 
+            # 2. Attempt to Send Embed
             target_channel = self.bot.get_channel(target_channel_id) or await self.bot.fetch_channel(target_channel_id)
 
             embed = await create_event_embed(self.bot, child_id, self.db)
             view = PersistentEventView(self.db)
-            content = " ".join([f"<@&{rid}>" for rid in parent_event.get('mention_role_ids', [])])
+            
+            # Safe role handling: Ensure roles is a list, even if DB returns None
+            roles = parent_event.get('mention_role_ids') or []
+            content = " ".join([f"<@&{rid}>" for rid in roles])
 
             msg = await target_channel.send(content=content, embed=embed, view=view)
+            
+            # 3. Update DB with Message ID
             await self.db.update_event_message_id(child_id, msg.id)
             print(f"Successfully created new recurring child event. New child ID: {child_id}")
 
         except Exception as e:
-            print(f"Failed to process recreation for parent event {parent_id}: {e}")
+            print(f"CRITICAL FAILURE during event creation for parent {parent_id}: {e}")
             traceback.print_exc()
+            
+            # ROLLBACK: If we created the event row but failed to send the message, DELETE the row.
+            # This prevents a "Zombie" event and allows the bot to retry next loop.
+            if child_id:
+                print(f"Rolling back: Deleting corrupted event ID {child_id}...")
+                try:
+                    await self.db.delete_event(child_id)
+                    print("Rollback successful.")
+                except Exception as del_e:
+                    print(f"Rollback failed: {del_e}")
+        # --- FIX END ---
 
     @tasks.loop(time=datetime.time(hour=0, minute=5, tzinfo=pytz.utc))
     async def purge_deleted_events(self):
@@ -500,8 +508,9 @@ class Scheduler(commands.Cog):
     @purge_deleted_events.before_loop
     @update_event_embeds.before_loop
     @sync_player_database.before_loop
-    # --- FIX: Add the new name caching task to the before_loop wait ---
     @cache_player_names.before_loop
+    # --- FIX: Added self_check to before_loop wait ---
+    @check_event_messages.before_loop
     async def before_tasks(self):
         """Waits until the bot is fully logged in and ready before starting loops."""
         print("[Scheduler Tasks] Waiting for bot to be ready...")
