@@ -399,17 +399,36 @@ class PersistentEventView(ui.View):
         event = await self.db.get_event_by_message_id(i.message.id)
         if not event: return await i.followup.send("Event not found.", ephemeral=True)
 
-        restricted_roles = event.get('restrict_to_role_ids')
-        if restricted_roles:  # Only perform the check if the event has role restrictions.
-            user_role_ids = {role.id for role in i.user.roles}
-            if not user_role_ids.intersection(restricted_roles):
-                # If the user has no roles in common with the restricted list, send an error and stop.
-                role_mentions = [f'<@&{role_id}>' for role_id in restricted_roles]
+        # --- FIX: ROBUST SECURITY CHECK ---
+        # 1. Fetch restrictions
+        restricted_roles_raw = event.get('restrict_to_role_ids')
+        
+        # 2. Only check if restriction exists and is not empty
+        if restricted_roles_raw:
+            # 3. Force convert DB IDs to integers (safeguard against string/int mismatch)
+            allowed_role_ids = set()
+            for rid in restricted_roles_raw:
+                if rid is not None:
+                    try:
+                        allowed_role_ids.add(int(rid))
+                    except (ValueError, TypeError):
+                        pass
+
+            # 4. Get User Role IDs as integers
+            user_role_ids = {r.id for r in i.user.roles}
+
+            # 5. Perform Intersection Check (if allowed list has valid IDs)
+            if allowed_role_ids and not user_role_ids.intersection(allowed_role_ids):
+                # Build pretty error message
+                role_mentions = [f'<@&{rid}>' for rid in allowed_role_ids]
                 await i.followup.send(
                     f"Sorry, this event is restricted to members with the following role(s): {', '.join(role_mentions)}",
                     ephemeral=True
                 )
-                return # Stop the signup process.
+                return # Block signup
+
+        restricted_roles = event.get('restrict_to_role_ids')
+        # Check for role restrictions (redundant logic removed, handled above)
 
         restricted_roles_config = {
             "Commander": os.getenv("ROLE_ID_COMMANDER"), "Officer": os.getenv("ROLE_ID_OFFICER"),
@@ -451,6 +470,26 @@ class PersistentEventView(ui.View):
         await i.response.defer(ephemeral=True)
         try:
             if event := await self.db.get_event_by_message_id(i.message.id):
+                # --- FIX: ADD SECURITY CHECK TO TENTATIVE AS WELL ---
+                restricted_roles_raw = event.get('restrict_to_role_ids')
+                if restricted_roles_raw:
+                    allowed_role_ids = set()
+                    for rid in restricted_roles_raw:
+                        if rid is not None:
+                            try:
+                                allowed_role_ids.add(int(rid))
+                            except (ValueError, TypeError):
+                                pass
+
+                    user_role_ids = {r.id for r in i.user.roles}
+                    if allowed_role_ids and not user_role_ids.intersection(allowed_role_ids):
+                        role_mentions = [f'<@&{rid}>' for rid in allowed_role_ids]
+                        await i.followup.send(
+                            f"Sorry, this event is restricted to members with the following role(s): {', '.join(role_mentions)}",
+                            ephemeral=True
+                        )
+                        return # Block signup
+
                 await self.db.set_rsvp(event['event_id'], i.user.id, RsvpStatus.TENTATIVE)
                 await self.db.update_signup_role(event['event_id'], i.user.id, None, None)
                 await self.update_embed(i, event['event_id'])
