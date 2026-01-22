@@ -127,12 +127,28 @@ async def create_event_embed(bot: commands.Bot, event_id: int, db: Database) -> 
             subclass_groups[subclass_key].append(signup['display_name'])
 
         content_lines = [f"__**{role_name}**__ ({len(signups)})"]
-        subclass_order = SUBCLASSES.get(role_name, []) + ["Unassigned"]
-        for subclass in subclass_order:
-            if players := subclass_groups.get(subclass):
-                content_lines.append(f"__**{subclass}**__ ({len(players)})")
+        
+        # --- FIX START: Smart Subclass Handling ---
+        # Check if this role actually HAS defined subclasses (e.g. Infantry has Medics, Commanders do not)
+        defined_subclasses = SUBCLASSES.get(role_name, [])
+        
+        if not defined_subclasses:
+            # Case 1: Roles like "Commander" with no subclasses.
+            # Players default to "Unassigned" key, but we list them directly under the Role Header.
+            if players := subclass_groups.get("Unassigned"):
                 content_lines.extend(players)
-                content_lines.append("") # Add spacing between subclasses
+                content_lines.append("") # Spacing
+        else:
+            # Case 2: Roles like "Infantry" that HAVE subclasses.
+            # We iterate through them, plus "Unassigned" for those who haven't picked one yet.
+            subclass_order = defined_subclasses + ["Unassigned"]
+            for subclass in subclass_order:
+                if players := subclass_groups.get(subclass):
+                    content_lines.append(f"__**{subclass}**__ ({len(players)})")
+                    content_lines.extend(players)
+                    content_lines.append("") # Spacing
+        # --- FIX END ---
+
         if content_lines and content_lines[-1] == "": content_lines.pop()
         return content_lines
 
