@@ -423,11 +423,13 @@ class Database:
             return [dict(record) for record in records]
 
     async def get_events_for_recreation(self) -> List[Dict]:
+        # FIX: Removed the time constraint so FUTURE parent events are also fetched.
+        # This allows the scheduler to check 'recreation_hours' against future start times.
         query = """
             SELECT * FROM events
             WHERE is_recurring = TRUE 
-              AND is_deleted = FALSE
-              AND (end_time + INTERVAL '1 hour') <= (NOW() AT TIME ZONE 'utc');
+              AND parent_event_id IS NULL
+              AND is_deleted = FALSE;
         """
         async with self.pool.acquire() as connection:
             records = await connection.fetch(query)
