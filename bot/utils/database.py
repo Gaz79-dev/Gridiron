@@ -453,13 +453,13 @@ class Database:
             event = await connection.fetchrow("SELECT title, event_time FROM events WHERE event_id = $1", event_id)
             if not event: return
 
-            # 2. Fetch Roster (Squads + Members)
+            # 2. Fetch Roster (Squads + Members) - FIXED Keys for display_name and role_name
             squads_query = """
                 SELECT s.name, s.squad_type, 
                        json_agg(json_build_object(
-                           'name', COALESCE(ps.display_name, sm.user_id::text),
-                           'role', sm.assigned_role_name,
-                           'task', sm.startup_task
+                           'display_name', COALESCE(ps.display_name, sm.user_id::text),
+                           'role_name', sm.assigned_role_name,
+                           'startup_task', sm.startup_task
                        )) as members
                 FROM squads s
                 LEFT JOIN squad_members sm ON s.squad_id = sm.squad_id
@@ -474,24 +474,37 @@ class Database:
             transport = await connection.fetch("SELECT hq_name, squad_name FROM transport_assignments WHERE event_id = $1", event_id)
             transport_snapshot = [dict(t) for t in transport]
 
-            # 4. Fetch White Chats
-            white_chats = await self.get_white_chats_with_members(event_id) # Reuse existing method
+            # 4. Fetch Nodes (Startup Tasks) - NEW: Capture tasks for the nodes_snapshot
+            nodes_query = """
+                SELECT COALESCE(ps.display_name, sm.user_id::text) as player_name, sm.startup_task
+                FROM squad_members sm
+                JOIN squads s ON sm.squad_id = s.squad_id
+                LEFT JOIN player_stats ps ON sm.user_id = ps.user_id
+                WHERE s.event_id = $1 AND sm.startup_task IS NOT NULL AND sm.startup_task != '';
+            """
+            nodes_records = await connection.fetch(nodes_query, event_id)
+            # Store as Dict: {'Player Name': 'Task'}
+            nodes_snapshot = {r['player_name']: r['startup_task'] for r in nodes_records}
+
+            # 5. Fetch White Chats
+            white_chats = await self.get_white_chats_with_members(event_id)
             
-            # 5. Insert Snapshot
+            # 6. Insert Snapshot
             await connection.execute("""
                 INSERT INTO event_archives 
-                (event_id, event_title, event_date, map_name, faction, mid_point, roster_snapshot, transport_snapshot, white_chats_snapshot)
-                VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9::jsonb)
+                (event_id, event_title, event_date, map_name, faction, mid_point, roster_snapshot, transport_snapshot, nodes_snapshot, white_chats_snapshot)
+                VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9::jsonb, $10::jsonb)
                 ON CONFLICT (event_id) DO UPDATE SET
                     roster_snapshot = EXCLUDED.roster_snapshot,
                     transport_snapshot = EXCLUDED.transport_snapshot,
+                    nodes_snapshot = EXCLUDED.nodes_snapshot,
                     white_chats_snapshot = EXCLUDED.white_chats_snapshot,
                     map_name = COALESCE(EXCLUDED.map_name, event_archives.map_name),
                     faction = COALESCE(EXCLUDED.faction, event_archives.faction);
             """, 
             event_id, event['title'], event['event_time'], 
             map_info.get('map_name'), map_info.get('faction'), map_info.get('mid_point'),
-            json.dumps(roster_snapshot), json.dumps(transport_snapshot), json.dumps(white_chats)
+            json.dumps(roster_snapshot), json.dumps(transport_snapshot), json.dumps(nodes_snapshot), json.dumps(white_chats)
             )
 
     async def log_chat_message(self, message_data: Dict):
