@@ -61,12 +61,13 @@
                     <div>
                         <h2 id="event-title" class="text-2xl font-bold text-white">Event Title</h2>
                         <p id="event-date" class="text-sm text-gray-400 mt-1">Date and Time</p>
-                        <p id="event-description" class="text-gray-300 mt-2 text-sm max-w-3xl">Description...</p>
+                        <p id="event-desc-preview" class="text-gray-300 mt-2 text-sm max-w-3xl line-clamp-2">Description...</p>
                     </div>
                     <div class="flex space-x-2">
                          <button class="tab-btn active bg-blue-600 text-white px-4 py-2 rounded text-sm font-medium transition-colors" data-tab="roster">Roster</button>
                         <button class="tab-btn bg-gray-700 text-gray-300 hover:text-white px-4 py-2 rounded text-sm font-medium transition-colors" data-tab="chat">Chat History</button>
                         <button class="tab-btn bg-gray-700 text-gray-300 hover:text-white px-4 py-2 rounded text-sm font-medium transition-colors" data-tab="plans">Transport & Nodes</button>
+                        <button class="tab-btn bg-gray-700 text-gray-300 hover:text-white px-4 py-2 rounded text-sm font-medium transition-colors" data-tab="details">Event Details</button>
                     </div>
                 </div>
 
@@ -114,11 +115,51 @@
                         </div>
                     </div>
 
+                    <div id="tab-details" class="tab-content hidden absolute inset-0 overflow-y-auto p-6">
+                        <div class="bg-gray-800 rounded-lg p-6 shadow max-w-4xl mx-auto">
+                            <h3 class="text-2xl font-bold text-white mb-4 border-b border-gray-700 pb-2">Event Information</h3>
+                            
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+                                <div>
+                                    <div class="mb-4">
+                                        <label class="block text-sm text-gray-400 font-bold mb-1">Start Time (Your Local Time)</label>
+                                        <div id="detail-start-time" class="text-lg text-white"></div>
+                                    </div>
+                                    <div class="mb-4">
+                                        <label class="block text-sm text-gray-400 font-bold mb-1">End Time (Your Local Time)</label>
+                                        <div id="detail-end-time" class="text-lg text-white"></div>
+                                    </div>
+                                    <div>
+                                        <label class="block text-sm text-gray-400 font-bold mb-1">Original Timezone</label>
+                                        <div id="detail-timezone" class="text-lg text-white"></div>
+                                    </div>
+                                </div>
+
+                                <div>
+                                    <div class="mb-4">
+                                        <label class="block text-sm text-gray-400 font-bold mb-1">Signup Restrictions</label>
+                                        <div id="detail-restrictions" class="text-gray-200"></div>
+                                    </div>
+                                    <div class="mb-4">
+                                        <label class="block text-sm text-gray-400 font-bold mb-1">Archived At</label>
+                                        <div id="detail-archived-at" class="text-sm text-gray-400"></div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div>
+                                <label class="block text-sm text-gray-400 font-bold mb-2">Description</label>
+                                <div id="detail-description" class="bg-gray-900 rounded p-4 text-gray-300 whitespace-pre-wrap leading-relaxed border border-gray-700"></div>
+                            </div>
+                        </div>
+                    </div>
+
                 </div>
             </div>
         </section>
     </main>
 
     <script src="/static/auth.js"></script>
-    <script src="/static/archive.js"></script> </body>
+    <script src="/static/archive.js"></script>
+</body>
 </html>
