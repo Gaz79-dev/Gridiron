@@ -493,6 +493,8 @@ class Scheduler(commands.Cog):
                             # Iterate through the history (oldest first)
                             async for msg in thread.history(limit=None, oldest_first=True):
                                 history_data.append({
+                                    'id': msg.id,                  # --- ADDED: Message ID (Primary Key) ---
+                                    'author_id': msg.author.id,    # --- ADDED: Author ID ---
                                     'user_name': msg.author.display_name,
                                     'avatar_url': str(msg.author.display_avatar.url),
                                     'content': msg.content,
@@ -501,7 +503,6 @@ class Scheduler(commands.Cog):
                                 })
                             
                             # Call database utility to save history & freeze plan
-                            # Ensure 'archive_thread_history' exists in your database.py
                             await self.db.archive_thread_history(event_id, history_data)
                             print(f"  - Archived {len(history_data)} messages.")
                             
