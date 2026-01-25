@@ -10,8 +10,6 @@ from bot.api.dependencies import get_db
 from bot.utils.database import Database
 
 # --- Pydantic Models for Archive Responses ---
-# We define them here to keep the archive logic self-contained, 
-# but they can be moved to bot/api/models.py if you prefer.
 
 class ArchivedEventSummary(BaseModel):
     event_id: int
@@ -31,6 +29,9 @@ class ArchivedEventDetails(BaseModel):
     title: str
     description: Optional[str] = None
     event_time: datetime
+    end_time: Optional[datetime] = None
+    timezone: Optional[str] = None
+    restricted_roles: Optional[List[str]] = []
     archived_at: Optional[datetime] = None
     
     # Frozen Snapshots (stored as JSON in DB)
@@ -54,7 +55,6 @@ async def get_archived_events_list(db: Database = Depends(get_db)):
     Retrieves a list of all past events that have been archived.
     """
     try:
-        # You will need to ensure this method exists in your Database class
         return await db.get_archived_events_index()
     except Exception as e:
         logger.error(f"Error fetching archived events index: {e}")
@@ -64,10 +64,8 @@ async def get_archived_events_list(db: Database = Depends(get_db)):
 async def get_archived_event_snapshot(event_id: int, db: Database = Depends(get_db)):
     """
     Retrieves the full read-only snapshot of a specific event.
-    Includes the final roster, transport plan, and node assignments.
     """
     try:
-        # You will need to ensure this method exists in your Database class
         event_data = await db.get_archived_event_details(event_id)
         if not event_data:
             raise HTTPException(status_code=404, detail="Archived event not found.")
@@ -84,7 +82,6 @@ async def get_archived_event_chat(event_id: int, db: Database = Depends(get_db))
     Retrieves the preserved Discord chat history for the event.
     """
     try:
-        # You will need to ensure this method exists in your Database class
         return await db.get_archived_chat_history(event_id)
     except Exception as e:
         logger.error(f"Error fetching chat history for event {event_id}: {e}")
