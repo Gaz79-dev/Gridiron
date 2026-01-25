@@ -515,7 +515,91 @@ class Database:
             records = await connection.fetch(query, event_id)
             return [dict(r) for r in records]
 
-    # --- EXISTING METHODS BELOW (Unchanged) ---
+    # --- ADDED: Phase 1 Deep Archive Missing Methods ---
+
+    async def archive_thread_history(self, event_id: int, messages: List[Dict]):
+        """
+        Takes a list of message dictionaries (from Scheduler) and saves them 
+        to event_chat_history in a batch. Then triggers the final event snapshot.
+        """
+        async with self.pool.acquire() as connection:
+            async with connection.transaction():
+                # 1. Batch insert the messages
+                query = """
+                    INSERT INTO event_chat_history (msg_id, event_id, user_id, username, avatar_url, content, timestamp, attachment_urls)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                    ON CONFLICT (msg_id) DO NOTHING;
+                """
+                
+                # Prepare records for executemany
+                records = [
+                    (
+                        m.get('id') or m.get('msg_id'), # Handle key variation
+                        event_id, 
+                        m.get('author_id') or m.get('user_id'), # Handle key variation
+                        m.get('author_name') or m.get('user_name'),
+                        m.get('avatar_url'), 
+                        m.get('content'), 
+                        m.get('timestamp'), 
+                        m.get('attachment_urls') or m.get('attachments')
+                    )
+                    for m in messages
+                ]
+                
+                if records:
+                    await connection.executemany(query, records)
+                
+                # 2. Trigger the final event state snapshot
+                await self.create_event_archive(event_id)
+
+    async def get_archived_events_index(self) -> List[Dict]:
+        """
+        Retrieves a summary list of all archived events for the sidebar.
+        """
+        query = """
+            SELECT event_id, event_title as title, event_date as event_time, archived_at 
+            FROM event_archives 
+            ORDER BY event_date DESC;
+        """
+        async with self.pool.acquire() as connection:
+            records = await connection.fetch(query)
+            return [dict(r) for r in records]
+
+    async def get_archived_event_details(self, event_id: int) -> Optional[Dict]:
+        """
+        Retrieves the full frozen snapshot (Roster, Transport, Nodes, etc).
+        """
+        query = "SELECT * FROM event_archives WHERE event_id = $1;"
+        async with self.pool.acquire() as connection:
+            record = await connection.fetchrow(query, event_id)
+            if not record:
+                return None
+            
+            # Convert record to dict and ensure JSON fields are parsed
+            data = dict(record)
+            for field in ['roster_snapshot', 'transport_snapshot', 'nodes_snapshot', 'white_chats_snapshot']:
+                if isinstance(data.get(field), str):
+                    try:
+                        data[field] = json.loads(data[field])
+                    except:
+                        data[field] = {}
+            return data
+
+    async def get_archived_chat_history(self, event_id: int) -> List[Dict]:
+        """
+        Retrieves the chat log for the frontend.
+        """
+        query = """
+            SELECT user_id, username as user_name, avatar_url, content, timestamp, attachment_urls 
+            FROM event_chat_history 
+            WHERE event_id = $1 
+            ORDER BY timestamp ASC;
+        """
+        async with self.pool.acquire() as connection:
+            records = await connection.fetch(query, event_id)
+            return [dict(r) for r in records]
+
+    # --- EXISTING METHODS BELOW ---
 
     # --- Guild Settings ---
     async def set_thread_creation_hours(self, guild_id: int, hours: int):
