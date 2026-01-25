@@ -453,14 +453,21 @@ class Database:
             event = await connection.fetchrow("SELECT title, event_time FROM events WHERE event_id = $1", event_id)
             if not event: return
 
-            # 2. Fetch Roster (Squads + Members) - FIXED Keys for display_name and role_name
+            # 2. Fetch Roster (Squads + Members)
+            # FIX: Added FILTER to prevent null objects for empty squads
+            # FIX: Explicitly cast keys to match frontend expectations
             squads_query = """
                 SELECT s.name, s.squad_type, 
-                       json_agg(json_build_object(
-                           'display_name', COALESCE(ps.display_name, sm.user_id::text),
-                           'role_name', sm.assigned_role_name,
-                           'startup_task', sm.startup_task
-                       )) as members
+                       COALESCE(
+                           json_agg(
+                               json_build_object(
+                                   'display_name', COALESCE(ps.display_name, sm.user_id::text, 'Unknown'),
+                                   'role_name', COALESCE(sm.assigned_role_name, 'Unassigned'),
+                                   'startup_task', sm.startup_task
+                               )
+                           ) FILTER (WHERE sm.squad_member_id IS NOT NULL),
+                           '[]'
+                       ) as members
                 FROM squads s
                 LEFT JOIN squad_members sm ON s.squad_id = sm.squad_id
                 LEFT JOIN player_stats ps ON sm.user_id = ps.user_id
@@ -474,7 +481,7 @@ class Database:
             transport = await connection.fetch("SELECT hq_name, squad_name FROM transport_assignments WHERE event_id = $1", event_id)
             transport_snapshot = [dict(t) for t in transport]
 
-            # 4. Fetch Nodes (Startup Tasks) - NEW: Capture tasks for the nodes_snapshot
+            # 4. Fetch Nodes (Startup Tasks)
             nodes_query = """
                 SELECT COALESCE(ps.display_name, sm.user_id::text) as player_name, sm.startup_task
                 FROM squad_members sm
@@ -483,7 +490,6 @@ class Database:
                 WHERE s.event_id = $1 AND sm.startup_task IS NOT NULL AND sm.startup_task != '';
             """
             nodes_records = await connection.fetch(nodes_query, event_id)
-            # Store as Dict: {'Player Name': 'Task'}
             nodes_snapshot = {r['player_name']: r['startup_task'] for r in nodes_records}
 
             # 5. Fetch White Chats
