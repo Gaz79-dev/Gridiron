@@ -367,9 +367,18 @@ class Database:
                         transport_snapshot JSONB,
                         nodes_snapshot JSONB,
                         white_chats_snapshot JSONB,
-                        archived_at TIMESTAMP WITH TIME ZONE DEFAULT (NOW() AT TIME ZONE 'utc')
+                        archived_at TIMESTAMP WITH TIME ZONE DEFAULT (NOW() AT TIME ZONE 'utc'),
+                        description TEXT,
+                        end_time TIMESTAMP WITH TIME ZONE,
+                        timezone VARCHAR(100),
+                        restricted_roles TEXT[]
                     );
                 """)
+                # Patch for existing databases
+                await connection.execute("ALTER TABLE event_archives ADD COLUMN IF NOT EXISTS description TEXT;")
+                await connection.execute("ALTER TABLE event_archives ADD COLUMN IF NOT EXISTS end_time TIMESTAMP WITH TIME ZONE;")
+                await connection.execute("ALTER TABLE event_archives ADD COLUMN IF NOT EXISTS timezone VARCHAR(100);")
+                await connection.execute("ALTER TABLE event_archives ADD COLUMN IF NOT EXISTS restricted_roles TEXT[];")
 
                 await connection.execute("""
                     CREATE TABLE IF NOT EXISTS event_chat_history (
@@ -445,14 +454,37 @@ class Database:
     async def create_event_archive(self, event_id: int, map_info: Dict[str, str] = None):
         """
         Snapshots the event state using PYTHON LOGIC to ensure data integrity.
-        This handles empty squads correctly and ensures no 'null' values in the archive.
+        Also resolves role IDs to names for the archive record.
         """
         if map_info is None: map_info = {}
         
         async with self.pool.acquire() as connection:
-            # 1. Fetch Event Details
-            event = await connection.fetchrow("SELECT title, event_time FROM events WHERE event_id = $1", event_id)
+            # 1. Fetch Event Details (Added new fields: description, end_time, timezone, restrict_to_role_ids)
+            event = await connection.fetchrow(
+                "SELECT title, description, event_time, end_time, timezone, restrict_to_role_ids, guild_id FROM events WHERE event_id = $1", 
+                event_id
+            )
             if not event: return
+
+            # --- Resolve Restricted Role Names ---
+            restricted_role_names = []
+            if event['restrict_to_role_ids']:
+                # Attempt to resolve using self.bot if available
+                if self.bot:
+                    guild = self.bot.get_guild(event['guild_id'])
+                    if guild:
+                        for rid in event['restrict_to_role_ids']:
+                            role = guild.get_role(rid)
+                            if role:
+                                restricted_role_names.append(role.name)
+                            else:
+                                restricted_role_names.append(f"Role:{rid}")
+                    else:
+                        # Fallback if guild not found in cache
+                        restricted_role_names = [f"Role:{rid}" for rid in event['restrict_to_role_ids']]
+                else:
+                    # Fallback if self.bot not available
+                    restricted_role_names = [f"Role:{rid}" for rid in event['restrict_to_role_ids']]
 
             # --- ROSTER SNAPSHOT (Python Construction) ---
             
@@ -518,19 +550,24 @@ class Database:
             # --- FINAL SAVE ---
             await connection.execute("""
                 INSERT INTO event_archives 
-                (event_id, event_title, event_date, map_name, faction, mid_point, roster_snapshot, transport_snapshot, nodes_snapshot, white_chats_snapshot)
-                VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9::jsonb, $10::jsonb)
+                (event_id, event_title, event_date, map_name, faction, mid_point, roster_snapshot, transport_snapshot, nodes_snapshot, white_chats_snapshot, description, end_time, timezone, restricted_roles)
+                VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9::jsonb, $10::jsonb, $11, $12, $13, $14)
                 ON CONFLICT (event_id) DO UPDATE SET
                     roster_snapshot = EXCLUDED.roster_snapshot,
                     transport_snapshot = EXCLUDED.transport_snapshot,
                     nodes_snapshot = EXCLUDED.nodes_snapshot,
                     white_chats_snapshot = EXCLUDED.white_chats_snapshot,
                     map_name = COALESCE(EXCLUDED.map_name, event_archives.map_name),
-                    faction = COALESCE(EXCLUDED.faction, event_archives.faction);
+                    faction = COALESCE(EXCLUDED.faction, event_archives.faction),
+                    description = EXCLUDED.description,
+                    end_time = EXCLUDED.end_time,
+                    timezone = EXCLUDED.timezone,
+                    restricted_roles = EXCLUDED.restricted_roles;
             """, 
             event_id, event['title'], event['event_time'], 
             map_info.get('map_name'), map_info.get('faction'), map_info.get('mid_point'),
-            json.dumps(roster_snapshot), json.dumps(transport_snapshot), json.dumps(nodes_snapshot), json.dumps(white_chats)
+            json.dumps(roster_snapshot), json.dumps(transport_snapshot), json.dumps(nodes_snapshot), json.dumps(white_chats),
+            event['description'], event['end_time'], event['timezone'], restricted_role_names
             )
 
     async def log_chat_message(self, message_data: Dict):
@@ -621,6 +658,7 @@ class Database:
             # --- FIX 1: Map column names to Pydantic model fields ---
             data['title'] = data.get('event_title')
             data['event_time'] = data.get('event_date')
+            # Extra fields map automatically (end_time, description, timezone, restricted_roles)
 
             # --- FIX 2: Ensure Snapshot Fields are Dicts (Parse JSON if string) ---
             for field in ['roster_snapshot', 'transport_snapshot', 'nodes_snapshot', 'white_chats_snapshot']:
@@ -1484,6 +1522,54 @@ class Database:
             await connection.execute("DELETE FROM squad_templates WHERE template_id = $1;", template_id)
     
     # --- Squad & Roster Management ---
+    async def get_squads_with_members(self, event_id: int) -> List[Dict]:
+        """
+        Retrieves all squads for an event and aggregates their members
+        into a JSON array, ordered by their position.
+        """
+        async with self.pool.acquire() as connection:
+            query = """
+                SELECT 
+                    s.squad_id, 
+                    s.name, 
+                    s.squad_type,
+                    COALESCE(
+                        json_agg(
+                            json_build_object(
+                               'squad_member_id', sm.squad_member_id,
+                               'user_id', sm.user_id::text,
+                               'assigned_role_name', sm.assigned_role_name,
+                               'startup_task', sm.startup_task,
+                               'display_name', COALESCE(ps.display_name, sm.user_id::text)
+                            ) ORDER BY sm.position, sm.squad_member_id
+                        ) FILTER (WHERE sm.squad_member_id IS NOT NULL),
+                        '[]'
+                    ) as members
+                FROM squads s
+                LEFT JOIN squad_members sm ON s.squad_id = sm.squad_id
+                LEFT JOIN player_stats ps ON sm.user_id = ps.user_id
+                WHERE s.event_id = $1
+                GROUP BY s.squad_id
+                ORDER BY
+                    CASE WHEN s.name = 'Reserves' THEN 1 ELSE 0 END, -- Ensure Reserves is last
+                    s.squad_id;
+            """
+            records = await connection.fetch(query, event_id)
+            # Parse members array if it's a JSON string
+            result = []
+            for record in records:
+                row_dict = dict(record)
+                # Handle members JSON string conversion
+                if isinstance(row_dict.get('members'), str):
+                    try:
+                        row_dict['members'] = json.loads(row_dict['members'])
+                    except json.JSONDecodeError:
+                        row_dict['members'] = []
+                elif row_dict.get('members') is None:
+                    row_dict['members'] = []
+                result.append(row_dict)
+            return result
+
     async def create_squad(self, event_id: int, name: str, squad_type: str) -> int:
         query = "INSERT INTO squads (event_id, name, squad_type) VALUES ($1, $2, $3) RETURNING squad_id;"
         async with self.pool.acquire() as connection:
@@ -1699,55 +1785,6 @@ class Database:
         query = "DELETE FROM event_locks;"
         async with self.pool.acquire() as connection:
             await connection.execute(query)
-    
-    # --- Final Roster & Squad Management ---
-    async def get_squads_with_members(self, event_id: int) -> List[Dict]:
-        """
-        Retrieves all squads for an event and aggregates their members
-        into a JSON array, ordered by their position.
-        """
-        async with self.pool.acquire() as connection:
-            query = """
-                SELECT 
-                    s.squad_id, 
-                    s.name, 
-                    s.squad_type,
-                    COALESCE(
-                        json_agg(
-                            json_build_object(
-                               'squad_member_id', sm.squad_member_id,
-                               'user_id', sm.user_id::text,
-                               'assigned_role_name', sm.assigned_role_name,
-                               'startup_task', sm.startup_task,
-                               'display_name', COALESCE(ps.display_name, sm.user_id::text)
-                            ) ORDER BY sm.position, sm.squad_member_id
-                        ) FILTER (WHERE sm.squad_member_id IS NOT NULL),
-                        '[]'
-                    ) as members
-                FROM squads s
-                LEFT JOIN squad_members sm ON s.squad_id = sm.squad_id
-                LEFT JOIN player_stats ps ON sm.user_id = ps.user_id
-                WHERE s.event_id = $1
-                GROUP BY s.squad_id
-                ORDER BY
-                    CASE WHEN s.name = 'Reserves' THEN 1 ELSE 0 END, -- Ensure Reserves is last
-                    s.squad_id;
-            """
-            records = await connection.fetch(query, event_id)
-            # Parse members array if it's a JSON string
-            result = []
-            for record in records:
-                row_dict = dict(record)
-                # Handle members JSON string conversion
-                if isinstance(row_dict.get('members'), str):
-                    try:
-                        row_dict['members'] = json.loads(row_dict['members'])
-                    except json.JSONDecodeError:
-                        row_dict['members'] = []
-                elif row_dict.get('members') is None:
-                    row_dict['members'] = []
-                result.append(row_dict)
-            return result
     
     async def delete_squads_for_event(self, event_id: int):
         async with self.pool.acquire() as connection:
