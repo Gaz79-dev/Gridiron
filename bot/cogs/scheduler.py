@@ -471,31 +471,64 @@ class Scheduler(commands.Cog):
 
     @tasks.loop(minutes=1)
     async def cleanup_finished_events(self):
-        """Finds finished events and PERMANENTLY deletes their messages, threads and DB records."""
+        """
+        UPDATED FOR PHASE 1:
+        Finds events that have ended, scrapes their thread history for archiving,
+        and then permanently deletes them.
+        """
         print("Running cleanup of old events...")
         try:
             events_to_delete = await self.db.get_finished_events_for_cleanup()
             for event in events_to_delete:
-                print(f"Cleaning up finished event ID: {event['event_id']}")
+                event_id = event['event_id']
+                print(f"Processing cleanup and archive for event ID: {event_id}")
+
+                # 1. Archive Thread History if it exists
+                if event.get('thread_id'):
+                    try:
+                        thread = self.bot.get_channel(event['thread_id']) or await self.bot.fetch_channel(event['thread_id'])
+                        
+                        if isinstance(thread, discord.Thread):
+                            history_data = []
+                            # Iterate through the history (oldest first)
+                            async for msg in thread.history(limit=None, oldest_first=True):
+                                history_data.append({
+                                    'user_name': msg.author.display_name,
+                                    'avatar_url': str(msg.author.display_avatar.url),
+                                    'content': msg.content,
+                                    'timestamp': msg.created_at,
+                                    'attachment_urls': [a.url for a in msg.attachments]
+                                })
+                            
+                            # Call database utility to save history & freeze plan
+                            # Ensure 'archive_thread_history' exists in your database.py
+                            await self.db.archive_thread_history(event_id, history_data)
+                            print(f"  - Archived {len(history_data)} messages.")
+                            
+                            await thread.delete()
+                            print(f"  - Thread {event['thread_id']} deleted.")
+                    
+                    except discord.NotFound: 
+                        print(f"  - Thread {event['thread_id']} not found (already deleted?).")
+                    except Exception as e: 
+                        print(f"  - Error archiving/deleting thread for event {event_id}: {e}")
+
+                # 2. Cleanup Event Message
                 if event.get('message_id') and event.get('channel_id'):
                     try:
                         channel = self.bot.get_channel(event['channel_id']) or await self.bot.fetch_channel(event['channel_id'])
                         message = await channel.fetch_message(event['message_id'])
                         await message.delete()
+                        print(f"  - Event message {event['message_id']} deleted.")
                     except discord.NotFound: pass
-                    except Exception as e: print(f"Could not delete event message for event {event['event_id']}: {e}")
+                    except Exception as e: print(f"  - Could not delete event message: {e}")
 
-                if event.get('thread_id'):
-                    try:
-                        thread = self.bot.get_channel(event['thread_id']) or await self.bot.fetch_channel(event['thread_id'])
-                        await thread.delete()
-                    except discord.NotFound: pass
-                    except Exception as e: print(f"Could not delete thread for event {event['event_id']}: {e}")
-
-                await self.db.delete_event(event['event_id'])
+                # 3. Permanently remove the active event record
+                await self.db.delete_event(event_id)
+                print(f"  - Event {event_id} removed from active database.")
 
             if len(events_to_delete) > 0:
-                print(f"Cleanup finished. Permanently removed {len(events_to_delete)} old events.")
+                print(f"Cleanup finished. Permanently archived and removed {len(events_to_delete)} old events.")
         except Exception as e:
             print(f"Error in cleanup_finished_events loop: {e}")
             traceback.print_exc()
@@ -518,5 +551,5 @@ class Scheduler(commands.Cog):
         print("[Scheduler Tasks] Bot is ready. Loops will now start.")
 
 async def setup(bot: commands.Bot):
-    """Sets up the scheduler cog."""
+    """The setup function to add the cog and its commands."""
     await bot.add_cog(Scheduler(bot, bot.db))
