@@ -120,7 +120,7 @@ document.addEventListener('DOMContentLoaded', () => {
             eventDate.textContent = dt.toLocaleString('en-GB', { dateStyle: 'full', timeStyle: 'short' });
             eventDesc.textContent = data.description || "No description provided.";
 
-            // 2. Render Roster (Tab 1)
+            // 2. Render Roster (Tab 1) - Updated with sorting
             renderRosterSnapshot(data.roster_snapshot);
 
             // 3. Render Plans (Tab 3)
@@ -131,7 +131,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         } catch (error) {
             console.error(error);
-            alert("Error loading event archive.");
+            // alert("Error loading event archive."); 
         }
     }
 
@@ -142,8 +142,47 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
-        // Roster data is expected to be { "Squad Name": [ {member_obj}, ... ], ... }
-        for (const [squadName, members] of Object.entries(rosterData)) {
+        // --- SORTING LOGIC ---
+        // 1. Convert Object to Array of objects: [{name: "Squad A", members: [...]}, ...]
+        const squadList = Object.entries(rosterData).map(([name, members]) => ({ name, members }));
+
+        // 2. Custom Sort Function
+        squadList.sort((a, b) => {
+            const getRank = (name) => {
+                const n = name.toLowerCase();
+                
+                // Priority 1: Commander
+                if (n.includes('commander')) return -100;
+                
+                // Priority 4: Reserves (Always Last)
+                if (n.includes('reserves')) return 9999;
+
+                // Priority 3: Artillery (After numbered squads, before reserves)
+                if (n.includes('artillery')) return 100;
+
+                // Priority 2: Numbered Squads (1.1, 2.1, 6.2 etc)
+                // Extract the first sequence of numbers/dots (e.g., "1.1")
+                const match = name.match(/(\d+(\.\d+)?)/);
+                if (match) {
+                    return parseFloat(match[0]); // Returns 1.1, 2.1, 6.1, etc.
+                }
+
+                return 50; // Fallback for un-numbered named squads (middle priority)
+            };
+
+            const rankA = getRank(a.name);
+            const rankB = getRank(b.name);
+
+            // If ranks are equal, sort alphabetically
+            if (rankA === rankB) return a.name.localeCompare(b.name);
+            return rankA - rankB;
+        });
+
+        // --- RENDER ---
+        squadList.forEach(squad => {
+            const squadName = squad.name;
+            const members = squad.members;
+
             const card = document.createElement('div');
             card.className = 'bg-gray-800 rounded shadow border border-gray-700 overflow-hidden';
 
@@ -168,7 +207,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 <div>${membersHtml || '<div class="p-3 text-xs text-gray-500 italic">Empty Squad</div>'}</div>
             `;
             squadContainer.appendChild(card);
-        }
+        });
     }
 
     async function loadChatHistory(eventId) {
@@ -199,10 +238,10 @@ document.addEventListener('DOMContentLoaded', () => {
             
             // Build attachments HTML
             let attachmentsHtml = '';
-            if (msg.attachment_urls && msg.attachment_urls.length > 0) {
+            if (msg.attachment_urls && Array.isArray(msg.attachment_urls) && msg.attachment_urls.length > 0) {
                 msg.attachment_urls.forEach(url => {
-                    if (url.match(/\.(jpeg|jpg|gif|png)$/i)) {
-                        attachmentsHtml += `<div class="mt-2"><img src="${url}" class="max-w-xs rounded border border-gray-700 max-h-60 object-contain"></div>`;
+                    if (url.match(/\.(jpeg|jpg|gif|png|webp)$/i)) {
+                        attachmentsHtml += `<div class="mt-2"><a href="${url}" target="_blank"><img src="${url}" class="max-w-xs rounded border border-gray-700 max-h-60 object-contain hover:opacity-90"></a></div>`;
                     } else {
                         attachmentsHtml += `<div class="mt-1"><a href="${url}" target="_blank" class="text-blue-400 text-xs hover:underline">📎 Attachment</a></div>`;
                     }
@@ -232,7 +271,7 @@ document.addEventListener('DOMContentLoaded', () => {
     function renderPlansSnapshot(data) {
         // 1. Transport
         const transport = data.transport_snapshot || {};
-        const transportAssignments = transport.assignments || {}; // Expecting { "HQ1": ["Squad A"], ... }
+        const transportAssignments = transport.assignments || {}; 
         
         const transportDisplay = document.getElementById('transport-display');
         transportDisplay.innerHTML = '';
@@ -240,7 +279,11 @@ document.addEventListener('DOMContentLoaded', () => {
         if (Object.keys(transportAssignments).length === 0) {
             transportDisplay.innerHTML = '<p class="text-gray-500 italic">No transport plan saved.</p>';
         } else {
-            for (const [hqName, squads] of Object.entries(transportAssignments)) {
+            // Sort HQs (HQ1, HQ2, HQ3)
+            const sortedHQs = Object.keys(transportAssignments).sort();
+            
+            for (const hqName of sortedHQs) {
+                const squads = transportAssignments[hqName];
                 if (squads && squads.length > 0) {
                     const row = document.createElement('div');
                     row.className = 'flex items-start border-l-2 border-blue-500 pl-3 py-1';
@@ -253,15 +296,25 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }
 
-        // 2. Nodes - (Placeholder logic, adapt structure if your nodes snapshot differs)
+        // 2. Nodes
         const nodes = data.nodes_snapshot || {};
         const nodesDisplay = document.getElementById('nodes-display');
-        // Currently assumes nodes snapshot might be simple text or assignments. 
-        // If it's just a raw dump, we print it as code.
+        
         if (Object.keys(nodes).length === 0) {
             nodesDisplay.innerHTML = '<p class="text-gray-500 italic">No nodes plan saved.</p>';
         } else {
-            nodesDisplay.innerHTML = `<pre class="text-xs bg-gray-900 p-2 rounded text-green-400 overflow-x-auto">${JSON.stringify(nodes, null, 2)}</pre>`;
+            // Basic rendering of key-value pairs for nodes if it's a simple dict
+            let html = '<div class="space-y-2">';
+            for (const [key, val] of Object.entries(nodes)) {
+                 html += `<div class="text-sm"><span class="text-gray-400">${key}:</span> <span class="text-gray-200">${val}</span></div>`;
+            }
+            html += '</div>';
+            
+            // Fallback to JSON dump if structure is complex
+            if (html === '<div class="space-y-2"></div>') {
+                 html = `<pre class="text-xs bg-gray-900 p-2 rounded text-green-400 overflow-x-auto">${JSON.stringify(nodes, null, 2)}</pre>`;
+            }
+            nodesDisplay.innerHTML = html;
         }
 
         // 3. White Chats
@@ -276,9 +329,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 const card = document.createElement('div');
                 card.className = 'bg-gray-700 p-3 rounded border border-gray-600';
                 
-                const membersList = chat.members.map(m => 
-                    `<li class="text-gray-300 text-xs py-0.5">• ${m.display_name}</li>`
-                ).join('');
+                let membersList = '';
+                if (chat.members && Array.isArray(chat.members)) {
+                    membersList = chat.members.map(m => 
+                        `<li class="text-gray-300 text-xs py-0.5">• ${m.display_name}</li>`
+                    ).join('');
+                }
 
                 card.innerHTML = `
                     <h4 class="font-bold text-white text-sm mb-2 border-b border-gray-600 pb-1">
