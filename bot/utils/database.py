@@ -700,8 +700,14 @@ class Database:
             record = await connection.fetchrow(query, parent_event_id)
             return dict(record) if record else None
 
+    #async def get_finished_events_for_cleanup(self) -> List[Dict]:
+    #    query = "SELECT * FROM events WHERE end_time < (NOW() AT TIME ZONE 'utc') - INTERVAL '2 hours' AND is_recurring = FALSE AND is_deleted = FALSE;"
+    #    async with self.pool.acquire() as connection:
+    #        records = await connection.fetch(query)
+    #        return [dict(record) for record in records]
+
     async def get_finished_events_for_cleanup(self) -> List[Dict]:
-        query = "SELECT * FROM events WHERE end_time < (NOW() AT TIME ZONE 'utc') - INTERVAL '2 hours' AND is_recurring = FALSE AND is_deleted = FALSE;"
+        query = "SELECT * FROM events WHERE end_time < (NOW() AT TIME ZONE 'utc') - INTERVAL '5 minutes' AND is_recurring = FALSE AND is_deleted = FALSE;"
         async with self.pool.acquire() as connection:
             records = await connection.fetch(query)
             return [dict(record) for record in records]
