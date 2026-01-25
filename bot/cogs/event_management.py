@@ -50,19 +50,27 @@ CURATED_TIMEZONES = {
     "Other": ["UTC"]
 }
 
+# --- FIX: Updated Logic to check specific .env variables ---
 def has_required_role(member: discord.Member) -> bool:
-    """Checks if a member has one of the roles specified in .env."""
+    """Checks if a member has one of the roles specified in .env (Admin or Creator)."""
+    # 1. Load IDs from .env
+    admin_role_id = os.getenv("ADMIN_ROLE_ID")
+    creator_role_id = os.getenv("CREATOR_ROLE_ID")
+    
+    # 2. Convert to Integers Safely
     allowed_role_ids = set()
-    for i in range(1, 6): # Checks for ALLOWED_ROLE_ID_1 through 5
-        role_id_str = os.getenv(f"ALLOWED_ROLE_ID_{i}")
-        if role_id_str and role_id_str.isdigit():
-            allowed_role_ids.add(int(role_id_str))
+    if admin_role_id and admin_role_id.isdigit():
+        allowed_role_ids.add(int(admin_role_id))
+    if creator_role_id and creator_role_id.isdigit():
+        allowed_role_ids.add(int(creator_role_id))
 
+    # 3. Fail-safe: If no roles defined, allow Server Admins
     if not allowed_role_ids:
-        return False
+        return member.guild_permissions.administrator
 
+    # 4. Check intersection
     user_role_ids = {role.id for role in member.roles}
-    return not user_role_ids.isdisjoint(allowed_role_ids)
+    return not user_role_ids.isdisjoint(allowed_role_ids) or member.guild_permissions.administrator
 
 # --- CORRECTED: Rewritten create_event_embed with fixed column alignment ---
 async def create_event_embed(bot: commands.Bot, event_id: int, db: Database) -> discord.Embed:
@@ -1123,6 +1131,13 @@ class EventManagement(commands.Cog):
 
     @event_group.command(name="create", description="Create a new event via DM.")
     async def create(self, interaction: discord.Interaction):
+        # --- FIX: ADDED SECURITY CHECK ---
+        if not has_required_role(interaction.user):
+            return await interaction.response.send_message(
+                "⛔ You do not have permission to create events.",
+                ephemeral=True
+            )
+
         if interaction.guild is None:
             await interaction.response.send_message(
                 "This command cannot be used in a Direct Message. Please run it in the desired event channel.",
