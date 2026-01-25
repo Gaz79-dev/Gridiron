@@ -1,1 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gridiron - Deep Archive</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Custom scrollbar for chat view */
+        .chat-scroll::-webkit-scrollbar { width: 8px; }
+        .chat-scroll::-webkit-scrollbar-track { background: #2f3136; }
+        .chat-scroll::-webkit-scrollbar-thumb { background: #202225; border-radius: 4px; }
+        .chat-scroll::-webkit-scrollbar-thumb:hover { background: #40444b; }
+        
+        /* Discord-like message styling */
+        .discord-msg:hover { background-color: rgba(4, 4, 5, 0.07); }
+        .discord-avatar { flex-shrink: 0; width: 40px; height: 40px; border-radius: 50%; }
+    </style>
+</head>
+<body class="bg-gray-900 text-gray-300 font-sans h-screen flex flex-col">
 
+    <header class="bg-gray-800 shadow-lg flex-shrink-0">
+        <nav class="container mx-auto px-6 py-4 flex justify-between items-center">
+            <div class="flex items-center">
+                <img src="/static/logo.jpg" alt="Gridiron Logo" class="h-8 w-8 mr-3">
+                <h1 class="text-2xl font-bold text-white">Deep Archive</h1>
+            </div>
+            <div>
+                <a href="/" class="text-gray-300 hover:text-white px-3 py-2 rounded-md text-sm font-medium">Squad Builder</a>
+                <a href="/players" class="text-gray-300 hover:text-white px-3 py-2 rounded-md text-sm font-medium">Players</a>
+                <a href="/stats" class="text-gray-300 hover:text-white px-3 py-2 rounded-md text-sm font-medium">Match Stats</a>
+                <a href="/engagement" class="text-gray-300 hover:text-white px-3 py-2 rounded-md text-sm font-medium">Engagement</a>
+                <a href="/events" class="text-gray-300 hover:text-white px-3 py-2 rounded-md text-sm font-medium">Events</a>
+                <a href="/archive" class="bg-gray-900 text-white px-3 py-2 rounded-md text-sm font-medium">Archive</a>
+            </div>
+        </nav>
+    </header>
+
+    <main class="flex-grow flex overflow-hidden">
+        
+        <aside class="w-80 bg-gray-800 flex flex-col border-r border-gray-700">
+            <div class="p-4 border-b border-gray-700">
+                <h2 class="text-lg font-semibold text-white mb-2">Past Events</h2>
+                <input type="text" id="archive-search" placeholder="Search archives..." class="w-full bg-gray-700 text-white rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+            </div>
+            <div id="archive-list" class="flex-grow overflow-y-auto p-2 space-y-1">
+                <div class="text-center text-gray-500 py-4 text-sm">Loading...</div>
+            </div>
+        </aside>
+
+        <section class="flex-grow flex flex-col bg-gray-750 relative">
+            
+            <div id="empty-state" class="absolute inset-0 flex items-center justify-center text-gray-500 flex-col">
+                <svg class="w-16 h-16 mb-4 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path></svg>
+                <p class="text-lg">Select an event from the sidebar to view details.</p>
+            </div>
+
+            <div id="archive-content" class="hidden flex flex-col h-full">
+                
+                <div class="bg-gray-800 p-6 border-b border-gray-700 flex justify-between items-start">
+                    <div>
+                        <h2 id="event-title" class="text-2xl font-bold text-white">Event Title</h2>
+                        <p id="event-date" class="text-sm text-gray-400 mt-1">Date and Time</p>
+                        <p id="event-description" class="text-gray-300 mt-2 text-sm max-w-3xl">Description...</p>
+                    </div>
+                    <div class="flex space-x-2">
+                         <button class="tab-btn active bg-blue-600 text-white px-4 py-2 rounded text-sm font-medium transition-colors" data-tab="roster">Roster</button>
+                        <button class="tab-btn bg-gray-700 text-gray-300 hover:text-white px-4 py-2 rounded text-sm font-medium transition-colors" data-tab="chat">Chat History</button>
+                        <button class="tab-btn bg-gray-700 text-gray-300 hover:text-white px-4 py-2 rounded text-sm font-medium transition-colors" data-tab="plans">Transport & Nodes</button>
+                    </div>
+                </div>
+
+                <div class="flex-grow overflow-hidden relative bg-gray-900">
+                    
+                    <div id="tab-roster" class="tab-content absolute inset-0 overflow-y-auto p-6">
+                        <div id="squad-container" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                            </div>
+                    </div>
+
+                    <div id="tab-chat" class="tab-content hidden absolute inset-0 flex flex-col bg-[#36393f]">
+                        <div id="chat-container" class="flex-grow overflow-y-auto chat-scroll p-4 space-y-1">
+                            </div>
+                    </div>
+
+                    <div id="tab-plans" class="tab-content hidden absolute inset-0 overflow-y-auto p-6">
+                        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                            
+                            <div class="bg-gray-800 rounded-lg p-4 shadow">
+                                <h3 class="text-lg font-bold text-white mb-3 flex items-center">
+                                    <span class="mr-2">🚛</span> Transport Plan
+                                </h3>
+                                <div id="transport-display" class="space-y-4">
+                                    <p class="text-gray-500 italic">No transport plan saved for this event.</p>
+                                </div>
+                            </div>
+
+                            <div class="bg-gray-800 rounded-lg p-4 shadow">
+                                <h3 class="text-lg font-bold text-white mb-3 flex items-center">
+                                    <span class="mr-2">🏗️</span> Engineer Nodes
+                                </h3>
+                                <div id="nodes-display" class="space-y-4">
+                                     <p class="text-gray-500 italic">No nodes plan saved for this event.</p>
+                                </div>
+                            </div>
+
+                             <div class="bg-gray-800 rounded-lg p-4 shadow col-span-1 lg:col-span-2">
+                                <h3 class="text-lg font-bold text-white mb-3 flex items-center">
+                                    <span class="mr-2">🎙️</span> Voice Channels (White Chats)
+                                </h3>
+                                <div id="white-chats-display" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+                                     <p class="text-gray-500 italic col-span-full">No white chats recorded.</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <script src="/static/auth.js"></script>
+    <script src="/static/archive.js"></script> </body>
+</html>
