@@ -38,7 +38,6 @@ def _safe_float(value: Any) -> Optional[float]:
     if value is None:
         return None
     try:
-        # Remove commas that might be in the string (e.g., "1,234.5")
         if isinstance(value, str):
             value = value.replace(',', '')
         return float(value)
@@ -52,7 +51,6 @@ async def _send_rsvp_log_message(user_id: int, event_title: str, old_status: str
     guild_id = os.getenv("GUILD_ID")
 
     if not all([log_channel_id, bot_token, guild_id]):
-        # print("Log channel, bot token, or guild ID not configured. Skipping log message.")
         return
 
     headers = {"Authorization": f"Bot {bot_token}"}
@@ -102,8 +100,6 @@ class Database:
     async def connect(self):
         """Establishes the database connection pool."""
         try:
-            # Create the pool without any custom init function
-            # asyncpg handles JSON/JSONB automatically
             self.pool = await asyncpg.create_pool(
                 user=os.getenv("POSTGRES_USER"),
                 password=os.getenv("POSTGRES_PASSWORD"),
@@ -112,7 +108,6 @@ class Database:
                 port=os.getenv("POSTGRES_PORT")
             )
             
-            # Run setup to create tables
             await self._initial_setup()
             print("Database connection pool established and tables ensured.")
         except Exception as e:
@@ -143,8 +138,8 @@ class Database:
                         end_time TIMESTAMP WITH TIME ZONE NOT NULL,
                         timezone VARCHAR(100),
                         is_recurring BOOLEAN DEFAULT FALSE,
-                        recurrence_rule VARCHAR(50), -- e.g., 'daily', 'weekly', 'monthly'
-                        recreation_hours INT DEFAULT 168, -- Default to 1 week
+                        recurrence_rule VARCHAR(50), 
+                        recreation_hours INT DEFAULT 168,
                         parent_event_id INT REFERENCES events(event_id) ON DELETE SET NULL,
                         mention_role_ids BIGINT[],
                         restrict_to_role_ids BIGINT[],
@@ -156,7 +151,7 @@ class Database:
                     );
                 """)
                 
-                # These ALTER TABLE commands are still needed to patch the schema
+                # These ALTER TABLE commands are still needed to patch the schema if updating
                 await connection.execute("ALTER TABLE events ADD COLUMN IF NOT EXISTS is_deleted BOOLEAN DEFAULT FALSE;")
                 await connection.execute("ALTER TABLE events ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP WITH TIME ZONE;")
 
@@ -165,15 +160,14 @@ class Database:
                         signup_id SERIAL PRIMARY KEY,
                         event_id INT NOT NULL REFERENCES events(event_id) ON DELETE CASCADE,
                         user_id BIGINT NOT NULL,
-                        rsvp_status VARCHAR(10) NOT NULL, -- Accepted, Declined, Tentative
-                        role_name VARCHAR(100), -- Infantry, Armour, Recon
-                        subclass_name VARCHAR(100), -- Officer, Medic, etc.
+                        rsvp_status VARCHAR(10) NOT NULL,
+                        role_name VARCHAR(100),
+                        subclass_name VARCHAR(100),
                         timestamp TIMESTAMP WITH TIME ZONE DEFAULT (NOW() AT TIME ZONE 'utc'),
                         UNIQUE(event_id, user_id)
                     );
                 """)
                 
-                # Patch signups table to ensure timestamp column exists
                 await connection.execute("ALTER TABLE signups ADD COLUMN IF NOT EXISTS timestamp TIMESTAMP WITH TIME ZONE DEFAULT (NOW() AT TIME ZONE 'utc');")
 
                 await connection.execute("""
@@ -277,7 +271,7 @@ class Database:
 
                 await connection.execute("""
                     CREATE TABLE IF NOT EXISTS match_uploads (
-                        match_id VARCHAR(255) PRIMARY KEY, -- e.g., '20240520_MatchName_123456'
+                        match_id VARCHAR(255) PRIMARY KEY,
                         event_name VARCHAR(255) NOT NULL,
                         event_date DATE NOT NULL,
                         uploaded_by_user_id INT NOT NULL REFERENCES users(id),
@@ -291,7 +285,7 @@ class Database:
                         match_id VARCHAR(255) NOT NULL REFERENCES match_uploads(match_id) ON DELETE CASCADE,
                         player_name VARCHAR(255) NOT NULL,
                         game_player_id VARCHAR(100) NOT NULL,
-                        discord_user_id BIGINT REFERENCES player_stats(user_id), -- Linked via game_player_id
+                        discord_user_id BIGINT REFERENCES player_stats(user_id),
                         kills INT,
                         deaths INT,
                         combat_effectiveness INT,
@@ -310,7 +304,7 @@ class Database:
                     );
                 """)
                 
-                # --- WHITE CHATS (Parties) START ---
+                # --- WHITE CHATS (Parties) ---
                 await connection.execute("""
                     CREATE TABLE IF NOT EXISTS white_chats (
                         id SERIAL PRIMARY KEY,
@@ -329,18 +323,199 @@ class Database:
                         UNIQUE(white_chat_id, user_id)
                     );
                 """)
-                # --- WHITE CHATS (Parties) END ---
 
-                # --- NEW: Transport Assignments Table ---
+                # --- Transport Assignments ---
                 await connection.execute("""
                     CREATE TABLE IF NOT EXISTS transport_assignments (
                         assignment_id SERIAL PRIMARY KEY,
                         event_id INT NOT NULL REFERENCES events(event_id) ON DELETE CASCADE,
-                        hq_name VARCHAR(10) NOT NULL, -- HQ1, HQ2, HQ3
+                        hq_name VARCHAR(10) NOT NULL, 
                         squad_name VARCHAR(255) NOT NULL,
                         UNIQUE(event_id, squad_name)
                     );
                 """)
+
+                # =========================================================
+                # PHASE 3: TACTICAL MAP LIBRARY TABLES
+                # =========================================================
+                await connection.execute("""
+                    CREATE TABLE IF NOT EXISTS tactical_maps (
+                        id SERIAL PRIMARY KEY,
+                        filename VARCHAR(255) NOT NULL,
+                        map_name VARCHAR(100) NOT NULL,
+                        faction VARCHAR(50) NOT NULL,
+                        mid_point VARCHAR(100) NOT NULL,
+                        description TEXT,
+                        uploaded_by INT REFERENCES users(id),
+                        uploaded_at TIMESTAMP WITH TIME ZONE DEFAULT (NOW() AT TIME ZONE 'utc')
+                    );
+                """)
+
+                # =========================================================
+                # PHASE 1: DEEP ARCHIVE & EVENT SNAPSHOT TABLES
+                # =========================================================
+                await connection.execute("""
+                    CREATE TABLE IF NOT EXISTS event_archives (
+                        archive_id SERIAL PRIMARY KEY,
+                        event_id INT NOT NULL UNIQUE,
+                        event_title VARCHAR(255),
+                        event_date TIMESTAMP WITH TIME ZONE,
+                        map_name VARCHAR(100),
+                        faction VARCHAR(50),
+                        mid_point VARCHAR(100),
+                        roster_snapshot JSONB,
+                        transport_snapshot JSONB,
+                        nodes_snapshot JSONB,
+                        white_chats_snapshot JSONB,
+                        archived_at TIMESTAMP WITH TIME ZONE DEFAULT (NOW() AT TIME ZONE 'utc')
+                    );
+                """)
+
+                await connection.execute("""
+                    CREATE TABLE IF NOT EXISTS event_chat_history (
+                        msg_id BIGINT PRIMARY KEY,
+                        event_id INT NOT NULL, 
+                        user_id BIGINT,
+                        username VARCHAR(255),
+                        avatar_url TEXT,
+                        content TEXT,
+                        timestamp TIMESTAMP WITH TIME ZONE,
+                        attachment_urls TEXT[]
+                    );
+                """)
+                # Note: We don't FK event_id in chat history to events(event_id) because 
+                # the original event row might be deleted after archiving.
+                await connection.execute("CREATE INDEX IF NOT EXISTS idx_chat_history_event_id ON event_chat_history(event_id);")
+
+
+    # --- TACTICAL MAP LIBRARY METHODS (Phase 3) ---
+
+    async def add_tactical_map(self, filename: str, map_name: str, faction: str, mid_point: str, user_id: int, description: str = ""):
+        query = """
+            INSERT INTO tactical_maps (filename, map_name, faction, mid_point, uploaded_by, description)
+            VALUES ($1, $2, $3, $4, $5, $6)
+            RETURNING id;
+        """
+        async with self.pool.acquire() as connection:
+            return await connection.fetchval(query, filename, map_name, faction, mid_point, user_id, description)
+
+    async def get_tactical_map_filtering_options(self) -> Dict[str, List[str]]:
+        """
+        Returns lists of DISTINCT Maps, Factions, and Mid-Points currently in the DB.
+        Used to populate the 'Smart Dropdowns' so users can only pick what exists.
+        """
+        async with self.pool.acquire() as connection:
+            maps = await connection.fetch("SELECT DISTINCT map_name FROM tactical_maps ORDER BY map_name;")
+            factions = await connection.fetch("SELECT DISTINCT faction FROM tactical_maps ORDER BY faction;")
+            mid_points = await connection.fetch("SELECT DISTINCT mid_point FROM tactical_maps ORDER BY mid_point;")
+            
+            return {
+                "maps": [r['map_name'] for r in maps],
+                "factions": [r['faction'] for r in factions],
+                "mid_points": [r['mid_point'] for r in mid_points]
+            }
+
+    async def search_tactical_maps(self, map_name: Optional[str], faction: Optional[str], mid_point: Optional[str]) -> List[Dict]:
+        """Searches for maps matching the provided tags."""
+        query = "SELECT * FROM tactical_maps WHERE 1=1"
+        params = []
+        counter = 1
+        
+        if map_name:
+            query += f" AND map_name = ${counter}"
+            params.append(map_name)
+            counter += 1
+        if faction:
+            query += f" AND faction = ${counter}"
+            params.append(faction)
+            counter += 1
+        if mid_point:
+            query += f" AND mid_point = ${counter}"
+            params.append(mid_point)
+            counter += 1
+            
+        query += " ORDER BY uploaded_at DESC;"
+        
+        async with self.pool.acquire() as connection:
+            records = await connection.fetch(query, *params)
+            return [dict(r) for r in records]
+
+    # --- EVENT ARCHIVE METHODS (Phase 1) ---
+
+    async def create_event_archive(self, event_id: int, map_info: Dict[str, str] = None):
+        """
+        Snapshots the entire state of an event into a single frozen record.
+        """
+        if map_info is None: map_info = {}
+        
+        async with self.pool.acquire() as connection:
+            # 1. Fetch Event Details
+            event = await connection.fetchrow("SELECT title, event_time FROM events WHERE event_id = $1", event_id)
+            if not event: return
+
+            # 2. Fetch Roster (Squads + Members)
+            squads_query = """
+                SELECT s.name, s.squad_type, 
+                       json_agg(json_build_object(
+                           'name', COALESCE(ps.display_name, sm.user_id::text),
+                           'role', sm.assigned_role_name,
+                           'task', sm.startup_task
+                       )) as members
+                FROM squads s
+                LEFT JOIN squad_members sm ON s.squad_id = sm.squad_id
+                LEFT JOIN player_stats ps ON sm.user_id = ps.user_id
+                WHERE s.event_id = $1
+                GROUP BY s.squad_id, s.name, s.squad_type
+            """
+            squads = await connection.fetch(squads_query, event_id)
+            roster_snapshot = [dict(s) for s in squads]
+
+            # 3. Fetch Transport
+            transport = await connection.fetch("SELECT hq_name, squad_name FROM transport_assignments WHERE event_id = $1", event_id)
+            transport_snapshot = [dict(t) for t in transport]
+
+            # 4. Fetch White Chats
+            white_chats = await self.get_white_chats_with_members(event_id) # Reuse existing method
+            
+            # 5. Insert Snapshot
+            await connection.execute("""
+                INSERT INTO event_archives 
+                (event_id, event_title, event_date, map_name, faction, mid_point, roster_snapshot, transport_snapshot, white_chats_snapshot)
+                VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9::jsonb)
+                ON CONFLICT (event_id) DO UPDATE SET
+                    roster_snapshot = EXCLUDED.roster_snapshot,
+                    transport_snapshot = EXCLUDED.transport_snapshot,
+                    white_chats_snapshot = EXCLUDED.white_chats_snapshot,
+                    map_name = COALESCE(EXCLUDED.map_name, event_archives.map_name),
+                    faction = COALESCE(EXCLUDED.faction, event_archives.faction);
+            """, 
+            event_id, event['title'], event['event_time'], 
+            map_info.get('map_name'), map_info.get('faction'), map_info.get('mid_point'),
+            json.dumps(roster_snapshot), json.dumps(transport_snapshot), json.dumps(white_chats)
+            )
+
+    async def log_chat_message(self, message_data: Dict):
+        """Logs a Discord message for the archive replay."""
+        query = """
+            INSERT INTO event_chat_history (msg_id, event_id, user_id, username, avatar_url, content, timestamp, attachment_urls)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            ON CONFLICT (msg_id) DO NOTHING;
+        """
+        async with self.pool.acquire() as connection:
+            await connection.execute(
+                query, 
+                message_data['id'], message_data['event_id'], message_data['author_id'],
+                message_data['author_name'], message_data['avatar_url'], message_data['content'],
+                message_data['timestamp'], message_data['attachments']
+            )
+
+    async def get_archived_chat(self, event_id: int) -> List[Dict]:
+        query = "SELECT * FROM event_chat_history WHERE event_id = $1 ORDER BY timestamp ASC;"
+        async with self.pool.acquire() as connection:
+            records = await connection.fetch(query, event_id)
+            return [dict(r) for r in records]
+
+    # --- EXISTING METHODS BELOW (Unchanged) ---
 
     # --- Guild Settings ---
     async def set_thread_creation_hours(self, guild_id: int, hours: int):
