@@ -143,37 +143,33 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         // --- SORTING LOGIC ---
-        // 1. Convert Object to Array of objects: [{name: "Squad A", members: [...]}, ...]
-        const squadList = Object.entries(rosterData).map(([name, members]) => ({ name, members }));
+        const squadList = Object.entries(rosterData).map(([name, rawMembers]) => {
+            // FIX: Parse members if they are a JSON string (The "68/89" bug fix)
+            let members = rawMembers;
+            if (typeof members === 'string') {
+                try {
+                    members = JSON.parse(members);
+                } catch (e) {
+                    console.error("Failed to parse members JSON:", e);
+                    members = [];
+                }
+            }
+            return { name, members };
+        });
 
         // 2. Custom Sort Function
         squadList.sort((a, b) => {
             const getRank = (name) => {
                 const n = name.toLowerCase();
-                
-                // Priority 1: Commander
                 if (n.includes('commander')) return -100;
-                
-                // Priority 4: Reserves (Always Last)
                 if (n.includes('reserves')) return 9999;
-
-                // Priority 3: Artillery (After numbered squads, before reserves)
                 if (n.includes('artillery')) return 100;
-
-                // Priority 2: Numbered Squads (1.1, 2.1, 6.2 etc)
-                // Extract the first sequence of numbers/dots (e.g., "1.1")
                 const match = name.match(/(\d+(\.\d+)?)/);
-                if (match) {
-                    return parseFloat(match[0]); // Returns 1.1, 2.1, 6.1, etc.
-                }
-
-                return 50; // Fallback for un-numbered named squads (middle priority)
+                if (match) return parseFloat(match[0]);
+                return 50;
             };
-
             const rankA = getRank(a.name);
             const rankB = getRank(b.name);
-
-            // If ranks are equal, sort alphabetically
             if (rankA === rankB) return a.name.localeCompare(b.name);
             return rankA - rankB;
         });
@@ -181,7 +177,7 @@ document.addEventListener('DOMContentLoaded', () => {
         // --- RENDER ---
         squadList.forEach(squad => {
             const squadName = squad.name;
-            const members = squad.members;
+            const members = squad.members; // This is now guaranteed to be an Array (or null)
 
             const card = document.createElement('div');
             card.className = 'bg-gray-800 rounded shadow border border-gray-700 overflow-hidden';
@@ -202,7 +198,7 @@ document.addEventListener('DOMContentLoaded', () => {
             card.innerHTML = `
                 <div class="bg-gray-700 px-3 py-2 font-bold text-gray-200 text-sm flex justify-between">
                     <span>${squadName}</span>
-                    <span class="text-xs bg-gray-600 px-2 rounded-full">${members ? members.length : 0}</span>
+                    <span class="text-xs bg-gray-600 px-2 rounded-full">${Array.isArray(members) ? members.length : 0}</span>
                 </div>
                 <div>${membersHtml || '<div class="p-3 text-xs text-gray-500 italic">Empty Squad</div>'}</div>
             `;
