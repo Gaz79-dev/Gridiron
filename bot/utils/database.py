@@ -568,6 +568,7 @@ class Database:
     async def get_archived_event_details(self, event_id: int) -> Optional[Dict]:
         """
         Retrieves the full frozen snapshot (Roster, Transport, Nodes, etc).
+        Transforms the data from DB format to API/Frontend format.
         """
         query = "SELECT * FROM event_archives WHERE event_id = $1;"
         async with self.pool.acquire() as connection:
@@ -575,19 +576,60 @@ class Database:
             if not record:
                 return None
             
-            # Convert record to dict and ensure JSON fields are parsed
+            # Convert record to dict
             data = dict(record)
+
+            # --- FIX 1: Map column names to Pydantic model fields ---
+            data['title'] = data.get('event_title')
+            data['event_time'] = data.get('event_date')
+
+            # --- FIX 2: Ensure Snapshot Fields are Dicts (Parse JSON if string) ---
             for field in ['roster_snapshot', 'transport_snapshot', 'nodes_snapshot', 'white_chats_snapshot']:
-                if isinstance(data.get(field), str):
+                val = data.get(field)
+                if isinstance(val, str):
                     try:
-                        data[field] = json.loads(data[field])
+                        data[field] = json.loads(val)
                     except:
                         data[field] = {}
+                elif val is None:
+                    data[field] = {} # Default to empty dict if None
+                # If it's already a list or dict, leave it (asyncpg handles jsonb)
+
+            # --- FIX 3: Transform Roster from List to Dict ---
+            # DB (create_event_archive) saves roster as a LIST: [{'name': 'Squad A', 'members': [...]}, ...]
+            # Frontend/API expects a DICT: {'Squad A': [...], 'Squad B': [...]}
+            raw_roster = data.get('roster_snapshot')
+            if isinstance(raw_roster, list):
+                formatted_roster = {}
+                for squad in raw_roster:
+                    squad_name = squad.get('name', 'Unknown')
+                    # The 'members' inside the list is correct
+                    formatted_roster[squad_name] = squad.get('members', [])
+                data['roster_snapshot'] = formatted_roster
+            
+            # --- FIX 4: Transform Transport from List to Dict ---
+            # DB saves: [{'hq_name': 'HQ1', 'squad_name': 'Alpha'}, ...]
+            # Frontend expects: {'assignments': {'HQ1': ['Alpha'], ...}}
+            raw_transport = data.get('transport_snapshot')
+            if isinstance(raw_transport, list):
+                assignments = defaultdict(list)
+                for entry in raw_transport:
+                    hq = entry.get('hq_name')
+                    sq = entry.get('squad_name')
+                    if hq and sq:
+                        assignments[hq].append(sq)
+                data['transport_snapshot'] = {'assignments': dict(assignments)}
+
+            # Nodes snapshot defaults to empty dict if null
+            if not data.get('nodes_snapshot'):
+                data['nodes_snapshot'] = {}
+
             return data
 
     async def get_archived_chat_history(self, event_id: int) -> List[Dict]:
         """
         Retrieves the chat log for the frontend.
+        Ensures attachments are a list, not None.
         """
         query = """
             SELECT user_id, username as user_name, avatar_url, content, timestamp, attachment_urls 
@@ -597,7 +639,14 @@ class Database:
         """
         async with self.pool.acquire() as connection:
             records = await connection.fetch(query, event_id)
-            return [dict(r) for r in records]
+            results = []
+            for r in records:
+                row = dict(r)
+                # --- FIX: Ensure attachment_urls is a list, never None ---
+                if row.get('attachment_urls') is None:
+                    row['attachment_urls'] = []
+                results.append(row)
+            return results
 
     # --- EXISTING METHODS BELOW ---
 
@@ -700,13 +749,8 @@ class Database:
             record = await connection.fetchrow(query, parent_event_id)
             return dict(record) if record else None
 
-    #async def get_finished_events_for_cleanup(self) -> List[Dict]:
-    #    query = "SELECT * FROM events WHERE end_time < (NOW() AT TIME ZONE 'utc') - INTERVAL '2 hours' AND is_recurring = FALSE AND is_deleted = FALSE;"
-    #    async with self.pool.acquire() as connection:
-    #        records = await connection.fetch(query)
-    #        return [dict(record) for record in records]
-
     async def get_finished_events_for_cleanup(self) -> List[Dict]:
+        # MODIFIED FOR TESTING: Changed 2 hours to 5 minutes
         query = "SELECT * FROM events WHERE end_time < (NOW() AT TIME ZONE 'utc') - INTERVAL '5 minutes' AND is_recurring = FALSE AND is_deleted = FALSE;"
         async with self.pool.acquire() as connection:
             records = await connection.fetch(query)
