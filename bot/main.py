@@ -10,7 +10,8 @@ from fastapi.middleware.cors import CORSMiddleware
 
 # Use absolute imports from the 'bot' package root
 from bot.utils.database import Database
-from bot.api.routers import events, users, squads, stats, players, white_chats
+# --- UPDATE: Added archive to imports ---
+from bot.api.routers import events, users, squads, stats, players, white_chats, archive
 from bot.api.routers import templates as templates_router
 from bot.api import auth
 
@@ -50,7 +51,7 @@ async def lifespan(app: FastAPI):
 # --- FastAPI App Initialization ---
 app = FastAPI(title="Squad Builder API", lifespan=lifespan)
 
-# --- FIX: Corrected Paths for Gridiron/bot/web structure ---
+# --- Corrected Paths for Gridiron/bot/web structure ---
 # Since main.py is in 'bot/', and web is in 'bot/web/', we just look in 'web/...'
 static_dir = os.path.join(BASE_DIR, "web/static")
 templates_dir = os.path.join(BASE_DIR, "web/templates")
@@ -90,6 +91,8 @@ app.include_router(stats.router)
 app.include_router(players.router)
 app.include_router(templates_router.router)
 app.include_router(white_chats.router)
+# --- UPDATE: Register the archive router ---
+app.include_router(archive.router)
 
 # --- HTML Page Routes ---
 
@@ -124,6 +127,11 @@ async def events_page(request: Request):
 @app.get("/players", tags=["HTML"], summary="Serves the player ratings page")
 async def players_page(request: Request):
     return templates.TemplateResponse("players.html", {"request": request})
+
+# --- UPDATE: Add route for the new Archive Viewer ---
+@app.get("/archive", tags=["HTML"], summary="Serves the deep archive viewer page")
+async def archive_viewer_page(request: Request):
+    return templates.TemplateResponse("archive.html", {"request": request})
 
 if __name__ == "__main__":
     uvicorn.run("bot.main:app", host="0.0.0.0", port=8000, reload=True)
