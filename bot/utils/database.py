@@ -828,7 +828,7 @@ class Database:
 
     async def get_finished_events_for_cleanup(self) -> List[Dict]:
         # MODIFIED FOR TESTING: Changed 2 hours to 5 minutes
-        query = "SELECT * FROM events WHERE end_time < (NOW() AT TIME ZONE 'utc') - INTERVAL '24 hours' AND is_recurring = FALSE AND is_deleted = FALSE;"
+        query = "SELECT * FROM events WHERE end_time < (NOW() AT TIME ZONE 'utc') - INTERVAL '4 hours' AND is_recurring = FALSE AND is_deleted = FALSE;"
         async with self.pool.acquire() as connection:
             records = await connection.fetch(query)
             return [dict(record) for record in records]
