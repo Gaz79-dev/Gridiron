@@ -16,7 +16,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Header Elements
     const eventTitle = document.getElementById('event-title');
     const eventDate = document.getElementById('event-date');
-    const eventDesc = document.getElementById('event-description');
+    const eventDescPreview = document.getElementById('event-desc-preview'); // Added preview
 
     // Tab Elements
     const tabButtons = document.querySelectorAll('.tab-btn');
@@ -28,6 +28,14 @@ document.addEventListener('DOMContentLoaded', () => {
     const transportDisplay = document.getElementById('transport-display');
     const nodesDisplay = document.getElementById('nodes-display');
     const whiteChatsDisplay = document.getElementById('white-chats-display');
+
+    // Details Tab Elements
+    const detailStartTime = document.getElementById('detail-start-time');
+    const detailEndTime = document.getElementById('detail-end-time');
+    const detailTimezone = document.getElementById('detail-timezone');
+    const detailRestrictions = document.getElementById('detail-restrictions');
+    const detailDescription = document.getElementById('detail-description');
+    const detailArchivedAt = document.getElementById('detail-archived-at');
 
     // State
     let allArchives = [];
@@ -118,13 +126,16 @@ document.addEventListener('DOMContentLoaded', () => {
             eventTitle.textContent = data.title;
             const dt = new Date(data.event_time);
             eventDate.textContent = dt.toLocaleString('en-GB', { dateStyle: 'full', timeStyle: 'short' });
-            eventDesc.textContent = data.description || "No description provided.";
+            eventDescPreview.textContent = data.description || "No description provided.";
 
-            // 2. Render Roster (Tab 1) - Updated with sorting
+            // 2. Render Roster (Tab 1)
             renderRosterSnapshot(data.roster_snapshot);
 
             // 3. Render Plans (Tab 3)
             renderPlansSnapshot(data);
+
+            // 4. Render Event Details (Tab 4 - New)
+            renderEventDetailsTab(data);
 
             // Reset tabs to show Roster first
             tabButtons[0].click();
@@ -132,6 +143,27 @@ document.addEventListener('DOMContentLoaded', () => {
         } catch (error) {
             console.error(error);
             // alert("Error loading event archive."); 
+        }
+    }
+
+    function renderEventDetailsTab(data) {
+        // Time Formatter
+        const formatTime = (isoString) => {
+            if (!isoString) return 'N/A';
+            return new Date(isoString).toLocaleString('en-GB', { dateStyle: 'full', timeStyle: 'medium' });
+        };
+
+        detailStartTime.textContent = formatTime(data.event_time);
+        detailEndTime.textContent = formatTime(data.end_time);
+        detailTimezone.textContent = data.timezone || 'UTC';
+        detailDescription.textContent = data.description || 'No description provided.';
+        detailArchivedAt.textContent = data.archived_at ? `Archived on: ${formatTime(data.archived_at)}` : '';
+
+        // Restrictions
+        if (data.restricted_roles && data.restricted_roles.length > 0) {
+            detailRestrictions.innerHTML = `<span class="bg-red-900 text-red-200 px-2 py-1 rounded text-sm">Restricted to: ${data.restricted_roles.join(', ')}</span>`;
+        } else {
+            detailRestrictions.innerHTML = `<span class="bg-green-900 text-green-200 px-2 py-1 rounded text-sm">Open to All</span>`;
         }
     }
 
@@ -144,8 +176,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
         // --- SORTING LOGIC ---
         const squadList = Object.entries(rosterData).map(([name, rawMembers]) => {
-            // FIX: Parse members if they are a JSON string (The "68/89" bug fix)
             let members = rawMembers;
+            // Handle if database returns stringified JSON
             if (typeof members === 'string') {
                 try {
                     members = JSON.parse(members);
@@ -157,7 +189,7 @@ document.addEventListener('DOMContentLoaded', () => {
             return { name, members };
         });
 
-        // 2. Custom Sort Function
+        // Custom Sort Function
         squadList.sort((a, b) => {
             const getRank = (name) => {
                 const n = name.toLowerCase();
@@ -177,13 +209,13 @@ document.addEventListener('DOMContentLoaded', () => {
         // --- RENDER ---
         squadList.forEach(squad => {
             const squadName = squad.name;
-            const members = squad.members; // This is now guaranteed to be an Array (or null)
+            const members = squad.members;
 
             const card = document.createElement('div');
             card.className = 'bg-gray-800 rounded shadow border border-gray-700 overflow-hidden';
 
             let membersHtml = '';
-            if (Array.isArray(members)) {
+            if (Array.isArray(members) && members.length > 0) {
                 members.forEach(m => {
                     const role = m.role_name || m.assigned_role_name || "Unknown";
                     membersHtml += `
@@ -299,17 +331,12 @@ document.addEventListener('DOMContentLoaded', () => {
         if (Object.keys(nodes).length === 0) {
             nodesDisplay.innerHTML = '<p class="text-gray-500 italic">No nodes plan saved.</p>';
         } else {
-            // Basic rendering of key-value pairs for nodes if it's a simple dict
+            // Basic rendering of key-value pairs for nodes
             let html = '<div class="space-y-2">';
             for (const [key, val] of Object.entries(nodes)) {
                  html += `<div class="text-sm"><span class="text-gray-400">${key}:</span> <span class="text-gray-200">${val}</span></div>`;
             }
             html += '</div>';
-            
-            // Fallback to JSON dump if structure is complex
-            if (html === '<div class="space-y-2"></div>') {
-                 html = `<pre class="text-xs bg-gray-900 p-2 rounded text-green-400 overflow-x-auto">${JSON.stringify(nodes, null, 2)}</pre>`;
-            }
             nodesDisplay.innerHTML = html;
         }
 
