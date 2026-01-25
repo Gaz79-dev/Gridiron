@@ -444,8 +444,7 @@ class Database:
 
     async def create_event_archive(self, event_id: int, map_info: Dict[str, str] = None):
         """
-        Snapshots the event state.
-        USES PYTHON LOGIC to ensure data integrity for the Roster.
+        Snapshots the entire state of an event into a single frozen record.
         """
         if map_info is None: map_info = {}
         
@@ -454,70 +453,43 @@ class Database:
             event = await connection.fetchrow("SELECT title, event_time FROM events WHERE event_id = $1", event_id)
             if not event: return
 
-            # --- ROSTER SNAPSHOT (Python Construction) ---
-            
-            # A. Fetch all Squads for this event
-            squad_rows = await connection.fetch("""
-                SELECT squad_id, name, squad_type 
-                FROM squads 
-                WHERE event_id = $1 
-                ORDER BY squad_id
-            """, event_id)
-            
-            # Initialize the dictionary structure: { "Squad Name": [] }
-            roster_snapshot = {row['name']: [] for row in squad_rows}
-            # Create a lookup map for ID -> Name
-            squad_id_to_name = {row['squad_id']: row['name'] for row in squad_rows}
+            # 2. Fetch Roster (Squads + Members) - FIXED Keys for display_name and role_name
+            squads_query = """
+                SELECT s.name, s.squad_type, 
+                       json_agg(json_build_object(
+                           'display_name', COALESCE(ps.display_name, sm.user_id::text),
+                           'role_name', sm.assigned_role_name,
+                           'startup_task', sm.startup_task
+                       )) as members
+                FROM squads s
+                LEFT JOIN squad_members sm ON s.squad_id = sm.squad_id
+                LEFT JOIN player_stats ps ON sm.user_id = ps.user_id
+                WHERE s.event_id = $1
+                GROUP BY s.squad_id, s.name, s.squad_type
+            """
+            squads = await connection.fetch(squads_query, event_id)
+            roster_snapshot = [dict(s) for s in squads]
 
-            # B. Fetch all Members for this event (Join with stats for names)
-            member_rows = await connection.fetch("""
-                SELECT 
-                    sm.squad_id,
-                    sm.user_id,
-                    sm.assigned_role_name,
-                    sm.startup_task,
-                    COALESCE(ps.display_name, sm.user_id::text) as display_name
+            # 3. Fetch Transport
+            transport = await connection.fetch("SELECT hq_name, squad_name FROM transport_assignments WHERE event_id = $1", event_id)
+            transport_snapshot = [dict(t) for t in transport]
+
+            # 4. Fetch Nodes (Startup Tasks) - NEW: Capture tasks for the nodes_snapshot
+            nodes_query = """
+                SELECT COALESCE(ps.display_name, sm.user_id::text) as player_name, sm.startup_task
                 FROM squad_members sm
                 JOIN squads s ON sm.squad_id = s.squad_id
                 LEFT JOIN player_stats ps ON sm.user_id = ps.user_id
-                WHERE s.event_id = $1
-                ORDER BY sm.position, sm.squad_member_id
-            """, event_id)
+                WHERE s.event_id = $1 AND sm.startup_task IS NOT NULL AND sm.startup_task != '';
+            """
+            nodes_records = await connection.fetch(nodes_query, event_id)
+            # Store as Dict: {'Player Name': 'Task'}
+            nodes_snapshot = {r['player_name']: r['startup_task'] for r in nodes_records}
 
-            # C. Stitch members into the roster dictionary
-            nodes_snapshot = {}
-            
-            for m in member_rows:
-                squad_name = squad_id_to_name.get(m['squad_id'])
-                if squad_name:
-                    # Add to Roster Snapshot
-                    roster_snapshot[squad_name].append({
-                        'display_name': m['display_name'] or "Unknown",
-                        'role_name': m['assigned_role_name'] or "Unassigned",
-                        'startup_task': m['startup_task']
-                    })
-                    
-                    # Capture Node Plan (if task exists)
-                    if m['startup_task']:
-                        nodes_snapshot[m['display_name']] = m['startup_task']
-
-            # --- TRANSPORT SNAPSHOT ---
-            transport_rows = await connection.fetch("""
-                SELECT hq_name, squad_name 
-                FROM transport_assignments 
-                WHERE event_id = $1
-            """, event_id)
-            
-            # Transform List -> Dict for Frontend { 'assignments': {'HQ1': [...]} }
-            transport_map = defaultdict(list)
-            for row in transport_rows:
-                transport_map[row['hq_name']].append(row['squad_name'])
-            transport_snapshot = {'assignments': dict(transport_map)}
-
-            # --- WHITE CHATS SNAPSHOT ---
+            # 5. Fetch White Chats
             white_chats = await self.get_white_chats_with_members(event_id)
             
-            # --- FINAL SAVE ---
+            # 6. Insert Snapshot
             await connection.execute("""
                 INSERT INTO event_archives 
                 (event_id, event_title, event_date, map_name, faction, mid_point, roster_snapshot, transport_snapshot, nodes_snapshot, white_chats_snapshot)
