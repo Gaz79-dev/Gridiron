@@ -50,7 +50,6 @@ CURATED_TIMEZONES = {
     "Other": ["UTC"]
 }
 
-# --- CHECK FUNCTION: Corrected to use ALLOWED_ROLE_ID_1..5 ---
 def has_required_role(member: discord.Member) -> bool:
     """Checks if a member has one of the roles specified in .env."""
     allowed_role_ids = set()
@@ -59,15 +58,14 @@ def has_required_role(member: discord.Member) -> bool:
         if role_id_str and role_id_str.isdigit():
             allowed_role_ids.add(int(role_id_str))
 
-    # If no roles are configured, allow Server Administrators by default
     if not allowed_role_ids:
+        # Fallback to Admin if no roles configured
         return member.guild_permissions.administrator
 
     user_role_ids = {role.id for role in member.roles}
-    
-    # Check if user has an allowed role OR is an administrator
     return not user_role_ids.isdisjoint(allowed_role_ids) or member.guild_permissions.administrator
 
+# --- CORRECTED: Rewritten create_event_embed with fixed column alignment ---
 async def create_event_embed(bot: commands.Bot, event_id: int, db: Database) -> discord.Embed:
     event = await db.get_event_by_id(event_id)
     if not event:
@@ -120,6 +118,8 @@ async def create_event_embed(bot: commands.Bot, event_id: int, db: Database) -> 
     total_accepted = sum(len(v) for v in accepted_signups.values())
     embed.add_field(name=f"Accepted ({total_accepted})", value="\u200b", inline=False)
 
+    # --- REVISED DYNAMIC FIELD & INDEPENDENT COLUMN LOGIC ---
+    
     def get_role_content_lines(role_name, signups):
         """Helper to build the text content for a single role category."""
         subclass_groups = defaultdict(list)
@@ -129,6 +129,7 @@ async def create_event_embed(bot: commands.Bot, event_id: int, db: Database) -> 
 
         content_lines = [f"__**{role_name}**__ ({len(signups)})"]
         
+        # Smart Subclass Handling
         defined_subclasses = SUBCLASSES.get(role_name, [])
         
         if not defined_subclasses:
@@ -488,6 +489,7 @@ class PersistentEventView(ui.View):
             except:
                 pass
 
+    # --- RESTORED EDIT/DELETE BUTTONS ---
     @ui.button(label="Edit", style=discord.ButtonStyle.primary, custom_id="persistent_view:edit_event", row=2)
     async def edit_event_button(self, interaction: discord.Interaction, button: ui.Button):
         if not has_required_role(interaction.user):
