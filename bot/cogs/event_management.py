@@ -50,29 +50,24 @@ CURATED_TIMEZONES = {
     "Other": ["UTC"]
 }
 
-# --- FIX: Updated Logic to check specific .env variables ---
+# --- CHECK FUNCTION: Corrected to use ALLOWED_ROLE_ID_1..5 ---
 def has_required_role(member: discord.Member) -> bool:
-    """Checks if a member has one of the roles specified in .env (Admin or Creator)."""
-    # 1. Load IDs from .env
-    admin_role_id = os.getenv("ADMIN_ROLE_ID")
-    creator_role_id = os.getenv("CREATOR_ROLE_ID")
-    
-    # 2. Convert to Integers Safely
+    """Checks if a member has one of the roles specified in .env."""
     allowed_role_ids = set()
-    if admin_role_id and admin_role_id.isdigit():
-        allowed_role_ids.add(int(admin_role_id))
-    if creator_role_id and creator_role_id.isdigit():
-        allowed_role_ids.add(int(creator_role_id))
+    for i in range(1, 6): # Checks for ALLOWED_ROLE_ID_1 through 5
+        role_id_str = os.getenv(f"ALLOWED_ROLE_ID_{i}")
+        if role_id_str and role_id_str.isdigit():
+            allowed_role_ids.add(int(role_id_str))
 
-    # 3. Fail-safe: If no roles defined, allow Server Admins
+    # If no roles are configured, allow Server Administrators by default
     if not allowed_role_ids:
         return member.guild_permissions.administrator
 
-    # 4. Check intersection
     user_role_ids = {role.id for role in member.roles}
+    
+    # Check if user has an allowed role OR is an administrator
     return not user_role_ids.isdisjoint(allowed_role_ids) or member.guild_permissions.administrator
 
-# --- CORRECTED: Rewritten create_event_embed with fixed column alignment ---
 async def create_event_embed(bot: commands.Bot, event_id: int, db: Database) -> discord.Embed:
     event = await db.get_event_by_id(event_id)
     if not event:
@@ -125,8 +120,6 @@ async def create_event_embed(bot: commands.Bot, event_id: int, db: Database) -> 
     total_accepted = sum(len(v) for v in accepted_signups.values())
     embed.add_field(name=f"Accepted ({total_accepted})", value="\u200b", inline=False)
 
-    # --- REVISED DYNAMIC FIELD & INDEPENDENT COLUMN LOGIC ---
-    
     def get_role_content_lines(role_name, signups):
         """Helper to build the text content for a single role category."""
         subclass_groups = defaultdict(list)
@@ -136,32 +129,24 @@ async def create_event_embed(bot: commands.Bot, event_id: int, db: Database) -> 
 
         content_lines = [f"__**{role_name}**__ ({len(signups)})"]
         
-        # --- FIX START: Smart Subclass Handling ---
-        # Check if this role actually HAS defined subclasses (e.g. Infantry has Medics, Commanders do not)
         defined_subclasses = SUBCLASSES.get(role_name, [])
         
         if not defined_subclasses:
-            # Case 1: Roles like "Commander" with no subclasses.
-            # Players default to "Unassigned" key, but we list them directly under the Role Header.
             if players := subclass_groups.get("Unassigned"):
                 content_lines.extend(players)
-                content_lines.append("") # Spacing
+                content_lines.append("") 
         else:
-            # Case 2: Roles like "Infantry" that HAVE subclasses.
-            # We iterate through them, plus "Unassigned" for those who haven't picked one yet.
             subclass_order = defined_subclasses + ["Unassigned"]
             for subclass in subclass_order:
                 if players := subclass_groups.get(subclass):
                     content_lines.append(f"__**{subclass}**__ ({len(players)})")
                     content_lines.extend(players)
-                    content_lines.append("") # Spacing
-        # --- FIX END ---
+                    content_lines.append("") 
 
         if content_lines and content_lines[-1] == "": content_lines.pop()
         return content_lines
 
     def chunk_content(lines: List[str], max_len: int = 1024) -> List[str]:
-        """Splits a list of lines into chunks that fit within the character limit."""
         if not lines: return []
         chunks = []
         current_chunk = ""
@@ -174,14 +159,13 @@ async def create_event_embed(bot: commands.Bot, event_id: int, db: Database) -> 
         chunks.append(current_chunk)
         return chunks
 
-    # 1. Define column content and assemble lines
     col1_roles = ["Commander", "Infantry"]
     col2_roles = ["Armour", "Recon", "Pathfinders", "Artillery"]
 
     col1_lines = []
     for role_name in col1_roles:
         if signups := accepted_signups.get(role_name):
-            if col1_lines: col1_lines.append("\n\n") # Add space between roles
+            if col1_lines: col1_lines.append("\n\n") 
             col1_lines.extend(get_role_content_lines(role_name, signups))
 
     col2_lines = []
@@ -190,23 +174,18 @@ async def create_event_embed(bot: commands.Bot, event_id: int, db: Database) -> 
             if col2_lines: col2_lines.append("\n\n")
             col2_lines.extend(get_role_content_lines(role_name, signups))
 
-    # 2. Chunk the assembled content for each column
     col1_chunks = chunk_content(col1_lines)
     col2_chunks = chunk_content(col2_lines)
 
-    # 3. Add fields to the embed in pairs to create two independent columns
     num_rows = max(len(col1_chunks), len(col2_chunks))
     for i in range(num_rows):
-        # Column 1 Field
         if i < len(col1_chunks):
             name = "Commander & Infantry"
             if len(col1_chunks) > 1: name += f" ({i+1}/{len(col1_chunks)})"
             embed.add_field(name=name, value=col1_chunks[i], inline=True)
         else:
-            # Add a blank field to maintain the column if this side is shorter
             embed.add_field(name="\u200b", value="\u200b", inline=True)
 
-        # Column 2 Field
         if i < len(col2_chunks):
             name = "Specialist Roles"
             if len(col2_chunks) > 1: name += f" ({i+1}/{len(col2_chunks)})"
@@ -214,16 +193,12 @@ async def create_event_embed(bot: commands.Bot, event_id: int, db: Database) -> 
         else:
             embed.add_field(name="\u200b", value="\u200b", inline=True)
         
-        # Add a line break after each row of two columns, unless it's the last row
         if (i + 1) < num_rows:
             embed.add_field(name="\u200b", value="\u200b", inline=False)
 
-    # Add a final line break if any column fields were added
     if num_rows > 0:
         embed.add_field(name="\u200b", value="\u200b", inline=False)
 
-
-    # --- Handle remaining lists which are always full-width ---
     if unassigned_signups := accepted_signups.get("Unassigned"):
         player_list = "\n".join(p['display_name'] for p in unassigned_signups)
         embed.add_field(name=f"__**Unassigned**__ ({len(unassigned_signups)})", value=player_list or "\u200b", inline=False)
@@ -234,7 +209,6 @@ async def create_event_embed(bot: commands.Bot, event_id: int, db: Database) -> 
     if declined_users:
         embed.add_field(name=f"__**Declined**__ ({len(declined_users)})", value=", ".join(declined_users), inline=False)
     
-    # --- Footer ---
     creator_name = "Unknown User"
     if creator_id := event.get('creator_id'):
         try:
@@ -245,7 +219,7 @@ async def create_event_embed(bot: commands.Bot, event_id: int, db: Database) -> 
     embed.set_footer(text=f"Event ID: {event_id} | Created by: {creator_name}")
     return embed
 
-# --- UI Classes (No changes needed in these classes) ---
+# --- UI Classes ---
 
 class RoleSelect(ui.Select):
     def __init__(self, db: Database, event_id: int, available_roles: List[str]):
@@ -407,13 +381,8 @@ class PersistentEventView(ui.View):
         event = await self.db.get_event_by_message_id(i.message.id)
         if not event: return await i.followup.send("Event not found.", ephemeral=True)
 
-        # --- FIX: ROBUST SECURITY CHECK ---
-        # 1. Fetch restrictions
         restricted_roles_raw = event.get('restrict_to_role_ids')
-        
-        # 2. Only check if restriction exists and is not empty
         if restricted_roles_raw:
-            # 3. Force convert DB IDs to integers (safeguard against string/int mismatch)
             allowed_role_ids = set()
             for rid in restricted_roles_raw:
                 if rid is not None:
@@ -422,21 +391,14 @@ class PersistentEventView(ui.View):
                     except (ValueError, TypeError):
                         pass
 
-            # 4. Get User Role IDs as integers
             user_role_ids = {r.id for r in i.user.roles}
-
-            # 5. Perform Intersection Check (if allowed list has valid IDs)
             if allowed_role_ids and not user_role_ids.intersection(allowed_role_ids):
-                # Build pretty error message
                 role_mentions = [f'<@&{rid}>' for rid in allowed_role_ids]
                 await i.followup.send(
                     f"Sorry, this event is restricted to members with the following role(s): {', '.join(role_mentions)}",
                     ephemeral=True
                 )
-                return # Block signup
-
-        restricted_roles = event.get('restrict_to_role_ids')
-        # Check for role restrictions (redundant logic removed, handled above)
+                return 
 
         restricted_roles_config = {
             "Commander": os.getenv("ROLE_ID_COMMANDER"), "Officer": os.getenv("ROLE_ID_OFFICER"),
@@ -478,7 +440,6 @@ class PersistentEventView(ui.View):
         await i.response.defer(ephemeral=True)
         try:
             if event := await self.db.get_event_by_message_id(i.message.id):
-                # --- FIX: ADD SECURITY CHECK TO TENTATIVE AS WELL ---
                 restricted_roles_raw = event.get('restrict_to_role_ids')
                 if restricted_roles_raw:
                     allowed_role_ids = set()
@@ -496,7 +457,7 @@ class PersistentEventView(ui.View):
                             f"Sorry, this event is restricted to members with the following role(s): {', '.join(role_mentions)}",
                             ephemeral=True
                         )
-                        return # Block signup
+                        return 
 
                 await self.db.set_rsvp(event['event_id'], i.user.id, RsvpStatus.TENTATIVE)
                 await self.db.update_signup_role(event['event_id'], i.user.id, None, None)
