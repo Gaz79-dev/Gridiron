@@ -18,7 +18,7 @@ class Scheduler(commands.Cog):
         self.db = db
         print("[Scheduler Cog] Initialized. Starting tasks...")
         # --- FIX: Uncommented the self-healing task ---
-        self.check_event_messages.start()
+        #self.check_event_messages.start()
         self.create_event_threads.start()
         self.recreate_recurring_events.start()
         self.cleanup_finished_events.start()
