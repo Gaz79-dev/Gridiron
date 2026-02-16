@@ -1,0 +1,23 @@
+import os
+import discord
+
+def get_allowed_role_ids() -> set[int]:
+    allowed_role_ids: set[int] = set()
+    for i in range(1, 6):
+        role_id_str = os.getenv(f"ALLOWED_ROLE_ID_{i}")
+        if role_id_str and role_id_str.isdigit():
+            allowed_role_ids.add(int(role_id_str))
+    return allowed_role_ids
+
+def is_authorized_member(member: discord.Member) -> bool:
+    allowed = get_allowed_role_ids()
+    if not allowed:
+        return True
+    user_role_ids = {role.id for role in member.roles}
+    return bool(user_role_ids.intersection(allowed))
+
+def is_authorized_interaction(interaction: discord.Interaction) -> bool:
+    # If we can't inspect roles, deny (safer)
+    if not isinstance(interaction.user, discord.Member):
+        return False
+    return is_authorized_member(interaction.user)
