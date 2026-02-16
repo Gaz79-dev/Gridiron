@@ -1517,26 +1517,27 @@ async def link_match(self, interaction: discord.Interaction, event_id: int, matc
         })
 
     # 4) Write to DB (idempotent insert)
-    try:
-        await self.db.insert_match_data(
-            match_id=str(map_id),
-            event_name=str(event_name),
-            event_date=str(event_date),
-            allied_score=allied_score,
-            axis_score=axis_score,
-            rows=history_rows
-        )
-    except AttributeError:
-        return await interaction.followup.send(
-            "Database method `insert_match_data(...)` was not found. "
-            "Paste your Database match insert functions and I’ll adapt this.",
-            ephemeral=True
-        )
-    except Exception as e:
-        return await interaction.followup.send(
-            f"Failed to write match data to DB. Error: `{type(e).__name__}: {e}`",
-            ephemeral=True
-        )
+try:
+    # Convert CRCON ISO timestamp -> date object (your DB expects datetime.date)
+    if event_date:
+        # Handles strings like "2026-02-16T02:27:58"
+        event_date_obj = datetime.datetime.fromisoformat(event_date).date()
+    else:
+        event_date_obj = datetime.datetime.utcnow().date()
+
+    await self.db.insert_match_data(
+        match_id=str(map_id),
+        event_name=str(event_name),
+        event_date=event_date_obj,
+        uploaded_by_user_id=interaction.user.id,
+        match_stats=history_rows
+    )
+
+except Exception as e:
+    return await interaction.followup.send(
+        f"Failed to write match data to DB. Error: `{type(e).__name__}: {e}`",
+        ephemeral=True
+    )
 
     # 5) Link event -> match_id
     await self.db.set_event_match_id(event_id, str(map_id))
