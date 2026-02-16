@@ -1218,6 +1218,233 @@ class EventManagement(commands.Cog):
         self.active_conversations[interaction.user.id] = conv
         asyncio.create_task(conv.start())
 
+
+    # --- Match Stats (v1) ---
+
+    def _format_top_list(self, rows: List[Dict], metric_key: str, title: str, limit: int = 5) -> str:
+        scored = [r for r in rows if r.get(metric_key) is not None]
+        scored.sort(key=lambda r: (r.get(metric_key) or 0), reverse=True)
+        lines = []
+        for r in scored[:limit]:
+            name = r.get('player_name') or 'Unknown'
+            val = r.get(metric_key) or 0
+            # Prefer Discord mention if linked
+            discord_id = r.get('discord_user_id')
+            if discord_id:
+                name = f"<@{int(discord_id)}>"
+            lines.append(f"{name}: {val}")
+        return "\n".join(lines) if lines else "No data."
+
+    async def _build_match_review_embed(self, event: Dict, match_id: str) -> discord.Embed:
+        match_upload = await self.db.get_match_upload(match_id)
+        match_rows = await self.db.get_match_history(match_id)
+        signups = await self.db.get_signups_for_event(event['event_id'])
+
+        accepted = [s for s in signups if s.get('rsvp_status') == 'accepted']
+        accepted_ids = {int(s['user_id']) for s in accepted}
+
+        played_linked = [r for r in match_rows if r.get('discord_user_id') is not None]
+        played_linked_ids = {int(r['discord_user_id']) for r in played_linked if r.get('discord_user_id') is not None}
+
+        roster_played = len(accepted_ids.intersection(played_linked_ids))
+        roster_count = len(accepted_ids)
+
+        total_kills = sum((r.get('kills') or 0) for r in match_rows)
+        total_deaths = sum((r.get('deaths') or 0) for r in match_rows)
+        kd = (total_kills / total_deaths) if total_deaths else float(total_kills)
+
+        embed = discord.Embed(
+            title=f"Match Review: {event.get('title', 'Event')}",
+            description=f"**Match ID:** `{match_id}`\n**Event ID:** `{event['event_id']}`",
+            color=discord.Color.blurple()
+        )
+
+        if match_upload:
+            embed.add_field(
+                name="Uploaded Match Info",
+                value=f"**Name:** {match_upload.get('event_name','N/A')}\n**Date:** {match_upload.get('event_date','N/A')}",
+                inline=False
+            )
+
+        embed.add_field(
+            name="Roster Coverage",
+            value=f"Accepted RSVP: **{roster_count}**\nPlayed (linked): **{len(played_linked_ids)}**\nAccepted who played: **{roster_played}**",
+            inline=True
+        )
+
+        embed.add_field(
+            name="Team Totals",
+            value=f"Kills: **{total_kills}**\nDeaths: **{total_deaths}**\nK/D: **{kd:.2f}**",
+            inline=True
+        )
+
+        embed.add_field(
+            name="Top Kills",
+            value=self._format_top_list(match_rows, 'kills', 'Kills'),
+            inline=False
+        )
+        embed.add_field(
+            name="Top Combat Effectiveness",
+            value=self._format_top_list(match_rows, 'combat_effectiveness', 'CE'),
+            inline=False
+        )
+        embed.add_field(
+            name="Top Support Score",
+            value=self._format_top_list(match_rows, 'support_score', 'Support'),
+            inline=False
+        )
+
+        # Unlinked players who appear in the match but are not mapped to Discord
+        unlinked = [r for r in match_rows if r.get('discord_user_id') is None]
+        if unlinked:
+            names = [r.get('player_name','Unknown') for r in unlinked[:12]]
+            more = "" if len(unlinked) <= 12 else f" (+{len(unlinked)-12} more)"
+            embed.add_field(
+                name="Unlinked Players in Match",
+                value="\n".join(f"- {n}" for n in names) + more,
+                inline=False
+            )
+
+        # Accepted RSVP who did not show up in linked match rows
+        did_not_play = [uid for uid in accepted_ids if uid not in played_linked_ids]
+        if did_not_play:
+            mentions = [f"<@{uid}>" for uid in list(did_not_play)[:15]]
+            more = "" if len(did_not_play) <= 15 else f" (+{len(did_not_play)-15} more)"
+            embed.add_field(
+                name="Accepted RSVP Not Found in Match",
+                value="\n".join(mentions) + more,
+                inline=False
+            )
+
+        embed.set_footer(text="Tip: Players can link their in-game ID via /player link_game_id")
+        return embed
+
+    @event_group.command(
+        name="link_match",
+        description="Link a CRCON post-match map_id to an event, ingest stats, and post a match review."
+    )
+    @app_commands.describe(
+        event_id="The event ID to link the match to.",
+        match_id="CRCON map_id (example: 2940) from /api/get_map_scoreboard?map_id=####"
+    )
+    @app_commands.default_permissions(administrator=True)
+    async def link_match(self, interaction: discord.Interaction, event_id: int, match_id: str):
+        await interaction.response.defer(ephemeral=True)
+
+        # 1) Validate event exists
+        event = await self.db.get_event_by_id(event_id, include_deleted=True)
+        if not event:
+            return await interaction.followup.send("Event not found.", ephemeral=True)
+
+        # 2) Fetch CRCON scoreboard (match_id == map_id)
+        try:
+            map_id = int(match_id)
+        except ValueError:
+            return await interaction.followup.send("match_id must be a number (CRCON map_id).", ephemeral=True)
+
+        try:
+            client = CRCONClient()
+            scoreboard = client.fetch_map_scoreboard(map_id)
+        except Exception as e:
+            return await interaction.followup.send(
+                f"Failed to fetch CRCON scoreboard. Error: `{type(e).__name__}: {e}`",
+                ephemeral=True
+            )
+
+        result = (scoreboard or {}).get("result") or {}
+
+        # 3) Parse scoreboard fields
+        event_name = result.get("map_name") or f"map_{map_id}"
+        event_date = result.get("end") or result.get("start") or result.get("creation_time")
+
+        game_result = result.get("result") or {}
+        allied_score = game_result.get("allied")
+        axis_score = game_result.get("axis")
+
+        history_rows = result.get("player_stats") or []
+
+        if not history_rows:
+            return await interaction.followup.send(
+                "CRCON returned no player_stats for this map_id. Make sure the match is completed and the ID is correct.",
+                ephemeral=True
+            )
+
+        # 4) Write to DB (idempotent insert)
+        try:
+            # Convert CRCON ISO timestamp -> date object for DB
+            if event_date:
+                event_date_obj = datetime.datetime.fromisoformat(event_date).date()
+            else:
+                event_date_obj = datetime.datetime.utcnow().date()
+
+            await self.db.insert_match_data(
+                match_id=str(map_id),
+                event_name=str(event_name),
+                event_date=event_date_obj,
+                uploaded_by_user_id=interaction.user.id,
+                match_stats=history_rows
+            )
+        except Exception as e:
+            return await interaction.followup.send(
+                f"Failed to write match data to DB. Error: `{type(e).__name__}: {e}`",
+                ephemeral=True
+            )
+
+        # 5) Link event -> match_id
+        await self.db.set_event_match_id(event_id, str(map_id))
+
+        # 6) Post review embed
+        target_channel = None
+        if event.get("thread_id"):
+            target_channel = self.bot.get_channel(int(event["thread_id"]))
+        if target_channel is None:
+            target_channel = self.bot.get_channel(int(event["channel_id"]))
+
+        embed = await self._build_match_review_embed(event, str(map_id))
+        await target_channel.send(embed=embed)
+
+        await interaction.followup.send(
+            f"Linked CRCON map_id `{map_id}` to event `{event_id}`, ingested stats, and posted the match review.",
+            ephemeral=True
+        )
+
+    @event_group.command(
+        name="match_report",
+        description="Re-post the match review for an event using its linked match_id."
+    )
+    @app_commands.describe(event_id="The event ID to generate the report for.")
+    @app_commands.default_permissions(administrator=True)
+    async def match_report(self, interaction: discord.Interaction, event_id: int):
+        await interaction.response.defer(ephemeral=True)
+
+        event = await self.db.get_event_by_id(event_id, include_deleted=True)
+        if not event:
+            return await interaction.followup.send("Event not found.", ephemeral=True)
+
+        match_id = event.get("match_id")
+        if not match_id:
+            return await interaction.followup.send(
+                "This event has no linked match_id. Use `/event link_match` first.",
+                ephemeral=True
+            )
+
+        # Confirm match exists in DB
+        if not await self.db.check_match_exists(match_id):
+            return await interaction.followup.send(
+                f"Linked match_id `{match_id}` is not present in match_uploads yet.",
+                ephemeral=True
+            )
+
+        target_channel = None
+        if event.get("thread_id"):
+            target_channel = self.bot.get_channel(int(event["thread_id"]))
+        if target_channel is None:
+            target_channel = self.bot.get_channel(int(event["channel_id"]))
+
+        embed = await self._build_match_review_embed(event, match_id)
+        await target_channel.send(embed=embed)
+
+        await interaction.followup.send("Match report posted.", ephemeral=True)
     async def start_conversation(self, interaction: discord.Interaction, mode: str, event_id: int = None):
         """Starts a conversation in DMs for either creating or editing an event."""
         if interaction.user.id in self.active_conversations:
@@ -1347,247 +1574,6 @@ class DeleteConversation:
         self.is_finished = True
         if self.user.id in self.cog.active_conversations:
             del self.cog.active_conversations[self.user.id]
-
-    # --- Match Stats (v1) ---
-
-    def _format_top_list(self, rows: List[Dict], metric_key: str, title: str, limit: int = 5) -> str:
-        scored = [r for r in rows if r.get(metric_key) is not None]
-        scored.sort(key=lambda r: (r.get(metric_key) or 0), reverse=True)
-        lines = []
-        for r in scored[:limit]:
-            name = r.get('player_name') or 'Unknown'
-            val = r.get(metric_key) or 0
-            # Prefer Discord mention if linked
-            discord_id = r.get('discord_user_id')
-            if discord_id:
-                name = f"<@{int(discord_id)}>"
-            lines.append(f"{name}: {val}")
-        return "\n".join(lines) if lines else "No data."
-
-    async def _build_match_review_embed(self, event: Dict, match_id: str) -> discord.Embed:
-        match_upload = await self.db.get_match_upload(match_id)
-        match_rows = await self.db.get_match_history(match_id)
-        signups = await self.db.get_signups_for_event(event['event_id'])
-
-        accepted = [s for s in signups if s.get('rsvp_status') == 'accepted']
-        accepted_ids = {int(s['user_id']) for s in accepted}
-
-        played_linked = [r for r in match_rows if r.get('discord_user_id') is not None]
-        played_linked_ids = {int(r['discord_user_id']) for r in played_linked if r.get('discord_user_id') is not None}
-
-        roster_played = len(accepted_ids.intersection(played_linked_ids))
-        roster_count = len(accepted_ids)
-
-        total_kills = sum((r.get('kills') or 0) for r in match_rows)
-        total_deaths = sum((r.get('deaths') or 0) for r in match_rows)
-        kd = (total_kills / total_deaths) if total_deaths else float(total_kills)
-
-        embed = discord.Embed(
-            title=f"Match Review: {event.get('title', 'Event')}",
-            description=f"**Match ID:** `{match_id}`\n**Event ID:** `{event['event_id']}`",
-            color=discord.Color.blurple()
-        )
-
-        if match_upload:
-            embed.add_field(
-                name="Uploaded Match Info",
-                value=f"**Name:** {match_upload.get('event_name','N/A')}\n**Date:** {match_upload.get('event_date','N/A')}",
-                inline=False
-            )
-
-        embed.add_field(
-            name="Roster Coverage",
-            value=f"Accepted RSVP: **{roster_count}**\nPlayed (linked): **{len(played_linked_ids)}**\nAccepted who played: **{roster_played}**",
-            inline=True
-        )
-
-        embed.add_field(
-            name="Team Totals",
-            value=f"Kills: **{total_kills}**\nDeaths: **{total_deaths}**\nK/D: **{kd:.2f}**",
-            inline=True
-        )
-
-        embed.add_field(
-            name="Top Kills",
-            value=self._format_top_list(match_rows, 'kills', 'Kills'),
-            inline=False
-        )
-        embed.add_field(
-            name="Top Combat Effectiveness",
-            value=self._format_top_list(match_rows, 'combat_effectiveness', 'CE'),
-            inline=False
-        )
-        embed.add_field(
-            name="Top Support Score",
-            value=self._format_top_list(match_rows, 'support_score', 'Support'),
-            inline=False
-        )
-
-        # Unlinked players who appear in the match but are not mapped to Discord
-        unlinked = [r for r in match_rows if r.get('discord_user_id') is None]
-        if unlinked:
-            names = [r.get('player_name','Unknown') for r in unlinked[:12]]
-            more = "" if len(unlinked) <= 12 else f" (+{len(unlinked)-12} more)"
-            embed.add_field(
-                name="Unlinked Players in Match",
-                value="\n".join(f"- {n}" for n in names) + more,
-                inline=False
-            )
-
-        # Accepted RSVP who did not show up in linked match rows
-        did_not_play = [uid for uid in accepted_ids if uid not in played_linked_ids]
-        if did_not_play:
-            mentions = [f"<@{uid}>" for uid in list(did_not_play)[:15]]
-            more = "" if len(did_not_play) <= 15 else f" (+{len(did_not_play)-15} more)"
-            embed.add_field(
-                name="Accepted RSVP Not Found in Match",
-                value="\n".join(mentions) + more,
-                inline=False
-            )
-
-        embed.set_footer(text="Tip: Players can link their in-game ID via /player link_game_id")
-        return embed
-
-   @event_group.command(
-    name="link_match",
-    description="Link a CRCON post-match map_id to an event, ingest stats, and post a match review."
-)
-@app_commands.describe(
-    event_id="The event ID to link the match to.",
-    match_id="CRCON map_id (example: 2940) from /api/get_map_scoreboard?map_id=####"
-)
-@app_commands.default_permissions(administrator=True)
-async def link_match(self, interaction: discord.Interaction, event_id: int, match_id: str):
-    await interaction.response.defer(ephemeral=True)
-
-    # 1) Validate event exists
-    event = await self.db.get_event_by_id(event_id, include_deleted=True)
-    if not event:
-        return await interaction.followup.send("Event not found.", ephemeral=True)
-
-    # 2) Fetch CRCON scoreboard (match_id == map_id)
-    try:
-        map_id = int(match_id)
-    except ValueError:
-        return await interaction.followup.send(
-            "match_id must be a number (CRCON map_id). Example: 2940",
-            ephemeral=True
-        )
-
-    try:
-        client = CRCONClient()
-        scoreboard = client.fetch_map_scoreboard(map_id)
-    except Exception as e:
-        return await interaction.followup.send(
-            f"Failed to fetch CRCON scoreboard for map_id `{map_id}`. Error: `{type(e).__name__}: {e}`",
-            ephemeral=True
-        )
-
-    # 3) Transform CRCON -> match_upload row + match_history rows
-    result = scoreboard.get("result") or {}
-    player_stats = result.get("player_stats") or []
-
-    event_name = result.get("map_name") or "Unknown Map"
-    event_date = result.get("end") or result.get("creation_time") or ""
-
-    score_obj = result.get("result") or {}
-    allied_score = score_obj.get("allied")
-    axis_score = score_obj.get("axis")
-
-    history_rows = []
-    for p in player_stats:
-        time_seconds_raw = p.get("time_seconds", 0)
-        time_seconds = time_seconds_raw if isinstance(time_seconds_raw, (int, float)) and time_seconds_raw > 0 else 0
-
-        history_rows.append({
-            "match_id": str(map_id),
-            "player_name": p.get("player") or "Unknown",
-            "game_player_id": p.get("player_id"),
-            "kills": p.get("kills", 0),
-            "deaths": p.get("deaths", 0),
-            "teamkills": p.get("teamkills", 0),
-            "combat_effectiveness": p.get("combat", 0),
-            "offense_score": p.get("offense", 0),
-            "defense_score": p.get("defense", 0),
-            "support_score": p.get("support", 0),
-            "time_seconds": time_seconds,
-            "kpm": p.get("kills_per_minute", 0.0),
-            "kdr": p.get("kill_death_ratio", 0.0),
-            "raw_json": p,
-        })
-
-    # 4) Write to DB (idempotent insert)
-try:
-    # Convert CRCON ISO timestamp -> date object (your DB expects datetime.date)
-    if event_date:
-        # Handles strings like "2026-02-16T02:27:58"
-        event_date_obj = datetime.datetime.fromisoformat(event_date).date()
-    else:
-        event_date_obj = datetime.datetime.utcnow().date()
-
-    await self.db.insert_match_data(
-        match_id=str(map_id),
-        event_name=str(event_name),
-        event_date=event_date_obj,
-        uploaded_by_user_id=interaction.user.id,
-        match_stats=history_rows
-    )
-
-except Exception as e:
-    return await interaction.followup.send(
-        f"Failed to write match data to DB. Error: `{type(e).__name__}: {e}`",
-        ephemeral=True
-    )
-
-    # 5) Link event -> match_id
-    await self.db.set_event_match_id(event_id, str(map_id))
-
-    # 6) Post review embed
-    target_channel = None
-    if event.get("thread_id"):
-        target_channel = self.bot.get_channel(int(event["thread_id"]))
-    if target_channel is None:
-        target_channel = self.bot.get_channel(int(event["channel_id"]))
-
-    embed = await self._build_match_review_embed(event, str(map_id))
-    await target_channel.send(embed=embed)
-
-    await interaction.followup.send(
-        f"Linked CRCON map_id `{map_id}` to event `{event_id}`, ingested stats, and posted the match review.",
-        ephemeral=True
-    )
-
-    @event_group.command(name="match_report", description="Re-post the match review for an event using its linked match_id.")
-    @app_commands.describe(event_id="The event ID to generate the report for.")
-    @app_commands.default_permissions(administrator=True)
-    async def match_report(self, interaction: discord.Interaction, event_id: int):
-        await interaction.response.defer(ephemeral=True)
-
-        event = await self.db.get_event_by_id(event_id, include_deleted=True)
-        if not event:
-            return await interaction.followup.send("Event not found.", ephemeral=True)
-
-        match_id = event.get('match_id')
-        if not match_id:
-            return await interaction.followup.send("This event has no linked match_id. Use `/event link_match` first.", ephemeral=True)
-
-        if not await self.db.check_match_exists(match_id):
-            return await interaction.followup.send(
-                f"Linked match_id `{match_id}` is not present in match_uploads. Upload it first or update the match_id.",
-                ephemeral=True
-            )
-
-        target_channel = None
-        if event.get('thread_id'):
-            target_channel = self.bot.get_channel(int(event['thread_id']))
-        if target_channel is None:
-            target_channel = self.bot.get_channel(int(event['channel_id']))
-
-        embed = await self._build_match_review_embed(event, match_id)
-        await target_channel.send(embed=embed)
-
-        await interaction.followup.send("Match report posted.", ephemeral=True)
-
 async def setup(bot: commands.Bot):
     """Sets up the event management cog."""
     cog = EventManagement(bot, bot.db)
