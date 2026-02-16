@@ -13,6 +13,8 @@ import uuid
 
 # Use relative import to go up one level to the 'bot' package root
 from ..utils.database import Database, RsvpStatus, ROLES, SUBCLASSES, RESTRICTED_ROLES
+from ..services.crcon_client import CRCONClient
+
 
 # --- Constants & Helpers ---
 EMOJI_MAPPING = {
@@ -1446,39 +1448,113 @@ class DeleteConversation:
         embed.set_footer(text="Tip: Players can link their in-game ID via /player link_game_id")
         return embed
 
-    @event_group.command(name="link_match", description="Manually link an uploaded match_id to an event and post a match review.")
-    @app_commands.describe(
-        event_id="The event ID to link the match to.",
-        match_id="The uploaded match_id (from the Stats upload / Matches table)."
+   @event_group.command(
+    name="link_match",
+    description="Link a CRCON post-match map_id to an event, ingest stats, and post a match review."
+)
+@app_commands.describe(
+    event_id="The event ID to link the match to.",
+    match_id="CRCON map_id (example: 2940) from /api/get_map_scoreboard?map_id=####"
+)
+@app_commands.default_permissions(administrator=True)
+async def link_match(self, interaction: discord.Interaction, event_id: int, match_id: str):
+    await interaction.response.defer(ephemeral=True)
+
+    # 1) Validate event exists
+    event = await self.db.get_event_by_id(event_id, include_deleted=True)
+    if not event:
+        return await interaction.followup.send("Event not found.", ephemeral=True)
+
+    # 2) Fetch CRCON scoreboard (match_id == map_id)
+    try:
+        map_id = int(match_id)
+    except ValueError:
+        return await interaction.followup.send(
+            "match_id must be a number (CRCON map_id). Example: 2940",
+            ephemeral=True
+        )
+
+    try:
+        client = CRCONClient()
+        scoreboard = client.fetch_map_scoreboard(map_id)
+    except Exception as e:
+        return await interaction.followup.send(
+            f"Failed to fetch CRCON scoreboard for map_id `{map_id}`. Error: `{type(e).__name__}: {e}`",
+            ephemeral=True
+        )
+
+    # 3) Transform CRCON -> match_upload row + match_history rows
+    result = scoreboard.get("result") or {}
+    player_stats = result.get("player_stats") or []
+
+    event_name = result.get("map_name") or "Unknown Map"
+    event_date = result.get("end") or result.get("creation_time") or ""
+
+    score_obj = result.get("result") or {}
+    allied_score = score_obj.get("allied")
+    axis_score = score_obj.get("axis")
+
+    history_rows = []
+    for p in player_stats:
+        time_seconds_raw = p.get("time_seconds", 0)
+        time_seconds = time_seconds_raw if isinstance(time_seconds_raw, (int, float)) and time_seconds_raw > 0 else 0
+
+        history_rows.append({
+            "match_id": str(map_id),
+            "player_name": p.get("player") or "Unknown",
+            "game_player_id": p.get("player_id"),
+            "kills": p.get("kills", 0),
+            "deaths": p.get("deaths", 0),
+            "teamkills": p.get("teamkills", 0),
+            "combat_effectiveness": p.get("combat", 0),
+            "offense_score": p.get("offense", 0),
+            "defense_score": p.get("defense", 0),
+            "support_score": p.get("support", 0),
+            "time_seconds": time_seconds,
+            "kpm": p.get("kills_per_minute", 0.0),
+            "kdr": p.get("kill_death_ratio", 0.0),
+            "raw_json": p,
+        })
+
+    # 4) Write to DB (idempotent insert)
+    try:
+        await self.db.insert_match_data(
+            match_id=str(map_id),
+            event_name=str(event_name),
+            event_date=str(event_date),
+            allied_score=allied_score,
+            axis_score=axis_score,
+            rows=history_rows
+        )
+    except AttributeError:
+        return await interaction.followup.send(
+            "Database method `insert_match_data(...)` was not found. "
+            "Paste your Database match insert functions and I’ll adapt this.",
+            ephemeral=True
+        )
+    except Exception as e:
+        return await interaction.followup.send(
+            f"Failed to write match data to DB. Error: `{type(e).__name__}: {e}`",
+            ephemeral=True
+        )
+
+    # 5) Link event -> match_id
+    await self.db.set_event_match_id(event_id, str(map_id))
+
+    # 6) Post review embed
+    target_channel = None
+    if event.get("thread_id"):
+        target_channel = self.bot.get_channel(int(event["thread_id"]))
+    if target_channel is None:
+        target_channel = self.bot.get_channel(int(event["channel_id"]))
+
+    embed = await self._build_match_review_embed(event, str(map_id))
+    await target_channel.send(embed=embed)
+
+    await interaction.followup.send(
+        f"Linked CRCON map_id `{map_id}` to event `{event_id}`, ingested stats, and posted the match review.",
+        ephemeral=True
     )
-    @app_commands.default_permissions(administrator=True)
-    async def link_match(self, interaction: discord.Interaction, event_id: int, match_id: str):
-        await interaction.response.defer(ephemeral=True)
-
-        event = await self.db.get_event_by_id(event_id, include_deleted=True)
-        if not event:
-            return await interaction.followup.send("Event not found.", ephemeral=True)
-
-        exists = await self.db.check_match_exists(match_id)
-        if not exists:
-            return await interaction.followup.send(
-                "That match_id was not found in the database. Upload the match CSV first from the web admin panel.",
-                ephemeral=True
-            )
-
-        await self.db.set_event_match_id(event_id, match_id)
-
-        # Post the review in the event thread if it exists, otherwise in the channel
-        target_channel = None
-        if event.get('thread_id'):
-            target_channel = self.bot.get_channel(int(event['thread_id']))
-        if target_channel is None:
-            target_channel = self.bot.get_channel(int(event['channel_id']))
-
-        embed = await self._build_match_review_embed(event, match_id)
-        await target_channel.send(embed=embed)
-
-        await interaction.followup.send(f"Linked match `{match_id}` to event `{event_id}` and posted the match review.", ephemeral=True)
 
     @event_group.command(name="match_report", description="Re-post the match review for an event using its linked match_id.")
     @app_commands.describe(event_id="The event ID to generate the report for.")
