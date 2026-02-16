@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 
 # Use absolute imports from the 'bot' package root
 from bot.utils.database import Database
+from bot.utils.permissions import is_authorized_interaction, get_allowed_role_ids
 
 # Load environment variables from .env file
 load_dotenv()
@@ -95,31 +96,22 @@ async def main():
 
     @bot.check
     async def global_role_check(interaction: discord.Interaction):
-        allowed_role_ids = set()
-        for i in range(1, 6):
-            role_id_str = os.getenv(f"ALLOWED_ROLE_ID_{i}")
-            if role_id_str and role_id_str.isdigit():
-                allowed_role_ids.add(int(role_id_str))
-
-        if not allowed_role_ids:
+        # Centralized role gating (configured via ALLOWED_ROLE_ID_1..5)
+        if not get_allowed_role_ids():
             return True
 
-        if not isinstance(interaction.user, discord.Member):
-            return False
-            
-        user_role_ids = {role.id for role in interaction.user.roles}
-        if user_role_ids.intersection(allowed_role_ids):
+        if is_authorized_interaction(interaction):
             return True
-        
+
         try:
             await interaction.response.send_message(
-                "You do not have the required role to use bot commands.", 
+                "You do not have the required role to use bot commands.",
                 ephemeral=True,
-                delete_after=15
+                delete_after=15,
             )
         except discord.InteractionResponded:
             pass
-            
+
         return False
 
     token = os.getenv("DISCORD_TOKEN")
