@@ -1,0 +1,76 @@
+import discord
+from discord.ext import commands
+from discord import app_commands
+
+from bot.utils.database import Database
+from bot.utils.permissions import is_authorized_interaction
+
+player_group = app_commands.Group(name="player", description="Player tools (link IDs, view stats).")
+
+class MatchStats(commands.Cog):
+    def __init__(self, bot: commands.Bot, db: Database):
+        self.bot = bot
+        self.db = db
+
+    async def _authz(self, interaction: discord.Interaction) -> bool:
+        # Reuse the global gate logic, but keep a guard here for safety.
+        return is_authorized_interaction(interaction)
+
+    @player_group.command(name="link_game_id", description="Link your Discord account to your in-game PlayerID (for match stats).")
+    @app_commands.describe(game_player_id="Your in-game PlayerID (from the match stats table).")
+    async def link_game_id(self, interaction: discord.Interaction, game_player_id: str):
+        if not await self._authz(interaction):
+            return await interaction.response.send_message("You are not authorized to use this command.", ephemeral=True)
+
+        await self.db.update_player_game_id(interaction.user.id, game_player_id.strip())
+        await interaction.response.send_message("✅ Linked your in-game PlayerID to your Discord account.", ephemeral=True)
+
+    @player_group.command(name="unlink_game_id", description="Remove your linked in-game PlayerID.")
+    async def unlink_game_id(self, interaction: discord.Interaction):
+        if not await self._authz(interaction):
+            return await interaction.response.send_message("You are not authorized to use this command.", ephemeral=True)
+
+        await self.db.update_player_game_id(interaction.user.id, None)
+        await interaction.response.send_message("✅ Removed your linked in-game PlayerID.", ephemeral=True)
+
+    @player_group.command(name="last_match", description="Show your stats from the most recently uploaded match (if linked).")
+    async def last_match(self, interaction: discord.Interaction):
+        if not await self._authz(interaction):
+            return await interaction.response.send_message("You are not authorized to use this command.", ephemeral=True)
+
+        # Find most recent match for this user in match_history
+        query = """
+            SELECT mh.*, mu.event_name, mu.event_date
+            FROM match_history mh
+            JOIN match_uploads mu ON mh.match_id = mu.match_id
+            WHERE mh.discord_user_id = $1
+            ORDER BY mu.event_date DESC, mu.uploaded_at DESC NULLS LAST
+            LIMIT 1;
+        """
+        async with self.db.pool.acquire() as connection:
+            row = await connection.fetchrow(query, interaction.user.id)
+
+        if not row:
+            return await interaction.response.send_message(
+                "No match stats found for you yet. Make sure your PlayerID is linked and that match stats have been uploaded.",
+                ephemeral=True
+            )
+
+        r = dict(row)
+        embed = discord.Embed(
+            title="Your Latest Match Stats",
+            description=f"**Match ID:** `{r.get('match_id')}`\n**Event:** {r.get('event_name','N/A')} ({r.get('event_date','N/A')})",
+            color=discord.Color.green()
+        )
+        embed.add_field(name="Kills / Deaths", value=f"{r.get('kills',0)} / {r.get('deaths',0)}", inline=True)
+        ce = r.get('combat_effectiveness')
+        if ce is not None:
+            embed.add_field(name="Combat Effectiveness", value=str(ce), inline=True)
+        embed.add_field(name="Off / Def / Support", value=f"{r.get('offensive_score',0)} / {r.get('defensive_score',0)} / {r.get('support_score',0)}", inline=False)
+
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+async def setup(bot: commands.Bot):
+    cog = MatchStats(bot, bot.db)
+    await bot.add_cog(cog)
+    bot.tree.add_command(player_group)
