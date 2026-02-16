@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 
 # Use absolute imports from the 'bot' package root
 from bot.utils.database import Database
-from bot.utils.permissions import is_authorized_interaction, get_allowed_role_ids
+from bot.utils.permissions import get_allowed_role_ids, is_authorized_interaction
 
 # Load environment variables from .env file
 load_dotenv()
@@ -28,7 +28,8 @@ class EventBot(commands.Bot):
             'bot.cogs.scheduler',
             'bot.cogs.setup',
             'bot.cogs.sort',
-            'bot.cogs.admin'  # New cog for admin commands
+            'bot.cogs.admin',
+            'bot.cogs.match_stats'  # Match stats + player linking
         ]
 
         # Load each cog
@@ -96,8 +97,8 @@ async def main():
 
     @bot.check
     async def global_role_check(interaction: discord.Interaction):
-        # Centralized role gating (configured via ALLOWED_ROLE_ID_1..5)
-        if not get_allowed_role_ids():
+        allowed_role_ids = get_allowed_role_ids()
+        if not allowed_role_ids:
             return True
 
         if is_authorized_interaction(interaction):
@@ -107,11 +108,26 @@ async def main():
             await interaction.response.send_message(
                 "You do not have the required role to use bot commands.",
                 ephemeral=True,
-                delete_after=15,
+                delete_after=15
             )
         except discord.InteractionResponded:
             pass
 
+        return False
+            
+        user_role_ids = {role.id for role in interaction.user.roles}
+        if user_role_ids.intersection(allowed_role_ids):
+            return True
+        
+        try:
+            await interaction.response.send_message(
+                "You do not have the required role to use bot commands.", 
+                ephemeral=True,
+                delete_after=15
+            )
+        except discord.InteractionResponded:
+            pass
+            
         return False
 
     token = os.getenv("DISCORD_TOKEN")
