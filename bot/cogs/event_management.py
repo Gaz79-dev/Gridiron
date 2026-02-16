@@ -52,12 +52,11 @@ CURATED_TIMEZONES = {
 
 # --- FIX: Corrected Logic to check ALLOWED_ROLE_ID_1 through 5 ---
 def has_required_role(member: discord.Member) -> bool:
-    """Checks if a member has one of the roles specified in .env."""
-    allowed_role_ids = set()
-    for i in range(1, 6): # Checks for ALLOWED_ROLE_ID_1 through 5
-        role_id_str = os.getenv(f"ALLOWED_ROLE_ID_{i}")
-        if role_id_str and role_id_str.isdigit():
-            allowed_role_ids.add(int(role_id_str))
+    """Checks if a member has one of the roles specified in .env.
+
+    Uses centralized logic shared with the global bot check.
+    """
+    return is_authorized_member(member)
 
     # If no roles are configured, default to allowing Server Administrators
     if not allowed_role_ids:
