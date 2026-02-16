@@ -154,6 +154,7 @@ class Database:
                 # These ALTER TABLE commands are still needed to patch the schema if updating
                 await connection.execute("ALTER TABLE events ADD COLUMN IF NOT EXISTS is_deleted BOOLEAN DEFAULT FALSE;")
                 await connection.execute("ALTER TABLE events ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP WITH TIME ZONE;")
+                await connection.execute("ALTER TABLE events ADD COLUMN IF NOT EXISTS match_id TEXT;")
 
                 await connection.execute("""
                     CREATE TABLE IF NOT EXISTS signups (
@@ -1010,13 +1011,17 @@ class Database:
                 #
                 # The correct fix is to just call the function directly with the
                 # arguments it expects, as it's self-contained.
+                print(f"[set_rsvp] Checking if should log: old_status={old_status}, new_status={new_status}, old_status is not None={old_status is not None}, different={old_status != new_status}")
                 if old_status is not None and old_status != new_status:
+                    print(f"[set_rsvp] Calling _send_rsvp_log_message for user {user_id}")
                     await _send_rsvp_log_message(
                         user_id=user_id,
                         event_title=event_and_signup_data['title'],
                         old_status=old_status,
-                        new_status=new_status,
+                        new_status=new_status
                     )
+                else:
+                    print(f"[set_rsvp] Skipping log - conditions not met")
                 # --- END: FIX ---
 
                 # --- START: MODIFICATION - Overhaul event history snapshot logic ---
@@ -1925,3 +1930,31 @@ class Database:
     
     async def close(self):
         if self.pool: await self.pool.close(); print("Database connection pool closed.")
+
+
+    # --- Match ↔ Event Linking (Strategy 1: manual) ---
+
+    async def set_event_match_id(self, event_id: int, match_id: str) -> None:
+        """Links an uploaded match_id to a Discord event."""
+        query = "UPDATE events SET match_id = $1 WHERE event_id = $2;"
+        async with self.pool.acquire() as connection:
+            await connection.execute(query, match_id, event_id)
+
+    async def get_event_match_id(self, event_id: int) -> Optional[str]:
+        query = "SELECT match_id FROM events WHERE event_id = $1;"
+        async with self.pool.acquire() as connection:
+            return await connection.fetchval(query, event_id)
+
+    async def get_match_upload(self, match_id: str) -> Optional[Dict]:
+        """Returns the match_uploads record for a given match_id."""
+        query = "SELECT * FROM match_uploads WHERE match_id = $1;"
+        async with self.pool.acquire() as connection:
+            row = await connection.fetchrow(query, match_id)
+            return dict(row) if row else None
+
+    async def get_match_history(self, match_id: str) -> List[Dict]:
+        """Returns all match_history rows for a given match_id."""
+        query = "SELECT * FROM match_history WHERE match_id = $1;"
+        async with self.pool.acquire() as connection:
+            rows = await connection.fetch(query, match_id)
+            return [dict(r) for r in rows]
