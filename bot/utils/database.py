@@ -1010,17 +1010,13 @@ class Database:
                 #
                 # The correct fix is to just call the function directly with the
                 # arguments it expects, as it's self-contained.
-                print(f"[set_rsvp] Checking if should log: old_status={old_status}, new_status={new_status}, old_status is not None={old_status is not None}, different={old_status != new_status}")
                 if old_status is not None and old_status != new_status:
-                    print(f"[set_rsvp] Calling _send_rsvp_log_message for user {user_id}")
                     await _send_rsvp_log_message(
                         user_id=user_id,
                         event_title=event_and_signup_data['title'],
                         old_status=old_status,
-                        new_status=new_status
+                        new_status=new_status,
                     )
-                else:
-                    print(f"[set_rsvp] Skipping log - conditions not met")
                 # --- END: FIX ---
 
                 # --- START: MODIFICATION - Overhaul event history snapshot logic ---
