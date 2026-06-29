@@ -459,6 +459,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // --- Initial loads ---
     loadUsers();
     loadTemplates();
+    loadSettings();
 
     const headerRow = document.createElement('div');
     headerRow.className = 'grid grid-cols-1 md:grid-cols-7 gap-2 items-center mb-2 text-sm font-semibold text-gray-400';
