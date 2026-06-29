@@ -38,6 +38,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const RSVP_POOLS = ["Commander", "Infantry", "Armour", "Recon", "Pathfinders", "Artillery", "Unassigned"];
     const SQUAD_TYPES = ["Command", "Infantry", "Armour", "Recon", "Artillery", "Reserves"];
+    const settingsList = document.getElementById('settings-list');
 
     function validatePassword(password) {
         const validations = {
@@ -184,6 +185,92 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
+    //Settings Functions
+    async function loadSettings() {
+        if (!settingsList) return;
+    
+        try {
+            const response = await fetch('/api/settings/', { headers });
+            if (!response.ok) throw new Error((await response.json()).detail || 'Failed to load settings');
+    
+            const settings = await response.json();
+            const grouped = settings.reduce((acc, setting) => {
+                acc[setting.category] = acc[setting.category] || [];
+                acc[setting.category].push(setting);
+                return acc;
+            }, {});
+    
+            settingsList.innerHTML = '';
+    
+            Object.entries(grouped).forEach(([category, items]) => {
+                const section = document.createElement('div');
+                section.className = 'bg-gray-700 rounded-lg p-4';
+    
+                section.innerHTML = `
+                    <h3 class="text-lg font-semibold text-white mb-3">${category}</h3>
+                    <div class="space-y-3">
+                        ${items.map(setting => `
+                            <div class="grid grid-cols-1 md:grid-cols-4 gap-3 items-center">
+                                <div>
+                                    <div class="font-medium text-gray-200">${setting.setting_key}</div>
+                                    <div class="text-xs text-gray-400">${setting.description || ''}</div>
+                                </div>
+                                <input
+                                    class="md:col-span-2 bg-gray-600 border-gray-500 rounded-md p-2"
+                                    data-setting-key="${setting.setting_key}"
+                                    data-setting-type="${setting.value_type}"
+                                    data-setting-category="${setting.category}"
+                                    data-setting-description="${setting.description || ''}"
+                                    value="${setting.setting_value || ''}"
+                                    ${setting.editable ? '' : 'disabled'}
+                                >
+                                <button
+                                    class="save-setting-btn bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-md text-sm"
+                                    data-setting-key="${setting.setting_key}"
+                                    ${setting.editable ? '' : 'disabled'}
+                                >
+                                    Save
+                                </button>
+                            </div>
+                        `).join('')}
+                    </div>
+                `;
+    
+                settingsList.appendChild(section);
+            });
+        } catch (error) {
+            settingsList.innerHTML = `<p class="text-red-400">${error.message}</p>`;
+        }
+    }
+    
+    settingsList?.addEventListener('click', async (e) => {
+        const button = e.target.closest('.save-setting-btn');
+        if (!button) return;
+    
+        const key = button.dataset.settingKey;
+        const input = settingsList.querySelector(`[data-setting-key="${key}"]`);
+    
+        try {
+            const response = await fetch(`/api/settings/${key}`, {
+                method: 'PUT',
+                headers,
+                body: JSON.stringify({
+                    setting_value: input.value,
+                    value_type: input.dataset.settingType,
+                    category: input.dataset.settingCategory,
+                    description: input.dataset.settingDescription,
+                    editable: true
+                })
+            });
+    
+            if (!response.ok) throw new Error((await response.json()).detail || 'Failed to save setting');
+            button.textContent = 'Saved';
+            setTimeout(() => button.textContent = 'Save', 1200);
+        } catch (error) {
+            alert(`Error: ${error.message}`);
+        }
+    });
+    
     // --- User Management Functions ---
     async function loadUsers() {
         try {
