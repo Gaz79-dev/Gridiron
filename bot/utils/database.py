@@ -123,6 +123,18 @@ class Database:
                         thread_creation_hours INT DEFAULT 24
                     );
                 """)
+
+                await connection.execute("""
+                    CREATE TABLE IF NOT EXISTS system_settings (
+                        setting_key VARCHAR(100) PRIMARY KEY,
+                        setting_value TEXT,
+                        value_type VARCHAR(30) DEFAULT 'string',
+                        category VARCHAR(50) DEFAULT 'General',
+                        description TEXT,
+                        editable BOOLEAN DEFAULT TRUE,
+                        updated_at TIMESTAMP WITH TIME ZONE DEFAULT (NOW() AT TIME ZONE 'utc')
+                    );
+                """)
                 
                 await connection.execute("""
                     CREATE TABLE IF NOT EXISTS events (
