@@ -1943,6 +1943,47 @@ class Database:
     async def close(self):
         if self.pool: await self.pool.close(); print("Database connection pool closed.")
 
+    async def get_system_settings(self):
+    query = """
+        SELECT setting_key, setting_value, value_type, category, description, editable, updated_at
+        FROM system_settings
+        ORDER BY category, setting_key;
+    """
+    async with self.pool.acquire() as connection:
+        return await connection.fetch(query)
+
+
+    async def get_system_setting_value(self, key: str):
+        query = "SELECT setting_value FROM system_settings WHERE setting_key = $1;"
+        async with self.pool.acquire() as connection:
+            return await connection.fetchval(query, key)
+    
+    
+    async def upsert_system_setting(
+        self,
+        key: str,
+        value: str,
+        value_type: str = "string",
+        category: str = "General",
+        description: str = "",
+        editable: bool = True
+    ):
+        query = """
+            INSERT INTO system_settings (
+                setting_key, setting_value, value_type, category, description, editable, updated_at
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, NOW())
+            ON CONFLICT (setting_key) DO UPDATE SET
+                setting_value = EXCLUDED.setting_value,
+                value_type = EXCLUDED.value_type,
+                category = EXCLUDED.category,
+                description = EXCLUDED.description,
+                editable = EXCLUDED.editable,
+                updated_at = NOW();
+        """
+        async with self.pool.acquire() as connection:
+            await connection.execute(query, key, value, value_type, category, description, editable)
+
 
     # --- Match ↔ Event Linking (Strategy 1: manual) ---
 
