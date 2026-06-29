@@ -1944,13 +1944,13 @@ class Database:
         if self.pool: await self.pool.close(); print("Database connection pool closed.")
 
     async def get_system_settings(self):
-    query = """
-        SELECT setting_key, setting_value, value_type, category, description, editable, updated_at
-        FROM system_settings
-        ORDER BY category, setting_key;
-    """
-    async with self.pool.acquire() as connection:
-        return await connection.fetch(query)
+        query = """
+            SELECT setting_key, setting_value, value_type, category, description, editable, updated_at
+            FROM system_settings
+            ORDER BY category, setting_key;
+        """
+        async with self.pool.acquire() as connection:
+            return await connection.fetch(query)
 
 
     async def get_system_setting_value(self, key: str):
