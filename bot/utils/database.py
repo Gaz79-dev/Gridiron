@@ -45,10 +45,19 @@ def _safe_float(value: Any) -> Optional[float]:
         return None
 
 
-async def _send_rsvp_log_message(user_id: int, event_title: str, old_status: str, new_status: str):
-    log_channel_id = os.getenv("EVENT_LOG_CHANNEL_ID")
+async def _send_rsvp_log_message(db, user_id: int, event_title: str, old_status: str, new_status: str):
+    log_channel_id = await db.get_system_setting_value("event_log_channel_id")
+    guild_id = await db.get_system_setting_value("guild_id")
+
+    if not log_channel_id:
+        log_channel_id = os.getenv("EVENT_LOG_CHANNEL_ID")
+
+    if not guild_id:
+        guild_id = os.getenv("GUILD_ID")
+
     bot_token = os.getenv("DISCORD_TOKEN")
-    guild_id = os.getenv("GUILD_ID")
+
+    print(f"[RSVP audit channel from system_settings] {log_channel_id}")
 
     if not all([log_channel_id, bot_token, guild_id]):
         return
