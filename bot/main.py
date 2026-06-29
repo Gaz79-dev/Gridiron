@@ -91,8 +91,8 @@ app.include_router(stats.router)
 app.include_router(players.router)
 app.include_router(templates_router.router)
 app.include_router(white_chats.router)
-# --- UPDATE: Register the archive router ---
 app.include_router(archive.router)
+app.include_router(settings.router)
 
 # --- HTML Page Routes ---
 
