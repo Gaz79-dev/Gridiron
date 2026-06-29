@@ -14,6 +14,7 @@ import uuid
 # Use relative import to go up one level to the 'bot' package root
 from ..utils.database import Database, RsvpStatus, ROLES, SUBCLASSES, RESTRICTED_ROLES
 from ..services.crcon_client import CRCONClient
+from ..services.config_service import ConfigService
 
 
 # --- Constants & Helpers ---
@@ -51,6 +52,33 @@ CURATED_TIMEZONES = {
     ],
     "Other": ["UTC"]
 }
+
+async def get_restricted_roles_config(db: Database) -> dict:
+    """
+    Reads restricted signup role IDs from system_settings first, with .env fallback
+    handled by ConfigService. Keys are the new v1.6 setting keys seeded into
+    system_settings.
+    """
+    config = ConfigService(db)
+
+    role_settings = {
+        "Commander": "role_id_commander",
+        "Officer": "role_id_officer",
+        "Recon": "role_id_recon",
+        "Tank Commander": "role_id_tank_commander",
+        "Pathfinders": "role_id_pathfinder",
+        "Artillery": "role_id_arty",
+    }
+
+    restricted_roles = {}
+
+    for role_name, setting_key in role_settings.items():
+        value = await config.get(setting_key)
+        if value and str(value).isdigit():
+            restricted_roles[role_name] = int(value)
+
+    return restricted_roles
+
 
 # --- FIX: Corrected Logic to check ALLOWED_ROLE_ID_1 through 5 ---
 def has_required_role(member: discord.Member) -> bool:
@@ -270,11 +298,7 @@ class RoleSelect(ui.Select):
 
         user_role_ids = {r.id for r in member.roles}
 
-        restricted_roles_config = {
-            "Officer": os.getenv("ROLE_ID_OFFICER"),
-            "Tank Commander": os.getenv("ROLE_ID_TANK_COMMANDER"),
-        }
-        restricted_roles_config = {k: int(v) for k, v in restricted_roles_config.items() if v and v.isdigit()}
+        restricted_roles_config = await get_restricted_roles_config(self.db)
 
         available_subclasses = []
         for subclass in all_subclasses:
@@ -402,12 +426,7 @@ class PersistentEventView(ui.View):
                 )
                 return 
 
-        restricted_roles_config = {
-            "Commander": os.getenv("ROLE_ID_COMMANDER"), "Officer": os.getenv("ROLE_ID_OFFICER"),
-            "Recon": os.getenv("ROLE_ID_RECON"), "Tank Commander": os.getenv("ROLE_ID_TANK_COMMANDER"),
-            "Pathfinders": os.getenv("ROLE_ID_PATHFINDER"), "Artillery": os.getenv("ROLE_ID_ARTY"),
-        }
-        restricted_roles_config = {k: int(v) for k, v in restricted_roles_config.items() if v and v.isdigit()}
+        restricted_roles_config = await get_restricted_roles_config(self.db)
 
         user_role_ids = {r.id for r in i.user.roles}
         available_roles = []
