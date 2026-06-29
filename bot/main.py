@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 # Use absolute imports from the 'bot' package root
 from bot.utils.database import Database
 # --- UPDATE: Added archive to imports ---
-from bot.api.routers import events, users, squads, stats, players, white_chats, archive
+from bot.api.routers import events, users, squads, stats, players, white_chats, archive, settings
 from bot.api.routers import templates as templates_router
 from bot.api import auth
 
