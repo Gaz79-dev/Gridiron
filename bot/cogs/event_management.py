@@ -12,67 +12,15 @@ from collections import defaultdict
 import uuid
 
 # Use relative import to go up one level to the 'bot' package root
-from ..utils.database import Database, RsvpStatus, ROLES, SUBCLASSES, RESTRICTED_ROLES
+from ..utils.database import Database, RsvpStatus
+from ..game_systems.hll import DEFAULT_EMOJI_MAPPING, EMOJI_SETTING_KEYS, RESTRICTED_ROLES, ROLES, SUBCLASSES
 from ..services.crcon_client import CRCONClient
 from ..services.config_service import ConfigService
 
 
 # --- Constants & Helpers ---
-DEFAULT_EMOJI_MAPPING = {
-    "Commander": "⭐",
-    "Infantry": "💂",
-    "Armour": "🛡️",
-    "Recon": "👁️",
-    "Pathfinders": "🧭",
-    "Artillery": "💣",
-    "SPA": "🚚",
-    "Anti-Tank": "🚀",
-    "Assault": "💥",
-    "Automatic Rifleman": "🔥",
-    "Engineer": "🛠️",
-    "Machine Gunner": "💥",
-    "Medic": "➕",
-    "Officer": "🫡",
-    "Rifleman": "👤",
-    "Support": "🔧",
-    "Tank Commander": "🧑‍✈️",
-    "Crewman": "👨‍🔧",
-    "Artillery Observer": "🎯",
-    "Artillery Support": "💥",
-    "Artillery Engineer": "🛠️",
-    "Spotter": "👀",
-    "Sniper": "🎯",
-    "Unassigned": "❔",
-}
-
 # Safe fallback for older imports, such as API code that imports EMOJI_MAPPING directly.
 EMOJI_MAPPING = DEFAULT_EMOJI_MAPPING.copy()
-
-EMOJI_SETTING_KEYS = {
-    "Commander": "emoji_commander",
-    "Infantry": "emoji_infantry",
-    "Armour": "emoji_armour",
-    "Recon": "emoji_recon",
-    "Pathfinders": "emoji_pathfinders",
-    "Artillery": "emoji_artillery",
-    "SPA": "emoji_spa",
-    "Anti-Tank": "emoji_anti_tank",
-    "Assault": "emoji_assault",
-    "Automatic Rifleman": "emoji_automatic_rifleman",
-    "Engineer": "emoji_engineer",
-    "Machine Gunner": "emoji_machine_gunner",
-    "Medic": "emoji_medic",
-    "Officer": "emoji_officer",
-    "Rifleman": "emoji_rifleman",
-    "Support": "emoji_support",
-    "Tank Commander": "emoji_tank_commander",
-    "Crewman": "emoji_crewman",
-    "Artillery Observer": "emoji_artillery_observer",
-    "Artillery Support": "emoji_artillery_support",
-    "Artillery Engineer": "emoji_artillery_engineer",
-    "Spotter": "emoji_spotter",
-    "Sniper": "emoji_sniper",
-}
 
 
 async def get_emoji_mapping(db: Database) -> Dict[str, str]:
