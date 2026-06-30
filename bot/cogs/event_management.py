@@ -18,28 +18,79 @@ from ..services.config_service import ConfigService
 
 
 # --- Constants & Helpers ---
-EMOJI_MAPPING = {
-    "Commander": os.getenv("EMOJI_COMMANDER", "⭐"),
-    "Infantry": os.getenv("EMOJI_INFANTRY", "💂"),
-    "Armour": os.getenv("EMOJI_ARMOUR", "🛡️"),
-    "Recon": os.getenv("EMOJI_RECON", "👁️"),
-    "Pathfinders": os.getenv("EMOJI_PATHFINDERS", "🧭"),
-    "Artillery": os.getenv("EMOJI_ARTILLERY", "💣"),
-    "Anti-Tank": os.getenv("EMOJI_ANTI_TANK", "🚀"),
-    "Assault": os.getenv("EMOJI_ASSAULT", "💥"),
-    "Automatic Rifleman": os.getenv("EMOJI_AUTOMATIC_RIFLEMAN", "🔥"),
-    "Engineer": os.getenv("EMOJI_ENGINEER", "🛠️"),
-    "Machine Gunner": os.getenv("EMOJI_MACHINE_GUNNER", "💥"),
-    "Medic": os.getenv("EMOJI_MEDIC", "➕"),
-    "Officer": os.getenv("EMOJI_OFFICER", "🫡"),
-    "Rifleman": os.getenv("EMOJI_RIFLEMAN", "👤"),
-    "Support": os.getenv("EMOJI_SUPPORT", "🔧"),
-    "Tank Commander": os.getenv("EMOJI_TANK_COMMANDER", "🧑‍✈️"),
-    "Crewman": os.getenv("EMOJI_CREWMAN", "👨‍🔧"),
-    "Spotter": os.getenv("EMOJI_SPOTTER", "👀"),
-    "Sniper": os.getenv("EMOJI_SNIPER", "🎯"),
-    "Unassigned": "❔"
+DEFAULT_EMOJI_MAPPING = {
+    "Commander": "⭐",
+    "Infantry": "💂",
+    "Armour": "🛡️",
+    "Recon": "👁️",
+    "Pathfinders": "🧭",
+    "Artillery": "💣",
+    "Anti-Tank": "🚀",
+    "Assault": "💥",
+    "Automatic Rifleman": "🔥",
+    "Engineer": "🛠️",
+    "Machine Gunner": "💥",
+    "Medic": "➕",
+    "Officer": "🫡",
+    "Rifleman": "👤",
+    "Support": "🔧",
+    "Tank Commander": "🧑‍✈️",
+    "Crewman": "👨‍🔧",
+    "Spotter": "👀",
+    "Sniper": "🎯",
+    "Unassigned": "❔",
 }
+
+# Safe fallback for older imports, such as API code that imports EMOJI_MAPPING directly.
+EMOJI_MAPPING = DEFAULT_EMOJI_MAPPING.copy()
+
+EMOJI_SETTING_KEYS = {
+    "Commander": "emoji_commander",
+    "Infantry": "emoji_infantry",
+    "Armour": "emoji_armour",
+    "Recon": "emoji_recon",
+    "Pathfinders": "emoji_pathfinders",
+    "Artillery": "emoji_artillery",
+    "Anti-Tank": "emoji_anti_tank",
+    "Assault": "emoji_assault",
+    "Automatic Rifleman": "emoji_automatic_rifleman",
+    "Engineer": "emoji_engineer",
+    "Machine Gunner": "emoji_machine_gunner",
+    "Medic": "emoji_medic",
+    "Officer": "emoji_officer",
+    "Rifleman": "emoji_rifleman",
+    "Support": "emoji_support",
+    "Tank Commander": "emoji_tank_commander",
+    "Crewman": "emoji_crewman",
+    "Spotter": "emoji_spotter",
+    "Sniper": "emoji_sniper",
+}
+
+
+async def get_emoji_mapping(db: Database) -> Dict[str, str]:
+    """Reads emoji mappings from system_settings, falling back to safe defaults."""
+    mapping = DEFAULT_EMOJI_MAPPING.copy()
+
+    if not db:
+        return mapping
+
+    if hasattr(db, "get_emoji_mapping"):
+        try:
+            return await db.get_emoji_mapping()
+        except Exception as exc:
+            print(f"[emoji] Could not read emoji mapping via Database helper: {exc}")
+
+    for role_name, setting_key in EMOJI_SETTING_KEYS.items():
+        try:
+            value = await db.get_system_setting_value(setting_key)
+        except Exception as exc:
+            print(f"[emoji] Could not read {setting_key} from system_settings: {exc}")
+            value = None
+
+        if value:
+            mapping[role_name] = str(value).strip()
+
+    return mapping
 
 CURATED_TIMEZONES = {
     "USA / Canada": [
@@ -80,23 +131,29 @@ async def get_restricted_roles_config(db: Database) -> dict:
     return restricted_roles
 
 
-# --- FIX: Corrected Logic to check ALLOWED_ROLE_ID_1 through 5 ---
-def has_required_role(member: discord.Member) -> bool:
-    """Checks if a member has one of the roles specified in .env."""
-    allowed_role_ids = set()
-    for i in range(1, 6): # Checks for ALLOWED_ROLE_ID_1 through 5
-        role_id_str = os.getenv(f"ALLOWED_ROLE_ID_{i}")
-        if role_id_str and role_id_str.isdigit():
-            allowed_role_ids.add(int(role_id_str))
+async def has_required_role(db: Database, member: discord.Member) -> bool:
+    """Checks whether a member may manage events using system_settings.allowed_role_ids."""
+    if member.guild_permissions.administrator:
+        return True
 
-    # If no roles are configured, default to allowing Server Administrators
+    raw_value = None
+    try:
+        raw_value = await db.get_system_setting_value("allowed_role_ids")
+    except Exception as exc:
+        print(f"[permissions] Could not read allowed_role_ids from system_settings: {exc}")
+
+    allowed_role_ids = set()
+    for part in str(raw_value or "").split(","):
+        part = part.strip()
+        if part.isdigit():
+            allowed_role_ids.add(int(part))
+
     if not allowed_role_ids:
-        return member.guild_permissions.administrator
+        return False
 
     user_role_ids = {role.id for role in member.roles}
-    
-    # Check if user has an allowed role OR is an administrator
-    return not user_role_ids.isdisjoint(allowed_role_ids) or member.guild_permissions.administrator
+    return bool(user_role_ids.intersection(allowed_role_ids))
+
 
 async def create_event_embed(bot: commands.Bot, event_id: int, db: Database) -> discord.Embed:
     event = await db.get_event_by_id(event_id)
@@ -252,9 +309,10 @@ async def create_event_embed(bot: commands.Bot, event_id: int, db: Database) -> 
 # --- UI Classes ---
 
 class RoleSelect(ui.Select):
-    def __init__(self, db: Database, event_id: int, available_roles: List[str]):
+    def __init__(self, db: Database, event_id: int, available_roles: List[str], emoji_mapping: Dict[str, str]):
         self.db, self.event_id = db, event_id
-        options = [discord.SelectOption(label=r, emoji=EMOJI_MAPPING.get(r, "❔")) for r in available_roles]
+        self.emoji_mapping = emoji_mapping
+        options = [discord.SelectOption(label=r, emoji=self.emoji_mapping.get(r, "❔")) for r in available_roles]
         if not options:
             options.append(discord.SelectOption(label="No roles available for you", value="unassigned"))
 
@@ -313,7 +371,7 @@ class RoleSelect(ui.Select):
         subclass_select.disabled = False
         subclass_select.placeholder = "2. Choose your subclass..."
         if available_subclasses:
-            subclass_select.options = [discord.SelectOption(label=s, emoji=EMOJI_MAPPING.get(s, "❔")) for s in available_subclasses]
+            subclass_select.options = [discord.SelectOption(label=s, emoji=self.view.emoji_mapping.get(s, "❔")) for s in available_subclasses]
         else:
             subclass_select.options = [discord.SelectOption(label="No subclasses available", value="no_subclass_available")]
             subclass_select.placeholder = "No subclasses available for you"
@@ -337,11 +395,12 @@ class SubclassSelect(ui.Select):
         asyncio.create_task(self.view.update_original_embed())
 
 class RoleSelectionView(ui.View):
-    def __init__(self, bot: commands.Bot, db: Database, event_id: int, message_id: int, user: discord.User, available_roles: List[str]):
+    def __init__(self, bot: commands.Bot, db: Database, event_id: int, message_id: int, user: discord.User, available_roles: List[str], emoji_mapping: Dict[str, str]):
         super().__init__(timeout=300)
         self.bot, self.db, self.event_id, self.message_id, self.user, self.role = bot, db, event_id, message_id, user, None
+        self.emoji_mapping = emoji_mapping
         self.subclass_select = SubclassSelect(db, event_id)
-        self.add_item(RoleSelect(db, event_id, available_roles))
+        self.add_item(RoleSelect(db, event_id, available_roles, emoji_mapping))
         self.add_item(self.subclass_select)
 
     async def on_timeout(self):
@@ -447,7 +506,8 @@ class PersistentEventView(ui.View):
                 await self.db.update_signup_role(event['event_id'], i.user.id, "Unassigned", None)
                 await i.followup.send("Accepted! There were no specific roles available for you, so you have been marked as 'Unassigned'.", ephemeral=True)
             else:
-                view = RoleSelectionView(i.client, self.db, event['event_id'], i.message.id, i.user, available_roles)
+                emoji_mapping = await get_emoji_mapping(self.db)
+                view = RoleSelectionView(i.client, self.db, event['event_id'], i.message.id, i.user, available_roles, emoji_mapping)
                 await i.user.send(f"You accepted **{event['title']}**. Select your role:", view=view)
                 await i.followup.send("Check your DMs to select your role!", ephemeral=True)
         except discord.Forbidden:
@@ -512,7 +572,7 @@ class PersistentEventView(ui.View):
     # --- RESTORED BUTTONS FOR EDIT/DELETE ---
     @ui.button(label="Edit", style=discord.ButtonStyle.primary, custom_id="persistent_view:edit_event", row=2)
     async def edit_event_button(self, interaction: discord.Interaction, button: ui.Button):
-        if not has_required_role(interaction.user):
+        if not await has_required_role(self.db, interaction.user):
             return await interaction.response.send_message(
                 "You do not have the required role to edit events.", ephemeral=True
             )
@@ -534,7 +594,7 @@ class PersistentEventView(ui.View):
 
     @ui.button(label="Delete", style=discord.ButtonStyle.danger, custom_id="persistent_view:delete_event", row=2)
     async def delete_event_button(self, interaction: discord.Interaction, button: ui.Button):
-        if not has_required_role(interaction.user):
+        if not await has_required_role(self.db, interaction.user):
             return await interaction.response.send_message(
                 "You do not have the required role to delete events.", ephemeral=True
             )
@@ -1115,7 +1175,7 @@ class EventManagement(commands.Cog):
     @event_group.command(name="create", description="Create a new event via DM.")
     async def create(self, interaction: discord.Interaction):
         # --- FIX: ADDED SECURITY CHECK ---
-        if not has_required_role(interaction.user):
+        if not await has_required_role(self.db, interaction.user):
             return await interaction.response.send_message(
                 "⛔ You do not have permission to create events.",
                 ephemeral=True
@@ -1595,6 +1655,8 @@ class DeleteConversation:
             del self.cog.active_conversations[self.user.id]
 async def setup(bot: commands.Bot):
     """Sets up the event management cog."""
+    global EMOJI_MAPPING
+    EMOJI_MAPPING = await get_emoji_mapping(bot.db)
     cog = EventManagement(bot, bot.db)
     await bot.add_cog(cog)
     bot.add_view(PersistentEventView(bot.db))
