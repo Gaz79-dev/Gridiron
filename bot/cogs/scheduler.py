@@ -47,7 +47,7 @@ class Scheduler(commands.Cog):
     async def cache_player_names(self):
         """Periodically fetches and caches the display names of all active players."""
         print("\n[Scheduler] Running cache_player_names loop...")
-        guild_id_str = os.getenv("GUILD_ID")
+        guild_id_str = await self.db.get_system_setting_value("guild_id")
         if not guild_id_str:
             print("[Name Cache] GUILD_ID not set. Skipping name cache.")
             return
