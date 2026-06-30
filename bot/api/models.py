@@ -116,10 +116,12 @@ class SquadTemplateDefinition(BaseModel):
 class SquadTemplate(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     template_id: int
+    game_id: str = "hll"
     template_name: str
     definitions: List[SquadTemplateDefinition]
 
 class SquadTemplateCreate(BaseModel):
+    game_id: str = "hll"
     template_name: str
     definitions: List[SquadTemplateDefinition]
 
