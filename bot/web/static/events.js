@@ -25,11 +25,12 @@ document.addEventListener('DOMContentLoaded', () => {
     let squadTemplates = [];
     let discordChannels = [];
 
+    // Discord IDs are snowflakes and are larger than JavaScript's safe integer limit.
+    // Keep them as strings in the browser and let the Python API parse them safely.
     const parseRoleIds = (value) => (value || '')
         .split(',')
         .map(v => v.trim())
-        .filter(v => /^\d+$/.test(v))
-        .map(v => parseInt(v, 10));
+        .filter(v => /^\d+$/.test(v));
 
     const populateTimezoneSelect = (selectId) => {
         const select = document.getElementById(selectId);
@@ -381,7 +382,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 event_time: new Date(document.getElementById('create-event-time').value).toISOString(),
                 end_time: new Date(document.getElementById('create-end-time').value).toISOString(),
                 timezone: document.getElementById('create-timezone').value,
-                channel_id: parseInt(document.getElementById('create-channel-id').value, 10),
+                channel_id: document.getElementById('create-channel-id').value,
                 game_id: document.getElementById('create-game-id').value || 'hll',
                 template_id: document.getElementById('create-template-id').value ? parseInt(document.getElementById('create-template-id').value, 10) : null,
                 is_recurring: false,
