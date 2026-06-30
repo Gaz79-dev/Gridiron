@@ -32,6 +32,42 @@ document.addEventListener('DOMContentLoaded', () => {
         .map(v => v.trim())
         .filter(v => /^\d+$/.test(v));
 
+    const DEFAULT_RECREATION_HOURS = {
+        daily: 24,
+        weekly: 168,
+        monthly: 720,
+    };
+
+    const getRecurrenceSettings = (prefix) => {
+        const recurrenceRule = document.getElementById(`${prefix}-recurrence-rule`)?.value || 'none';
+        const isRecurring = recurrenceRule !== 'none';
+        const hoursInput = document.getElementById(`${prefix}-recreation-hours`);
+        const parsedHours = parseInt(hoursInput?.value || '', 10);
+        const recreationHours = Number.isFinite(parsedHours) && parsedHours > 0
+            ? parsedHours
+            : (DEFAULT_RECREATION_HOURS[recurrenceRule] || 168);
+
+        return {
+            is_recurring: isRecurring,
+            recurrence_rule: isRecurring ? recurrenceRule : null,
+            recreation_hours: isRecurring ? recreationHours : null,
+        };
+    };
+
+    const syncRecurrenceControls = (prefix) => {
+        const ruleSelect = document.getElementById(`${prefix}-recurrence-rule`);
+        const hoursInput = document.getElementById(`${prefix}-recreation-hours`);
+        if (!ruleSelect || !hoursInput) return;
+
+        const isRecurring = ruleSelect.value !== 'none';
+        hoursInput.disabled = !isRecurring;
+        hoursInput.classList.toggle('opacity-50', !isRecurring);
+
+        if (isRecurring && (!hoursInput.value || parseInt(hoursInput.value, 10) <= 0)) {
+            hoursInput.value = DEFAULT_RECREATION_HOURS[ruleSelect.value] || 168;
+        }
+    };
+
     const populateTimezoneSelect = (selectId) => {
         const select = document.getElementById(selectId);
         if (!select) return;
@@ -310,8 +346,9 @@ document.addEventListener('DOMContentLoaded', () => {
         populateTimezoneDropdown();
         document.getElementById('edit-timezone').value = event.timezone || 'Europe/London';
 
-        document.getElementById('edit-recurrence-rule').value = event.recurrence_rule || 'weekly';
+        document.getElementById('edit-recurrence-rule').value = event.is_recurring ? (event.recurrence_rule || 'weekly') : 'none';
         document.getElementById('edit-recreation-hours').value = event.recreation_hours || 168;
+        syncRecurrenceControls('edit');
 
         modal.classList.remove('hidden');
     };
@@ -392,6 +429,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const eventTime = new Date(document.getElementById('edit-event-time').value).toISOString();
         const endTime = new Date(document.getElementById('edit-end-time').value).toISOString();
 
+        const recurrenceSettings = getRecurrenceSettings('edit');
         const eventData = {
             title: document.getElementById('edit-title').value,
             description: document.getElementById('edit-description').value,
@@ -400,9 +438,7 @@ document.addEventListener('DOMContentLoaded', () => {
             timezone: document.getElementById('edit-timezone').value,
             game_id: document.getElementById('edit-game-id').value || 'hll',
             template_id: document.getElementById('edit-template-id').value ? parseInt(document.getElementById('edit-template-id').value, 10) : null,
-            is_recurring: editingEventIsRecurring,
-            recurrence_rule: editingEventIsRecurring ? document.getElementById('edit-recurrence-rule').value : null,
-            recreation_hours: editingEventIsRecurring ? parseInt(document.getElementById('edit-recreation-hours').value, 10) : null,
+            ...recurrenceSettings,
             mention_role_ids: [],
             restrict_to_role_ids: []
         };
@@ -434,6 +470,15 @@ document.addEventListener('DOMContentLoaded', () => {
         editGameSelect.addEventListener('change', () => populateEditTemplateSelect(null));
     }
 
+    const createRecurrenceSelect = document.getElementById('create-recurrence-rule');
+    const editRecurrenceSelect = document.getElementById('edit-recurrence-rule');
+    if (createRecurrenceSelect) {
+        createRecurrenceSelect.addEventListener('change', () => syncRecurrenceControls('create'));
+    }
+    if (editRecurrenceSelect) {
+        editRecurrenceSelect.addEventListener('change', () => syncRecurrenceControls('edit'));
+    }
+
     if (createEventForm) {
         createEventForm.addEventListener('submit', async (e) => {
             e.preventDefault();
@@ -442,6 +487,7 @@ document.addEventListener('DOMContentLoaded', () => {
             createEventMessage.textContent = '';
             createEventMessage.className = 'text-sm mt-2 text-gray-400';
 
+            const recurrenceSettings = getRecurrenceSettings('create');
             const payload = {
                 title: document.getElementById('create-title').value.trim(),
                 description: document.getElementById('create-description').value.trim(),
@@ -451,7 +497,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 channel_id: document.getElementById('create-channel-id').value,
                 game_id: document.getElementById('create-game-id').value || 'hll',
                 template_id: document.getElementById('create-template-id').value ? parseInt(document.getElementById('create-template-id').value, 10) : null,
-                is_recurring: false,
+                ...recurrenceSettings,
                 mention_role_ids: parseRoleIds(document.getElementById('create-mention-role-ids').value),
                 restrict_to_role_ids: parseRoleIds(document.getElementById('create-restrict-role-ids').value),
                 post_to_discord: document.getElementById('create-post-to-discord').checked,
@@ -474,7 +520,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 populateTimezoneSelect('create-timezone');
                 populateGameSelect();
                 populateChannelSelect('create-channel-id');
+                syncRecurrenceControls('create');
                 await loadUpcomingEvents();
+                await loadRecurringEvents();
             } catch (error) {
                 createEventMessage.textContent = error.message;
                 createEventMessage.className = 'text-sm mt-2 text-red-400';
@@ -498,6 +546,7 @@ document.addEventListener('DOMContentLoaded', () => {
         populateTimezoneSelect('create-timezone');
         populateGameSelect();
         populateChannelSelect('create-channel-id');
+        syncRecurrenceControls('create');
     }
 
     // --- INITIALIZATION ---
