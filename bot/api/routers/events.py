@@ -39,6 +39,26 @@ def _get_roles_for_game(game_id: str):
     game = get_game_system(game_id or "hll")
     return getattr(game, "ROLES", game.get("roles", ROLES)), getattr(game, "SUBCLASSES", game.get("subclasses", SUBCLASSES))
 
+
+def _normalise_recurrence_payload(payload: Dict) -> Dict:
+    """Keep recurrence data consistent regardless of whether it came from old or new UI code."""
+    recurrence_rule = (payload.get("recurrence_rule") or "none").lower()
+    if recurrence_rule == "none":
+        payload["is_recurring"] = False
+        payload["recurrence_rule"] = None
+        payload["recreation_hours"] = None
+        return payload
+
+    if recurrence_rule not in {"daily", "weekly", "monthly"}:
+        raise HTTPException(status_code=400, detail="recurrence_rule must be none, daily, weekly, or monthly.")
+
+    default_hours = {"daily": 24, "weekly": 168, "monthly": 720}[recurrence_rule]
+    payload["is_recurring"] = True
+    payload["recurrence_rule"] = recurrence_rule
+    payload["recreation_hours"] = int(payload.get("recreation_hours") or default_hours)
+    return payload
+
+
 def _discord_event_components() -> List[Dict]:
     return [
         {
@@ -409,7 +429,7 @@ async def create_event_from_web(
     current_user: User = Depends(auth.get_current_admin_user),
     db: Database = Depends(get_db),
 ):
-    payload = event_data.model_dump()
+    payload = _normalise_recurrence_payload(event_data.model_dump())
 
     template = None
     if payload.get("template_id") is not None:
@@ -497,7 +517,7 @@ async def update_event_details(
     if not existing:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found")
 
-    payload = event_data.model_dump()
+    payload = _normalise_recurrence_payload(event_data.model_dump())
     if payload.get("template_id") is not None:
         template = await db.get_squad_template_by_id(payload["template_id"])
         if not template:
