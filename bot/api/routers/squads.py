@@ -33,8 +33,9 @@ async def get_emojis(db: Database = Depends(get_db)):
         "Support": "📦",
         "Tank Commander": "🚜",
         "Crewman": "⚙️",
-        "SPA Commander": "🎯",
-        "SPA Crewman": "💥",
+        "Artillery Observer": "🎯",
+        "Artillery Support": "💥",
+        "Artillery Engineer": "🛠️",
         "Spotter": "👀",
         "Sniper": "🎯",
     }
