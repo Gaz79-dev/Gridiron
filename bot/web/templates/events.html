@@ -5,26 +5,37 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Gridiron - Event Management</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="/static/ui.css">
 </head>
 <body class="bg-gray-900 text-gray-300 font-sans">
 
-    <header class="bg-gray-800 shadow-lg">
-        <nav class="container mx-auto px-6 py-4 flex justify-between items-center">
-            <div class="flex items-center">
-                <img src="/static/logo.jpg" alt="Gridiron Logo" class="h-8 w-8 mr-3">
-                <h1 class="text-2xl font-bold text-white">Event Management</h1>
-            </div>
-            <div>
-                <a href="/" class="text-gray-300 hover:text-white px-3 py-2 rounded-md text-sm font-medium">Squad Builder</a>
-                <a href="/players" class="text-gray-300 hover:text-white px-3 py-2 rounded-md text-sm font-medium">Players</a>
-                <a href="/stats" class="text-gray-300 hover:text-white px-3 py-2 rounded-md text-sm font-medium">Match Stats</a>
-                <a href="/engagement" class="text-gray-300 hover:text-white px-3 py-2 rounded-md text-sm font-medium">Engagement</a>
-                <a href="/admin" id="admin-link" class="text-gray-300 hover:text-white px-3 py-2 rounded-md text-sm font-medium">Admin</a>
-                <a href="/archive" class="text-gray-300 hover:text-white px-3 py-2 rounded-md text-sm font-medium">Archive</a>
-                <button id="logout-btn" class="text-gray-300 hover:text-white px-3 py-2 rounded-md text-sm font-medium">Logout</button>
+    <header class="gx-shell-header">
+        <nav class="gx-shell-nav">
+            <a href="/" class="gx-brand">
+                <img src="/static/logo.jpg" alt="Gridiron Logo">
+                <span>
+                    <span class="gx-brand-title">Gridiron</span>
+                    <span class="gx-brand-subtitle">Event Command</span>
+                </span>
+            </a>
+            <div class="gx-nav-links">
+                <a href="/">Squad Builder</a>
+                <a href="/events">Events</a>
+                <a href="/engagement">Engagement</a>
+                <a href="/archive">Archive</a>
+                <a href="/players">Players</a>
+                <a href="/stats">Stats</a>
+                <a href="/admin" id="admin-link">Admin</a>
+                <button id="logout-btn" type="button">Logout</button>
             </div>
         </nav>
     </header>
+
+    <section class="gx-page-hero">
+        <div class="gx-page-eyebrow">Gridiron</div>
+        <h1 class="gx-page-title">Events</h1>
+        <p class="gx-page-copy">Create, edit, restore and manage HLL / HLLV events.</p>
+    </section>
 
     <main class="container mx-auto px-6 py-8">
         <div class="mb-4">
@@ -111,6 +122,7 @@
                             <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Game</th>
                             <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Event Time</th>
                             <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Status</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Actions</th>
                         </tr>
                     </thead>
                     <tbody id="upcoming-events-body"></tbody>
@@ -156,9 +168,20 @@
 
     <div id="edit-event-modal" class="hidden fixed inset-0 bg-gray-900 bg-opacity-75 flex items-center justify-center z-50">
         <div class="bg-gray-800 p-8 rounded-lg shadow-xl w-full max-w-lg">
-            <h2 class="text-xl font-semibold mb-4 text-white">Edit Recurring Event Template</h2>
+            <h2 class="text-xl font-semibold mb-4 text-white">Edit Event</h2>
             <form id="edit-event-form" class="space-y-4">
                 <input type="hidden" id="edit-event-id">
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                        <label for="edit-game-id" class="block text-sm font-medium">Game</label>
+                        <select id="edit-game-id" required class="mt-1 block w-full bg-gray-700 border-gray-600 rounded-md p-2"></select>
+                    </div>
+                    <div>
+                        <label for="edit-template-id" class="block text-sm font-medium">Template</label>
+                        <select id="edit-template-id" class="mt-1 block w-full bg-gray-700 border-gray-600 rounded-md p-2"></select>
+                    </div>
+                </div>
                 
                 <div>
                     <label for="edit-title" class="block text-sm font-medium">Title</label>
@@ -211,5 +234,6 @@
 
     <script src="/static/auth.js"></script>
     <script src="/static/events.js"></script>
+    <script src="/static/ui.js"></script>
 </body>
 </html>
