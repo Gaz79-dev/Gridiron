@@ -24,8 +24,8 @@ router = APIRouter(
     dependencies=[Depends(auth.get_current_active_user)],
 )
 
-# Load constants from environment variables
-guild_id = await db.get_system_setting_value("guild_id")
+# Load secret-only constants from environment variables.
+# Guild/server configuration is read from system_settings inside request handlers.
 BOT_TOKEN = os.getenv("DISCORD_TOKEN")
 LOCK_TIMEOUT_MINUTES = 15
 
@@ -292,7 +292,7 @@ async def get_deleted_events_for_restore(db: Database = Depends(get_db)):
     return await db.get_deleted_events()
 
 @router.get("/channels")
-async def get_guild_channels():
+async def get_guild_channels(db: Database = Depends(get_db)):
     guild_id = await db.get_system_setting_value("guild_id")
 
     if not BOT_TOKEN or not guild_id:
