@@ -13,14 +13,14 @@ from bot.api.models import SquadBuildRequest
 CLASS_LIMITS = {
     "Officer": 1, "Medic": 1, "Support": 1, "Anti-Tank": 1,
     "Machine Gunner": 1, "Automatic Rifleman": 1, "Assault": 1, "Engineer": 1,
-    "Spotter": 1, "Sniper": 1, "Tank Commander": 1, "Commander": 1,
-    "Rifleman": 99, "Crewman": 99,
+    "Spotter": 1, "Sniper": 1, "Tank Commander": 1, "Commander": 1, "SPA Commander": 1,
+    "Rifleman": 99, "Crewman": 99, "SPA Crewman": 99,
 }
 
 # The order in which roles should be prioritized when filling squads.
 ROLE_PRIORITY = [
     "Officer", "Support", "Medic", "Anti-Tank", "Machine Gunner", "Automatic Rifleman",
-    "Engineer", "Assault", "Rifleman", "Tank Commander", "Crewman", "Spotter", "Sniper"
+    "Engineer", "Assault", "Rifleman", "Tank Commander", "Crewman", "SPA Commander", "SPA Crewman", "Spotter", "Sniper"
 ]
 
 # --- AI Helper Functions ---
@@ -181,7 +181,7 @@ async def run_ai_draft(db: Database, event_id: int, request: SquadBuildRequest) 
 
             new_squad_members = []
             class_counts = defaultdict(int)
-            squad_size = 6 if definition['squad_type'] == "Infantry" else 3 if definition['squad_type'] == "Armour" else 2
+            squad_size = 6 if definition['squad_type'] == "Infantry" else 3 if definition['squad_type'] in ["Armour", "SPA"] else 2
             
             pool_key = definition.get('source_rsvp_pool', 'Unassigned')
             eligible_players = available_player_pools[pool_key]
@@ -189,6 +189,8 @@ async def run_ai_draft(db: Database, event_id: int, request: SquadBuildRequest) 
             roles_to_fill = ROLE_PRIORITY
             if definition['squad_type'] == "Armour":
                 roles_to_fill = ["Tank Commander", "Crewman"]
+            elif definition['squad_type'] == "SPA":
+                roles_to_fill = ["SPA Commander", "SPA Crewman"]
             elif definition['squad_type'] == "Recon":
                 roles_to_fill = ["Spotter", "Sniper"]
             
