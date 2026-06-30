@@ -24,13 +24,24 @@ document.addEventListener('DOMContentLoaded', () => {
     let gameSystems = [];
     let squadTemplates = [];
     let discordChannels = [];
+    let discordRoles = [];
 
     // Discord IDs are snowflakes and are larger than JavaScript's safe integer limit.
     // Keep them as strings in the browser and let the Python API parse them safely.
-    const parseRoleIds = (value) => (value || '')
-        .split(',')
-        .map(v => v.trim())
-        .filter(v => /^\d+$/.test(v));
+    const getSelectedRoleIds = (selectId) => {
+        const select = document.getElementById(selectId);
+        if (!select) return [];
+        return Array.from(select.selectedOptions).map(option => option.value).filter(value => /^\d+$/.test(value));
+    };
+
+    const setSelectedRoleIds = (selectId, selectedRoleIds = []) => {
+        const select = document.getElementById(selectId);
+        if (!select) return;
+        const selected = new Set((selectedRoleIds || []).map(String));
+        Array.from(select.options).forEach(option => {
+            option.selected = selected.has(String(option.value));
+        });
+    };
 
     const DEFAULT_RECREATION_HOURS = {
         daily: 24,
@@ -104,6 +115,34 @@ document.addEventListener('DOMContentLoaded', () => {
             (optgroup || select).appendChild(new Option(channel.name, channel.id));
         });
     };
+
+    const populateRoleMultiSelect = (selectId, selectedRoleIds = []) => {
+        const select = document.getElementById(selectId);
+        if (!select) return;
+        const selected = new Set((selectedRoleIds || []).map(String));
+        select.innerHTML = '';
+
+        if (!discordRoles.length) {
+            const option = new Option('No Discord roles available', '');
+            option.disabled = true;
+            select.add(option);
+            return;
+        }
+
+        discordRoles.forEach(role => {
+            const option = new Option(role.name, role.id);
+            option.selected = selected.has(String(role.id));
+            select.add(option);
+        });
+    };
+
+    const populateAllRoleMultiSelects = () => {
+        populateRoleMultiSelect('create-mention-role-ids');
+        populateRoleMultiSelect('create-restrict-role-ids');
+        populateRoleMultiSelect('edit-mention-role-ids');
+        populateRoleMultiSelect('edit-restrict-role-ids');
+    };
+
 
     const populateGameSelect = () => {
         const gameSelect = document.getElementById('create-game-id');
@@ -346,6 +385,9 @@ document.addEventListener('DOMContentLoaded', () => {
         populateTimezoneDropdown();
         document.getElementById('edit-timezone').value = event.timezone || 'Europe/London';
 
+        populateRoleMultiSelect('edit-mention-role-ids', event.mention_role_ids || []);
+        populateRoleMultiSelect('edit-restrict-role-ids', event.restrict_to_role_ids || []);
+
         document.getElementById('edit-recurrence-rule').value = event.is_recurring ? (event.recurrence_rule || 'weekly') : 'none';
         document.getElementById('edit-recreation-hours').value = event.recreation_hours || 168;
         syncRecurrenceControls('edit');
@@ -439,8 +481,8 @@ document.addEventListener('DOMContentLoaded', () => {
             game_id: document.getElementById('edit-game-id').value || 'hll',
             template_id: document.getElementById('edit-template-id').value ? parseInt(document.getElementById('edit-template-id').value, 10) : null,
             ...recurrenceSettings,
-            mention_role_ids: [],
-            restrict_to_role_ids: []
+            mention_role_ids: getSelectedRoleIds('edit-mention-role-ids'),
+            restrict_to_role_ids: getSelectedRoleIds('edit-restrict-role-ids')
         };
         
         try {
@@ -498,8 +540,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 game_id: document.getElementById('create-game-id').value || 'hll',
                 template_id: document.getElementById('create-template-id').value ? parseInt(document.getElementById('create-template-id').value, 10) : null,
                 ...recurrenceSettings,
-                mention_role_ids: parseRoleIds(document.getElementById('create-mention-role-ids').value),
-                restrict_to_role_ids: parseRoleIds(document.getElementById('create-restrict-role-ids').value),
+                mention_role_ids: getSelectedRoleIds('create-mention-role-ids'),
+                restrict_to_role_ids: getSelectedRoleIds('create-restrict-role-ids'),
                 post_to_discord: document.getElementById('create-post-to-discord').checked,
             };
 
@@ -520,6 +562,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 populateTimezoneSelect('create-timezone');
                 populateGameSelect();
                 populateChannelSelect('create-channel-id');
+                populateRoleMultiSelect('create-mention-role-ids');
+                populateRoleMultiSelect('create-restrict-role-ids');
                 syncRecurrenceControls('create');
                 await loadUpcomingEvents();
                 await loadRecurringEvents();
@@ -534,18 +578,21 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     async function loadCreateFormData() {
-        const [gamesRes, templatesRes, channelsRes] = await Promise.all([
+        const [gamesRes, templatesRes, channelsRes, rolesRes] = await Promise.all([
             fetch('/api/templates/game-systems', { headers }),
             fetch('/api/templates', { headers }),
             fetch('/api/events/channels', { headers }),
+            fetch('/api/events/roles', { headers }),
         ]);
-        if (!gamesRes.ok || !templatesRes.ok || !channelsRes.ok) throw new Error('Failed to load create event form data.');
+        if (!gamesRes.ok || !templatesRes.ok || !channelsRes.ok || !rolesRes.ok) throw new Error('Failed to load create event form data.');
         gameSystems = await gamesRes.json();
         squadTemplates = await templatesRes.json();
         discordChannels = await channelsRes.json();
+        discordRoles = await rolesRes.json();
         populateTimezoneSelect('create-timezone');
         populateGameSelect();
         populateChannelSelect('create-channel-id');
+        populateAllRoleMultiSelects();
         syncRecurrenceControls('create');
     }
 
