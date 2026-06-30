@@ -21,6 +21,71 @@ document.addEventListener('DOMContentLoaded', () => {
         "Other": ["UTC"]
     };
 
+    let gameSystems = [];
+    let squadTemplates = [];
+    let discordChannels = [];
+
+    const parseRoleIds = (value) => (value || '')
+        .split(',')
+        .map(v => v.trim())
+        .filter(v => /^\d+$/.test(v))
+        .map(v => parseInt(v, 10));
+
+    const populateTimezoneSelect = (selectId) => {
+        const select = document.getElementById(selectId);
+        if (!select) return;
+        select.innerHTML = '';
+        for (const region in CURATED_TIMEZONES) {
+            const optgroup = document.createElement('optgroup');
+            optgroup.label = region;
+            CURATED_TIMEZONES[region].forEach(tz => {
+                const option = document.createElement('option');
+                option.value = tz;
+                option.textContent = tz;
+                optgroup.appendChild(option);
+            });
+            select.appendChild(optgroup);
+        }
+        if ([...select.options].some(o => o.value === 'Europe/London')) select.value = 'Europe/London';
+    };
+
+    const populateChannelSelect = (selectId) => {
+        const select = document.getElementById(selectId);
+        if (!select) return;
+        select.innerHTML = '<option value="">-- Select a Channel --</option>';
+        let currentCategory = null;
+        let optgroup = null;
+        discordChannels.forEach(channel => {
+            if (channel.category !== currentCategory) {
+                currentCategory = channel.category;
+                optgroup = currentCategory ? document.createElement('optgroup') : null;
+                if (optgroup) {
+                    optgroup.label = currentCategory;
+                    select.appendChild(optgroup);
+                }
+            }
+            (optgroup || select).appendChild(new Option(channel.name, channel.id));
+        });
+    };
+
+    const populateGameSelect = () => {
+        const gameSelect = document.getElementById('create-game-id');
+        if (!gameSelect) return;
+        gameSelect.innerHTML = gameSystems.map(game => `<option value="${game.game_id}">${game.display_name}</option>`).join('');
+        populateTemplateSelect();
+    };
+
+    const populateTemplateSelect = () => {
+        const gameSelect = document.getElementById('create-game-id');
+        const templateSelect = document.getElementById('create-template-id');
+        if (!gameSelect || !templateSelect) return;
+        const selectedGame = gameSelect.value || 'hll';
+        const templatesForGame = squadTemplates.filter(t => (t.game_id || 'hll') === selectedGame);
+        templateSelect.innerHTML = '<option value="">-- No Template --</option>';
+        templatesForGame.forEach(template => templateSelect.add(new Option(template.template_name, template.template_id)));
+        if (templatesForGame.length) templateSelect.value = templatesForGame[0].template_id;
+    };
+
     // --- Page sections and buttons ---
     // NEW: Add selectors for the upcoming events view
     const upcomingView = document.getElementById('upcoming-events-view');
@@ -38,6 +103,10 @@ document.addEventListener('DOMContentLoaded', () => {
     const modalCancelBtn = document.getElementById('modal-cancel-btn');
     const editEventForm = document.getElementById('edit-event-form');
     const editEventIdInput = document.getElementById('edit-event-id');
+    const createEventForm = document.getElementById('create-event-form');
+    const createEventBtn = document.getElementById('create-event-btn');
+    const createEventMessage = document.getElementById('create-event-message');
+    const createGameSelect = document.getElementById('create-game-id');
 
     // --- VIEW TOGGLING ---
     // NEW: Add event listener for the upcoming events button and update all listeners
@@ -100,6 +169,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
                 tr.innerHTML = `
                     <td class="px-6 py-4">${event.title}</td>
+                    <td class="px-6 py-4"><span class="text-xs uppercase bg-gray-700 text-gray-300 px-2 py-1 rounded">${event.game_id || 'hll'}</span></td>
                     <td class="px-6 py-4">${eventTime.toLocaleString()}</td>
                     <td class="px-6 py-4">
                         <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${statusClass}">
@@ -292,8 +362,85 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
+
+    if (createGameSelect) {
+        createGameSelect.addEventListener('change', populateTemplateSelect);
+    }
+
+    if (createEventForm) {
+        createEventForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            createEventBtn.disabled = true;
+            createEventBtn.textContent = 'Creating...';
+            createEventMessage.textContent = '';
+            createEventMessage.className = 'text-sm mt-2 text-gray-400';
+
+            const payload = {
+                title: document.getElementById('create-title').value.trim(),
+                description: document.getElementById('create-description').value.trim(),
+                event_time: new Date(document.getElementById('create-event-time').value).toISOString(),
+                end_time: new Date(document.getElementById('create-end-time').value).toISOString(),
+                timezone: document.getElementById('create-timezone').value,
+                channel_id: parseInt(document.getElementById('create-channel-id').value, 10),
+                game_id: document.getElementById('create-game-id').value || 'hll',
+                template_id: document.getElementById('create-template-id').value ? parseInt(document.getElementById('create-template-id').value, 10) : null,
+                is_recurring: false,
+                mention_role_ids: parseRoleIds(document.getElementById('create-mention-role-ids').value),
+                restrict_to_role_ids: parseRoleIds(document.getElementById('create-restrict-role-ids').value),
+                post_to_discord: document.getElementById('create-post-to-discord').checked,
+            };
+
+            try {
+                const response = await fetch('/api/events', {
+                    method: 'POST',
+                    headers: headers,
+                    body: JSON.stringify(payload)
+                });
+                if (!response.ok) {
+                    const errorData = await response.json().catch(() => ({ detail: 'Failed to create event.' }));
+                    throw new Error(errorData.detail || 'Failed to create event.');
+                }
+                const created = await response.json();
+                createEventMessage.textContent = `Created event #${created.event_id} as ${created.game_id}.`;
+                createEventMessage.className = 'text-sm mt-2 text-green-400';
+                createEventForm.reset();
+                populateTimezoneSelect('create-timezone');
+                populateGameSelect();
+                populateChannelSelect('create-channel-id');
+                await loadUpcomingEvents();
+            } catch (error) {
+                createEventMessage.textContent = error.message;
+                createEventMessage.className = 'text-sm mt-2 text-red-400';
+            } finally {
+                createEventBtn.disabled = false;
+                createEventBtn.textContent = 'Create Event';
+            }
+        });
+    }
+
+    async function loadCreateFormData() {
+        const [gamesRes, templatesRes, channelsRes] = await Promise.all([
+            fetch('/api/templates/game-systems', { headers }),
+            fetch('/api/templates', { headers }),
+            fetch('/api/events/channels', { headers }),
+        ]);
+        if (!gamesRes.ok || !templatesRes.ok || !channelsRes.ok) throw new Error('Failed to load create event form data.');
+        gameSystems = await gamesRes.json();
+        squadTemplates = await templatesRes.json();
+        discordChannels = await channelsRes.json();
+        populateTimezoneSelect('create-timezone');
+        populateGameSelect();
+        populateChannelSelect('create-channel-id');
+    }
+
     // --- INITIALIZATION ---
-    // NEW: Load upcoming events on page load
+    loadCreateFormData().catch(error => {
+        if (createEventMessage) {
+            createEventMessage.textContent = error.message;
+            createEventMessage.className = 'text-sm mt-2 text-red-400';
+        }
+        console.error(error);
+    });
     loadUpcomingEvents();
     loadRecurringEvents();
     loadDeletedEvents();
