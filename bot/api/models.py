@@ -45,6 +45,8 @@ class Event(BaseModel):
     title: str
     event_time: datetime
     end_time: Optional[datetime] = None
+    game_id: str = "hll"
+    template_id: Optional[int] = None
 
 class Signup(BaseModel):
     user_id: str
