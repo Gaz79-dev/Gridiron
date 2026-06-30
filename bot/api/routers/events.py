@@ -9,11 +9,12 @@ from typing import List, Optional, Dict
 # Use absolute imports from the 'bot' package root
 from bot.ai import squad_optimizer
 from bot.utils.database import Database, RsvpStatus
+from bot.game_systems.registry import get_game_system
 from bot.game_systems.hll import ROLES, SUBCLASSES
 from bot.api import auth
 from bot.api.dependencies import get_db
 from bot.api.models import (
-    Event, Signup, Squad, SquadBuildRequest, RosterUpdateRequest, 
+    Event, EventCreate, Signup, Squad, SquadBuildRequest, RosterUpdateRequest, 
     SendEmbedRequest, Channel, User, EventLockStatus, EventUpdate, PromoteRequest, SquadReorderRequest,
     TransportEmbedRequest, TransportAssignments  # <--- Added TransportAssignments here
 )
@@ -32,6 +33,60 @@ LOCK_TIMEOUT_MINUTES = 15
 
 
 # --- HELPER FUNCTIONS ---
+
+
+def _get_roles_for_game(game_id: str):
+    game = get_game_system(game_id or "hll")
+    return getattr(game, "ROLES", game.get("roles", ROLES)), getattr(game, "SUBCLASSES", game.get("subclasses", SUBCLASSES))
+
+def _discord_event_components() -> List[Dict]:
+    return [
+        {
+            "type": 1,
+            "components": [
+                {"type": 2, "style": 3, "label": "Accept", "custom_id": "persistent_view:accept"},
+                {"type": 2, "style": 2, "label": "Tentative", "custom_id": "persistent_view:tentative"},
+                {"type": 2, "style": 4, "label": "Decline", "custom_id": "persistent_view:decline"},
+            ],
+        },
+        {
+            "type": 1,
+            "components": [
+                {"type": 2, "style": 1, "label": "Edit", "custom_id": "persistent_view:edit_event"},
+                {"type": 2, "style": 4, "label": "Delete", "custom_id": "persistent_view:delete_event"},
+            ],
+        },
+    ]
+
+def _build_initial_event_embed(event_id: int, event_data: Dict, creator_name: str = "Web UI") -> Dict:
+    start_ts = int(event_data["event_time"].timestamp())
+    end_time = event_data.get("end_time")
+    time_value = f"**Starts:** <t:{start_ts}:F> (<t:{start_ts}:R>)"
+    if end_time:
+        time_value += f"\n**Ends:** <t:{int(end_time.timestamp())}:F>"
+    if event_data.get("timezone"):
+        time_value += f"\nTimezone: {event_data.get('timezone')}"
+
+    description = event_data.get("description") or ""
+    restricted_ids = event_data.get("restrict_to_role_ids") or []
+    if restricted_ids:
+        roles_text = ", ".join(f"<@&{rid}>" for rid in restricted_ids)
+        description = (
+            "**This is a restricted sign-up event.**\n"
+            f"Only members of the following role(s) are permitted to sign-up: {roles_text}\n\n---\n\n"
+            + description
+        )
+
+    return {
+        "title": f"📅 {event_data['title']}",
+        "description": description,
+        "color": 3447003,
+        "fields": [
+            {"name": "Time", "value": time_value, "inline": False},
+            {"name": "Accepted (0)", "value": "\u200b", "inline": False},
+        ],
+        "footer": {"text": f"Event ID: {event_id} | Created by: {creator_name}"},
+    }
 def _create_team_sheet_embeds(request: SendEmbedRequest, event_details: Optional[Dict], is_draft: bool) -> List[Dict]:
     """
     Builds the main team embed and a separate reserves embed, using an efficient layout.
@@ -259,12 +314,14 @@ async def check_event_lock(event_id: int, current_user: User = Depends(auth.get_
 
 @router.post("/{event_id}/promote-tentative", response_model=List[Squad], dependencies=[Depends(check_event_lock)])
 async def promote_tentative_player(event_id: int, request: PromoteRequest, db: Database = Depends(get_db)):
+    event = await db.get_event_by_id(event_id)
+    roles, subclasses_by_role = _get_roles_for_game((event or {}).get('game_id', 'hll'))
     primary_role, subclass_name = None, None
-    for role, subclasses in SUBCLASSES.items():
+    for role, subclasses in subclasses_by_role.items():
         if request.new_role_name in subclasses:
             primary_role, subclass_name = role, request.new_role_name
             break
-    if not primary_role and request.new_role_name in ROLES:
+    if not primary_role and request.new_role_name in roles:
         primary_role = request.new_role_name
     if not primary_role: primary_role = "Unassigned"
 
@@ -279,6 +336,53 @@ async def promote_tentative_player(event_id: int, request: PromoteRequest, db: D
     except Exception as e:
         print(f"Error promoting tentative player: {e}")
         raise HTTPException(status_code=500, detail="Failed to update player status in the database.")
+
+
+@router.post("", response_model=Event, dependencies=[Depends(auth.get_current_admin_user)])
+async def create_event_from_web(
+    event_data: EventCreate,
+    current_user: User = Depends(auth.get_current_admin_user),
+    db: Database = Depends(get_db),
+):
+    payload = event_data.model_dump()
+
+    template = None
+    if payload.get("template_id") is not None:
+        template = await db.get_squad_template_by_id(payload["template_id"])
+        if not template:
+            raise HTTPException(status_code=400, detail="Selected template does not exist.")
+        if template.get("game_id") != payload.get("game_id", "hll"):
+            raise HTTPException(status_code=400, detail="Selected template does not belong to the selected game.")
+
+    guild_id_raw = await db.get_system_setting_value("guild_id")
+    if not guild_id_raw or not str(guild_id_raw).isdigit():
+        raise HTTPException(status_code=500, detail="guild_id is not configured in system settings.")
+    guild_id = int(guild_id_raw)
+
+    event_id = await db.create_event(guild_id, int(payload["channel_id"]), current_user.id, payload)
+
+    if payload.get("post_to_discord", True):
+        if not BOT_TOKEN:
+            raise HTTPException(status_code=500, detail="Discord token is not configured. Event was created but not posted.")
+
+        content = " ".join([f"<@&{rid}>" for rid in payload.get("mention_role_ids", [])])
+        discord_payload = {
+            "content": content,
+            "embeds": [_build_initial_event_embed(event_id, payload, current_user.username)],
+            "components": _discord_event_components(),
+            "allowed_mentions": {"parse": ["roles"]},
+        }
+        url = f"https://discord.com/api/v10/channels/{payload['channel_id']}/messages"
+        async with httpx.AsyncClient() as client:
+            res = await client.post(url, headers={"Authorization": f"Bot {BOT_TOKEN}"}, json=discord_payload)
+        if res.status_code >= 400:
+            print(f"Discord event post failed: {res.status_code} {res.text}")
+            raise HTTPException(status_code=502, detail="Event was created, but Discord rejected the message post.")
+        message = res.json()
+        await db.update_event_message_id(event_id, int(message["id"]))
+
+    created = await db.get_event_by_id(event_id, include_deleted=True)
+    return created
 
 @router.get("", response_model=List[Event])
 async def get_events(db: Database = Depends(get_db)):
@@ -381,6 +485,10 @@ async def get_event_roster_for_web(event_id: int, db: Database = Depends(get_db)
 @router.post("/{event_id}/build-squads", response_model=List[Squad], dependencies=[Depends(check_event_lock)])
 async def build_squads_for_event(event_id: int, request: SquadBuildRequest, db: Database = Depends(get_db)):
     try:
+        event = await db.get_event_by_id(event_id, include_deleted=True)
+        template = await db.get_squad_template_by_id(request.template_id)
+        if event and template and template.get('game_id') != event.get('game_id', 'hll'):
+            raise HTTPException(status_code=400, detail="Selected template does not belong to this event's game.")
         return await squad_optimizer.run_ai_draft(db, event_id, request)
     except Exception as e:
         print(f"Error during AI squad build process: {e}")
