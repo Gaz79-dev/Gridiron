@@ -23,6 +23,26 @@ DEFAULT_SETTINGS = [
     ("role_id_defence", os.getenv("ROLE_ID_DEFENCE", ""), "string", "Restricted Roles", "Defence role ID"),
 
     ("domain", os.getenv("DOMAIN", "gridironbot.co.uk"), "string", "Web", "Public web UI domain"),
+
+    ("emoji_commander", "", "string", "Emoji", "Discord emoji for Commander role", True),
+    ("emoji_infantry", "", "string", "Emoji", "Discord emoji for Infantry role", True),
+    ("emoji_armour", "", "string", "Emoji", "Discord emoji for Armour role", True),
+    ("emoji_recon", "", "string", "Emoji", "Discord emoji for Recon role", True),
+    ("emoji_pathfinders", "", "string", "Emoji", "Discord emoji for Pathfinders role", True),
+    ("emoji_artillery", "", "string", "Emoji", "Discord emoji for Artillery role", True),
+    ("emoji_anti_tank", "", "string", "Emoji", "Discord emoji for Anti-Tank subclass", True),
+    ("emoji_assault", "", "string", "Emoji", "Discord emoji for Assault subclass", True),
+    ("emoji_automatic_rifleman", "", "string", "Emoji", "Discord emoji for Automatic Rifleman subclass", True),
+    ("emoji_engineer", "", "string", "Emoji", "Discord emoji for Engineer subclass", True),
+    ("emoji_machine_gunner", "", "string", "Emoji", "Discord emoji for Machine Gunner subclass", True),
+    ("emoji_medic", "", "string", "Emoji", "Discord emoji for Medic subclass", True),
+    ("emoji_officer", "", "string", "Emoji", "Discord emoji for Officer subclass", True),
+    ("emoji_rifleman", "", "string", "Emoji", "Discord emoji for Rifleman subclass", True),
+    ("emoji_support", "", "string", "Emoji", "Discord emoji for Support subclass", True),
+    ("emoji_tank_commander", "", "string", "Emoji", "Discord emoji for Tank Commander subclass", True),
+    ("emoji_crewman", "", "string", "Emoji", "Discord emoji for Crewman subclass", True),
+    ("emoji_spotter", "", "string", "Emoji", "Discord emoji for Spotter subclass", True),
+    ("emoji_sniper", "", "string", "Emoji", "Discord emoji for Sniper subclass", True),
 ]
 
 
