@@ -13,7 +13,7 @@ import uuid
 
 # Use relative import to go up one level to the 'bot' package root
 from ..utils.database import Database, RsvpStatus
-from ..game_systems.registry import get_game_system, list_game_systems
+from ..game_systems.registry import get_all_game_systems, get_game_system, list_game_systems
 from ..game_systems.hll import DEFAULT_EMOJI_MAPPING, EMOJI_SETTING_KEYS, RESTRICTED_ROLES, ROLES, SUBCLASSES
 from ..services.crcon_client import CRCONClient
 from ..services.config_service import ConfigService
@@ -28,8 +28,16 @@ def get_game_for_event(event: dict):
 
 
 async def get_emoji_mapping(db: Database) -> Dict[str, str]:
-    """Reads emoji mappings from system_settings, falling back to safe defaults."""
-    mapping = DEFAULT_EMOJI_MAPPING.copy()
+    """Reads emoji mappings from system_settings, falling back to all game defaults."""
+    mapping = {}
+    setting_keys = {}
+    for game in get_all_game_systems():
+        mapping.update(game.get('default_emoji_mapping', {}))
+        setting_keys.update(game.get('emoji_setting_keys', {}))
+    if not mapping:
+        mapping = DEFAULT_EMOJI_MAPPING.copy()
+    if not setting_keys:
+        setting_keys = EMOJI_SETTING_KEYS.copy()
 
     if not db:
         return mapping
@@ -40,7 +48,7 @@ async def get_emoji_mapping(db: Database) -> Dict[str, str]:
         except Exception as exc:
             print(f"[emoji] Could not read emoji mapping via Database helper: {exc}")
 
-    for role_name, setting_key in EMOJI_SETTING_KEYS.items():
+    for role_name, setting_key in setting_keys.items():
         try:
             value = await db.get_system_setting_value(setting_key)
         except Exception as exc:
@@ -127,6 +135,9 @@ async def create_event_embed(bot: commands.Bot, event_id: int, db: Database) -> 
         return discord.Embed(title="Error", description="Could not find the server for this event.", color=discord.Color.red())
 
     signups = await db.get_signups_for_event(event_id)
+    game = get_game_for_event(event)
+    roles = getattr(game, 'ROLES', ROLES)
+    subclasses = getattr(game, 'SUBCLASSES', SUBCLASSES)
 
     description = event.get('description', '')
     if restricted_ids := event.get('restrict_to_role_ids'):
