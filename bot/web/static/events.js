@@ -87,6 +87,25 @@ document.addEventListener('DOMContentLoaded', () => {
         if (templatesForGame.length) templateSelect.value = templatesForGame[0].template_id;
     };
 
+    const populateEditGameSelect = (selectedGame = 'hll') => {
+        const gameSelect = document.getElementById('edit-game-id');
+        if (!gameSelect) return;
+        gameSelect.innerHTML = gameSystems.map(game => `<option value="${game.game_id}">${game.display_name}</option>`).join('');
+        gameSelect.value = selectedGame || 'hll';
+        populateEditTemplateSelect(null);
+    };
+
+    const populateEditTemplateSelect = (selectedTemplateId = null) => {
+        const gameSelect = document.getElementById('edit-game-id');
+        const templateSelect = document.getElementById('edit-template-id');
+        if (!gameSelect || !templateSelect) return;
+        const selectedGame = gameSelect.value || 'hll';
+        const templatesForGame = squadTemplates.filter(t => (t.game_id || 'hll') === selectedGame);
+        templateSelect.innerHTML = '<option value="">-- No Template --</option>';
+        templatesForGame.forEach(template => templateSelect.add(new Option(template.template_name, template.template_id)));
+        if (selectedTemplateId) templateSelect.value = String(selectedTemplateId);
+    };
+
     // --- Page sections and buttons ---
     // NEW: Add selectors for the upcoming events view
     const upcomingView = document.getElementById('upcoming-events-view');
@@ -108,6 +127,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const createEventBtn = document.getElementById('create-event-btn');
     const createEventMessage = document.getElementById('create-event-message');
     const createGameSelect = document.getElementById('create-game-id');
+    const editGameSelect = document.getElementById('edit-game-id');
+    let editingEventIsRecurring = false;
 
     // --- VIEW TOGGLING ---
     // NEW: Add event listener for the upcoming events button and update all listeners
@@ -177,11 +198,15 @@ document.addEventListener('DOMContentLoaded', () => {
                             ${statusText}
                         </span>
                     </td>
+                    <td class="px-6 py-4">
+                        <button class="edit-btn gx-action-link gx-action-edit" data-event-id="${event.event_id}">Edit</button>
+                        <button class="delete-btn gx-action-link gx-action-delete" data-event-id="${event.event_id}">Delete</button>
+                    </td>
                 `;
                 upcomingEventsBody.appendChild(tr);
             });
         } catch (error) {
-            upcomingEventsBody.innerHTML = `<tr><td colspan="3" class="text-center p-4 text-red-400">${error.message}</td></tr>`;
+            upcomingEventsBody.innerHTML = `<tr><td colspan="5" class="text-center p-4 text-red-400">${error.message}</td></tr>`;
         }
     };
 
@@ -269,27 +294,57 @@ document.addEventListener('DOMContentLoaded', () => {
         return new Date(d.getTime() - (d.getTimezoneOffset() * 60000)).toISOString().slice(0, 16);
     };
 
+    const openEditEventModal = async (eventId) => {
+        const response = await fetch(`/api/events/${eventId}`, { headers });
+        if (!response.ok) throw new Error('Failed to fetch event details');
+        const event = await response.json();
+
+        editingEventIsRecurring = !!event.is_recurring;
+        editEventIdInput.value = event.event_id;
+        document.getElementById('edit-title').value = event.title;
+        document.getElementById('edit-description').value = event.description || '';
+        document.getElementById('edit-event-time').value = formatDateForInput(event.event_time);
+        document.getElementById('edit-end-time').value = formatDateForInput(event.end_time);
+
+        populateEditGameSelect(event.game_id || 'hll');
+        populateEditTemplateSelect(event.template_id || null);
+
+        populateTimezoneDropdown();
+        document.getElementById('edit-timezone').value = event.timezone || 'Europe/London';
+
+        document.getElementById('edit-recurrence-rule').value = event.recurrence_rule || 'weekly';
+        document.getElementById('edit-recreation-hours').value = event.recreation_hours || 168;
+
+        modal.classList.remove('hidden');
+    };
+
+    upcomingEventsBody.addEventListener('click', async (e) => {
+        if (e.target.classList.contains('edit-btn')) {
+            try {
+                await openEditEventModal(e.target.dataset.eventId);
+            } catch (error) {
+                alert(`Error: ${error.message}`);
+            }
+        }
+        else if (e.target.classList.contains('delete-btn')) {
+            const eventId = e.target.dataset.eventId;
+            if (confirm('Are you sure you want to delete this event? It will move to Deleted Events and can be restored.')) {
+                try {
+                    const response = await fetch(`/api/events/${eventId}`, { method: 'DELETE', headers });
+                    if (!response.ok) throw new Error('Failed to delete event');
+                    await loadUpcomingEvents();
+                    await loadDeletedEvents();
+                } catch (error) {
+                    alert(`Error: ${error.message}`);
+                }
+            }
+        }
+    });
+
     recurringEventsBody.addEventListener('click', async (e) => {
         if (e.target.classList.contains('edit-btn')) {
-            const eventId = e.target.dataset.eventId;
             try {
-                const response = await fetch(`/api/events/${eventId}`, { headers });
-                if (!response.ok) throw new Error('Failed to fetch event details');
-                const event = await response.json();
-
-                editEventIdInput.value = event.event_id;
-                document.getElementById('edit-title').value = event.title;
-                document.getElementById('edit-description').value = event.description || '';
-                document.getElementById('edit-event-time').value = formatDateForInput(event.event_time);
-                document.getElementById('edit-end-time').value = formatDateForInput(event.end_time);
-                
-                populateTimezoneDropdown();
-                document.getElementById('edit-timezone').value = event.timezone;
-                
-                document.getElementById('edit-recurrence-rule').value = event.recurrence_rule || 'weekly';
-                document.getElementById('edit-recreation-hours').value = event.recreation_hours || 168;
-
-                modal.classList.remove('hidden');
+                await openEditEventModal(e.target.dataset.eventId);
             } catch (error) {
                 alert(`Error: ${error.message}`);
             }
@@ -312,12 +367,13 @@ document.addEventListener('DOMContentLoaded', () => {
     deletedEventsBody.addEventListener('click', async (e) => {
         if (e.target.classList.contains('restore-btn')) {
             const eventId = e.target.dataset.eventId;
-            if (confirm('Are you sure you want to restore this event? It will be re-posted to its original channel.')) {
+            if (confirm('Are you sure you want to restore this event? It will become active again in the web UI.')) {
                 try {
                     const response = await fetch(`/api/events/${eventId}/restore`, { method: 'POST', headers });
                     if (!response.ok) throw new Error('Failed to restore event');
                     await loadDeletedEvents();
                     await loadRecurringEvents();
+                    await loadUpcomingEvents();
                 } catch (error) {
                     alert(`Error: ${error.message}`);
                 }
@@ -339,9 +395,11 @@ document.addEventListener('DOMContentLoaded', () => {
             event_time: eventTime,
             end_time: endTime,
             timezone: document.getElementById('edit-timezone').value,
-            is_recurring: true,
-            recurrence_rule: document.getElementById('edit-recurrence-rule').value,
-            recreation_hours: parseInt(document.getElementById('edit-recreation-hours').value, 10),
+            game_id: document.getElementById('edit-game-id').value || 'hll',
+            template_id: document.getElementById('edit-template-id').value ? parseInt(document.getElementById('edit-template-id').value, 10) : null,
+            is_recurring: editingEventIsRecurring,
+            recurrence_rule: editingEventIsRecurring ? document.getElementById('edit-recurrence-rule').value : null,
+            recreation_hours: editingEventIsRecurring ? parseInt(document.getElementById('edit-recreation-hours').value, 10) : null,
             mention_role_ids: [],
             restrict_to_role_ids: []
         };
@@ -357,6 +415,7 @@ document.addEventListener('DOMContentLoaded', () => {
                  throw new Error(errorData.detail || 'Failed to save changes.');
             }
             modal.classList.add('hidden');
+            await loadUpcomingEvents();
             await loadRecurringEvents();
         } catch (error) {
             alert(`Error: ${error.message}`);
@@ -366,6 +425,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (createGameSelect) {
         createGameSelect.addEventListener('change', populateTemplateSelect);
+    }
+
+    if (editGameSelect) {
+        editGameSelect.addEventListener('change', () => populateEditTemplateSelect(null));
     }
 
     if (createEventForm) {
