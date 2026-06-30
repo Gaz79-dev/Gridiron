@@ -3,24 +3,11 @@ Game System Registry
 
 Central registry for all supported game systems.
 
-This file intentionally supports the current game module format where each game
-exports module-level constants such as:
-
-GAME_ID
-DISPLAY_NAME
-ROLES
-SUBCLASSES
-CATEGORIES
-DEFAULT_TEMPLATES
-
-It also returns a wrapper that supports both styles:
-
-game["display_name"]
-game.get("roles")
-game.ROLES
-
-That keeps the existing bot code working while also supporting the newer
-dictionary-style tests and UI work.
+Game modules currently expose module-level constants such as GAME_ID,
+DISPLAY_NAME, ROLES, SUBCLASSES, CATEGORIES, DEFAULT_TEMPLATES, etc.
+This registry normalises those modules into a consistent dictionary-style
+shape for APIs, tests, templates, and future UI work while preserving
+attribute access for older bot code.
 """
 
 from types import ModuleType
@@ -40,9 +27,9 @@ class GameSystem:
     """
     Compatibility wrapper around a game module.
 
-    Allows both:
+    Supports both dictionary-style and attribute-style access:
         game["display_name"]
-        game.get("display_name")
+        game.get("roles")
         game.DISPLAY_NAME
         game.ROLES
     """
@@ -65,10 +52,7 @@ class GameSystem:
 
 
 def _module_to_dict(module: ModuleType) -> dict:
-    """
-    Convert a game module into the standard dictionary shape used by tests,
-    APIs, and future admin UI work.
-    """
+    """Convert a game module into the standard game-system dictionary."""
     return {
         "game_id": getattr(module, "GAME_ID", DEFAULT_GAME_ID),
         "display_name": getattr(module, "DISPLAY_NAME", "Unknown Game"),
@@ -90,7 +74,7 @@ def _module_to_dict(module: ModuleType) -> dict:
 
 def get_game_system(game_id: str | None = None) -> GameSystem:
     """
-    Return a game system wrapper.
+    Return a registered game system.
 
     Unknown or blank game IDs safely fall back to Hell Let Loose for backward
     compatibility with existing events and templates.
@@ -100,26 +84,15 @@ def get_game_system(game_id: str | None = None) -> GameSystem:
 
 
 def get_all_game_systems() -> List[GameSystem]:
-    """
-    Return all registered game systems as compatibility wrappers.
-    """
+    """Return all registered game systems as compatibility wrappers."""
     return [GameSystem(module) for module in _GAME_SYSTEMS.values()]
 
 
 def list_game_systems() -> List[dict]:
-    """
-    Return all supported game systems as plain dictionaries.
-
-    Useful for tests, APIs, dropdowns, and future admin UI selectors.
-    """
-    return [
-        _module_to_dict(module)
-        for module in _GAME_SYSTEMS.values()
-    ]
+    """Return all supported game systems as plain dictionaries."""
+    return [_module_to_dict(module) for module in _GAME_SYSTEMS.values()]
 
 
 def game_exists(game_id: str) -> bool:
-    """
-    Return True if a game system is registered.
-    """
+    """Return True if a game system is registered."""
     return game_id in _GAME_SYSTEMS
