@@ -1036,6 +1036,7 @@ class Database:
                 if old_status is not None and old_status != new_status:
                     print(f"[set_rsvp] Calling _send_rsvp_log_message for user {user_id}")
                     await _send_rsvp_log_message(
+                        db=self,
                         user_id=user_id,
                         event_title=event_and_signup_data['title'],
                         old_status=old_status,
