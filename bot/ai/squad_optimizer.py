@@ -8,7 +8,7 @@ from bot.utils.database import Database, RsvpStatus
 from bot.api.models import SquadBuildRequest
 
 # --- Constants & Configuration ---
-from bot.game_systems.hll import CLASS_LIMITS, ROLE_PRIORITY, SPA_ROLES_TO_FILL, SQUAD_SIZE_BY_TYPE
+from bot.game_systems.registry import get_game_system
 
 
 # --- AI Helper Functions ---
@@ -116,6 +116,18 @@ async def run_ai_draft(db: Database, event_id: int, request: SquadBuildRequest) 
     if not template:
         raise ValueError("Squad template not found.")
 
+    game = get_game_system(template.get('game_id'))
+    class_limits = getattr(game, 'CLASS_LIMITS', {})
+    role_priority = getattr(game, 'ROLE_PRIORITY', [])
+    squad_size_by_type = getattr(game, 'SQUAD_SIZE_BY_TYPE', {})
+    specialist_roles_to_fill = getattr(game, 'SPECIALIST_ROLES_TO_FILL', {})
+    if not specialist_roles_to_fill:
+        specialist_roles_to_fill = {
+            "Armour": ["Tank Commander", "Crewman"],
+            "SPA": getattr(game, 'SPA_ROLES_TO_FILL', []),
+            "Recon": ["Spotter", "Sniper"],
+        }
+
     # 2. CALCULATE THE DESIRED SQUAD LAYOUT IN THE CORRECT ORDER
     desired_squad_names = []
     squad_definitions_map = {}
@@ -169,24 +181,20 @@ async def run_ai_draft(db: Database, event_id: int, request: SquadBuildRequest) 
 
             new_squad_members = []
             class_counts = defaultdict(int)
-            squad_size = SQUAD_SIZE_BY_TYPE.get(definition['squad_type'], 6)
+            squad_size = squad_size_by_type.get(definition['squad_type'], 6)
             
             pool_key = definition.get('source_rsvp_pool', 'Unassigned')
             eligible_players = available_player_pools[pool_key]
             
-            roles_to_fill = ROLE_PRIORITY
-            if definition['squad_type'] == "Armour":
-                roles_to_fill = ["Tank Commander", "Crewman"]
-            elif definition['squad_type'] == "SPA":
-                roles_to_fill = SPA_ROLES_TO_FILL.copy()
-            elif definition['squad_type'] == "Recon":
-                roles_to_fill = ["Spotter", "Sniper"]
+            roles_to_fill = role_priority
+            if definition['squad_type'] in specialist_roles_to_fill:
+                roles_to_fill = specialist_roles_to_fill[definition['squad_type']].copy()
             
             # Fill the squad role-by-role
             for role in roles_to_fill:
                 if len(new_squad_members) >= squad_size: break
                 
-                if class_counts[role] >= CLASS_LIMITS.get(role, 99): continue
+                if class_counts[role] >= class_limits.get(role, 99): continue
 
                 best_player = None
                 highest_score = -1
