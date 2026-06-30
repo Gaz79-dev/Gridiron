@@ -40,13 +40,35 @@ class UserInDB(User):
 
 # --- Event & Squad Models ---
 class Event(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes=True, extra='ignore')
     event_id: int
     title: str
+    description: Optional[str] = None
     event_time: datetime
     end_time: Optional[datetime] = None
+    timezone: Optional[str] = None
+    channel_id: Optional[int] = None
     game_id: str = "hll"
     template_id: Optional[int] = None
+    is_recurring: Optional[bool] = False
+    recurrence_rule: Optional[str] = None
+    recreation_hours: Optional[int] = None
+
+class EventCreate(BaseModel):
+    title: str
+    description: Optional[str] = None
+    event_time: datetime
+    end_time: datetime
+    timezone: str = "UTC"
+    channel_id: int
+    game_id: str = "hll"
+    template_id: Optional[int] = None
+    is_recurring: bool = False
+    recurrence_rule: Optional[str] = None
+    recreation_hours: Optional[int] = None
+    mention_role_ids: List[int] = []
+    restrict_to_role_ids: List[int] = []
+    post_to_discord: bool = True
 
 class Signup(BaseModel):
     user_id: str
@@ -154,6 +176,8 @@ class EventUpdate(BaseModel):
     event_time: datetime
     end_time: datetime
     timezone: str
+    game_id: str = "hll"
+    template_id: Optional[int] = None
     is_recurring: bool
     recurrence_rule: Optional[str] = None
     recreation_hours: Optional[int] = None
