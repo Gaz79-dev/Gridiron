@@ -8,20 +8,8 @@ from bot.utils.database import Database, RsvpStatus
 from bot.api.models import SquadBuildRequest
 
 # --- Constants & Configuration ---
+from bot.game_systems.hll import CLASS_LIMITS, ROLE_PRIORITY, SPA_ROLES_TO_FILL, SQUAD_SIZE_BY_TYPE
 
-# Hell Let Loose class limits per squad
-CLASS_LIMITS = {
-    "Officer": 1, "Medic": 1, "Support": 1, "Anti-Tank": 1,
-    "Machine Gunner": 1, "Automatic Rifleman": 1, "Assault": 1, "Engineer": 1,
-    "Spotter": 1, "Sniper": 1, "Tank Commander": 1, "Commander": 1, "Artillery Observer": 1, "Artillery Support": 1, "Artillery Engineer": 1,
-    "Rifleman": 99, "Crewman": 99,
-}
-
-# The order in which roles should be prioritized when filling squads.
-ROLE_PRIORITY = [
-    "Officer", "Support", "Medic", "Anti-Tank", "Machine Gunner", "Automatic Rifleman",
-    "Engineer", "Assault", "Rifleman", "Tank Commander", "Crewman", "Artillery Observer", "Artillery Support", "Artillery Engineer", "Spotter", "Sniper"
-]
 
 # --- AI Helper Functions ---
 
@@ -181,7 +169,7 @@ async def run_ai_draft(db: Database, event_id: int, request: SquadBuildRequest) 
 
             new_squad_members = []
             class_counts = defaultdict(int)
-            squad_size = 6 if definition['squad_type'] == "Infantry" else 3 if definition['squad_type'] in ["Armour", "SPA"] else 2
+            squad_size = SQUAD_SIZE_BY_TYPE.get(definition['squad_type'], 6)
             
             pool_key = definition.get('source_rsvp_pool', 'Unassigned')
             eligible_players = available_player_pools[pool_key]
@@ -190,7 +178,7 @@ async def run_ai_draft(db: Database, event_id: int, request: SquadBuildRequest) 
             if definition['squad_type'] == "Armour":
                 roles_to_fill = ["Tank Commander", "Crewman"]
             elif definition['squad_type'] == "SPA":
-                roles_to_fill = ["Artillery Observer", "Artillery Support", "Artillery Engineer"]
+                roles_to_fill = SPA_ROLES_TO_FILL.copy()
             elif definition['squad_type'] == "Recon":
                 roles_to_fill = ["Spotter", "Sniper"]
             
