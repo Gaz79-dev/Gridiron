@@ -1,0 +1,149 @@
+"""Hell Let Loose game definition.
+
+This module is the single source of truth for HLL roles, subclasses,
+squad/template options, class limits, role priority, and default emoji settings.
+"""
+
+GAME_ID = "hll"
+DISPLAY_NAME = "Hell Let Loose"
+
+INFANTRY_SUBCLASSES = [
+    "Anti-Tank",
+    "Assault",
+    "Automatic Rifleman",
+    "Engineer",
+    "Machine Gunner",
+    "Medic",
+    "Officer",
+    "Rifleman",
+    "Support",
+]
+
+ROLES = ["Commander", "Infantry", "Armour", "SPA", "Recon", "Pathfinders", "Artillery"]
+
+SUBCLASSES = {
+    "Infantry": INFANTRY_SUBCLASSES,
+    "Armour": ["Tank Commander", "Crewman"],
+    "SPA": ["Artillery Observer", "Artillery Support", "Artillery Engineer"],
+    "Recon": ["Spotter", "Sniper"],
+    "Pathfinders": INFANTRY_SUBCLASSES,
+    "Artillery": INFANTRY_SUBCLASSES,
+}
+
+RESTRICTED_ROLES = [
+    "Commander",
+    "Recon",
+    "Officer",
+    "Tank Commander",
+    "SPA",
+    "Artillery Observer",
+    "Pathfinders",
+    "Artillery",
+]
+
+RSVP_POOLS = ["Commander", "Infantry", "Armour", "SPA", "Recon", "Pathfinders", "Artillery", "Unassigned"]
+SQUAD_TYPES = ["Command", "Infantry", "Armour", "SPA", "Recon", "Artillery", "Reserves"]
+
+SQUAD_SIZE_BY_TYPE = {
+    "Command": 1,
+    "Infantry": 6,
+    "Armour": 3,
+    "SPA": 3,
+    "Recon": 2,
+    "Artillery": 2,
+    "Reserves": 99,
+}
+
+CLASS_LIMITS = {
+    "Officer": 1,
+    "Medic": 1,
+    "Support": 1,
+    "Anti-Tank": 1,
+    "Machine Gunner": 1,
+    "Automatic Rifleman": 1,
+    "Assault": 1,
+    "Engineer": 1,
+    "Spotter": 1,
+    "Sniper": 1,
+    "Tank Commander": 1,
+    "Commander": 1,
+    "Artillery Observer": 1,
+    "Artillery Support": 1,
+    "Artillery Engineer": 1,
+    "Rifleman": 99,
+    "Crewman": 99,
+}
+
+ROLE_PRIORITY = [
+    "Officer",
+    "Support",
+    "Medic",
+    "Anti-Tank",
+    "Machine Gunner",
+    "Automatic Rifleman",
+    "Engineer",
+    "Assault",
+    "Rifleman",
+    "Tank Commander",
+    "Crewman",
+    "Artillery Observer",
+    "Artillery Support",
+    "Artillery Engineer",
+    "Spotter",
+    "Sniper",
+]
+
+SPA_ROLES_TO_FILL = ["Artillery Observer", "Artillery Support", "Artillery Engineer"]
+
+DEFAULT_EMOJI_MAPPING = {
+    "Commander": "⭐",
+    "Infantry": "💂",
+    "Armour": "🛡️",
+    "Recon": "👁️",
+    "Pathfinders": "🧭",
+    "Artillery": "💣",
+    "SPA": "🚚",
+    "Anti-Tank": "🚀",
+    "Assault": "💥",
+    "Automatic Rifleman": "🔥",
+    "Engineer": "🛠️",
+    "Machine Gunner": "💥",
+    "Medic": "➕",
+    "Officer": "🫡",
+    "Rifleman": "👤",
+    "Support": "🔧",
+    "Tank Commander": "🧑‍✈️",
+    "Crewman": "👨‍🔧",
+    "Artillery Observer": "🎯",
+    "Artillery Support": "💥",
+    "Artillery Engineer": "🛠️",
+    "Spotter": "👀",
+    "Sniper": "🎯",
+    "Unassigned": "❔",
+}
+
+EMOJI_SETTING_KEYS = {
+    "Commander": "emoji_commander",
+    "Infantry": "emoji_infantry",
+    "Armour": "emoji_armour",
+    "Recon": "emoji_recon",
+    "Pathfinders": "emoji_pathfinders",
+    "Artillery": "emoji_artillery",
+    "SPA": "emoji_spa",
+    "Anti-Tank": "emoji_anti_tank",
+    "Assault": "emoji_assault",
+    "Automatic Rifleman": "emoji_automatic_rifleman",
+    "Engineer": "emoji_engineer",
+    "Machine Gunner": "emoji_machine_gunner",
+    "Medic": "emoji_medic",
+    "Officer": "emoji_officer",
+    "Rifleman": "emoji_rifleman",
+    "Support": "emoji_support",
+    "Tank Commander": "emoji_tank_commander",
+    "Crewman": "emoji_crewman",
+    "Artillery Observer": "emoji_artillery_observer",
+    "Artillery Support": "emoji_artillery_support",
+    "Artillery Engineer": "emoji_artillery_engineer",
+    "Spotter": "emoji_spotter",
+    "Sniper": "emoji_sniper",
+}
