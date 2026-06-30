@@ -20,7 +20,7 @@ DEFAULT_SETTINGS = [
     ("role_id_pathfinder", os.getenv("ROLE_ID_PATHFINDER", ""), "string", "Restricted Roles", "Role required to sign up for Pathfinders"),
     ("role_id_arty", os.getenv("ROLE_ID_ARTY", ""), "string", "Restricted Roles", "Role required to sign up for Artillery"),
     ("role_id_spa", os.getenv("ROLE_ID_SPA", ""), "string", "Restricted Roles", "Role required to sign up for SPA"),
-    ("role_id_spa_commander", os.getenv("ROLE_ID_SPA_COMMANDER", ""), "string", "Restricted Roles", "Role required to sign up as SPA Commander"),
+    ("role_id_artillery_observer", os.getenv("ROLE_ID_ARTILLERY_OBSERVER", ""), "string", "Restricted Roles", "Role required to sign up as Artillery Observer"),
     ("role_id_attack", os.getenv("ROLE_ID_ATTACK", ""), "string", "Restricted Roles", "Attack role ID"),
     ("role_id_defence", os.getenv("ROLE_ID_DEFENCE", ""), "string", "Restricted Roles", "Defence role ID"),
 
@@ -44,8 +44,9 @@ DEFAULT_SETTINGS = [
     ("emoji_support", "", "string", "Emoji", "Discord emoji for Support subclass", True),
     ("emoji_tank_commander", "", "string", "Emoji", "Discord emoji for Tank Commander subclass", True),
     ("emoji_crewman", "", "string", "Emoji", "Discord emoji for Crewman subclass", True),
-    ("emoji_spa_commander", "", "string", "Emoji", "Discord emoji for SPA Commander subclass", True),
-    ("emoji_spa_crewman", "", "string", "Emoji", "Discord emoji for SPA Crewman subclass", True),
+    ("emoji_artillery_observer", "", "string", "Emoji", "Discord emoji for Artillery Observer subclass", True),
+    ("emoji_artillery_support", "", "string", "Emoji", "Discord emoji for Artillery Support subclass", True),
+    ("emoji_artillery_engineer", "", "string", "Emoji", "Discord emoji for Artillery Engineer subclass", True),
     ("emoji_spotter", "", "string", "Emoji", "Discord emoji for Spotter subclass", True),
     ("emoji_sniper", "", "string", "Emoji", "Discord emoji for Sniper subclass", True),
 ]
