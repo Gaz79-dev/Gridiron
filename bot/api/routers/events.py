@@ -25,7 +25,7 @@ router = APIRouter(
 )
 
 # Load constants from environment variables
-GUILD_ID = os.getenv("GUILD_ID")
+guild_id = await db.get_system_setting_value("guild_id")
 BOT_TOKEN = os.getenv("DISCORD_TOKEN")
 LOCK_TIMEOUT_MINUTES = 15
 
