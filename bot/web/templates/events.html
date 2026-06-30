@@ -33,6 +33,74 @@
             <button id="view-deleted-btn" class="bg-gray-700 text-white font-bold py-2 px-4 rounded-r-md">Deleted Events</button>
         </div>
 
+        <section class="bg-gray-800 p-6 rounded-lg shadow-md mb-8">
+            <h2 class="text-xl font-semibold text-white mb-4">Create New Event</h2>
+            <form id="create-event-form" class="space-y-4">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                        <label for="create-game-id" class="block text-sm font-medium">Game</label>
+                        <select id="create-game-id" required class="mt-1 block w-full bg-gray-700 border-gray-600 rounded-md p-2"></select>
+                    </div>
+                    <div>
+                        <label for="create-template-id" class="block text-sm font-medium">Template</label>
+                        <select id="create-template-id" class="mt-1 block w-full bg-gray-700 border-gray-600 rounded-md p-2"></select>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                        <label for="create-title" class="block text-sm font-medium">Title</label>
+                        <input type="text" id="create-title" required class="mt-1 block w-full bg-gray-700 border-gray-600 rounded-md p-2">
+                    </div>
+                    <div>
+                        <label for="create-channel-id" class="block text-sm font-medium">Discord Channel</label>
+                        <select id="create-channel-id" required class="mt-1 block w-full bg-gray-700 border-gray-600 rounded-md p-2"></select>
+                    </div>
+                </div>
+
+                <div>
+                    <label for="create-description" class="block text-sm font-medium">Description</label>
+                    <textarea id="create-description" rows="4" class="mt-1 block w-full bg-gray-700 border-gray-600 rounded-md p-2"></textarea>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div>
+                        <label for="create-event-time" class="block text-sm font-medium">Start Time</label>
+                        <input type="datetime-local" id="create-event-time" required class="mt-1 block w-full bg-gray-700 border-gray-600 rounded-md p-2">
+                    </div>
+                    <div>
+                        <label for="create-end-time" class="block text-sm font-medium">End Time</label>
+                        <input type="datetime-local" id="create-end-time" required class="mt-1 block w-full bg-gray-700 border-gray-600 rounded-md p-2">
+                    </div>
+                    <div>
+                        <label for="create-timezone" class="block text-sm font-medium">Timezone</label>
+                        <select id="create-timezone" required class="mt-1 block w-full bg-gray-700 border-gray-600 rounded-md p-2"></select>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                        <label for="create-mention-role-ids" class="block text-sm font-medium">Mention Role IDs</label>
+                        <input type="text" id="create-mention-role-ids" placeholder="Comma-separated Discord role IDs" class="mt-1 block w-full bg-gray-700 border-gray-600 rounded-md p-2">
+                    </div>
+                    <div>
+                        <label for="create-restrict-role-ids" class="block text-sm font-medium">Restrict To Role IDs</label>
+                        <input type="text" id="create-restrict-role-ids" placeholder="Comma-separated Discord role IDs" class="mt-1 block w-full bg-gray-700 border-gray-600 rounded-md p-2">
+                    </div>
+                </div>
+
+                <div class="flex items-center gap-3">
+                    <input id="create-post-to-discord" type="checkbox" checked class="h-4 w-4 text-blue-600 bg-gray-700 border-gray-600 rounded">
+                    <label for="create-post-to-discord" class="text-sm">Post signup message to Discord immediately</label>
+                </div>
+
+                <button type="submit" id="create-event-btn" class="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-md">
+                    Create Event
+                </button>
+                <p id="create-event-message" class="text-sm mt-2"></p>
+            </form>
+        </section>
+
         <section id="upcoming-events-view" class="bg-gray-800 p-6 rounded-lg shadow-md">
             <h2 class="text-xl font-semibold text-white mb-4">Upcoming & Recent Events</h2>
             <div class="overflow-x-auto">
@@ -40,6 +108,7 @@
                     <thead>
                         <tr class="border-b border-gray-700">
                             <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Title</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Game</th>
                             <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Event Time</th>
                             <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Status</th>
                         </tr>
