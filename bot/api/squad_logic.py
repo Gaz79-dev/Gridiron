@@ -4,7 +4,7 @@ from bot.utils.database import Database, RsvpStatus
 
 CLASS_LIMITS = {
     "Officer": 1, "Anti-Tank": 1, "Machine Gunner": 1, "Automatic Rifleman": 1,
-    "Spotter": 1, "Sniper": 1, "Tank Commander": 1, "SPA Commander": 1, "Medic": 1, "Support": 1, "Engineer": 1
+    "Spotter": 1, "Sniper": 1, "Tank Commander": 1, "Artillery Observer": 1, "Artillery Support": 1, "Artillery Engineer": 1, "Medic": 1, "Support": 1, "Engineer": 1
 }
 
 def get_squad_iteration(squad_name: str, counts: Dict, convention: str, group_index: int) -> str:
@@ -68,7 +68,7 @@ async def run_web_draft(db: Database, event_id: int, request_data) -> List[Dict]
                      3 if squad['squad_type'] in ["Armour", "SPA"] else \
                      2 if squad['squad_type'] in ["Recon", "Artillery"] else 6
 
-        subclass_priority = ["Officer", "Medic", "Support", "Anti-Tank", "Machine Gunner", "Spotter", "Tank Commander", "Automatic Rifleman", "Engineer", "Assault", "Rifleman", "Crewman", "SPA Commander", "SPA Crewman", "Sniper"]
+        subclass_priority = ["Officer", "Medic", "Support", "Anti-Tank", "Machine Gunner", "Spotter", "Tank Commander", "Automatic Rifleman", "Engineer", "Assault", "Rifleman", "Crewman", "Artillery Observer", "Artillery Support", "Artillery Engineer", "Sniper"]
         player_pool.sort(key=lambda p: subclass_priority.index(p['subclass_name']) if p.get('subclass_name') in subclass_priority else 99)
 
         temp_unplaced_pool = []
