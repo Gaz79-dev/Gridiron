@@ -6,6 +6,7 @@ from bot.api import auth
 from bot.api.dependencies import get_db
 from bot.utils.database import Database
 from bot.api.models import SquadTemplate, SquadTemplateCreate, SquadTemplateDefinition
+from bot.game_systems.registry import list_game_systems
 
 router = APIRouter(
     prefix="/api/templates",
@@ -27,7 +28,8 @@ async def create_squad_template(
         template_id = await db.create_squad_template(
             guild_id,
             template_data.template_name,
-            template_data.definitions
+            template_data.definitions,
+            template_data.game_id
         )
         created_template = await db.get_squad_template_by_id(template_id)
         if not created_template:
@@ -36,6 +38,12 @@ async def create_squad_template(
     except Exception as e:
         print(f"Error creating template: {e}")
         raise HTTPException(status_code=500, detail="An internal error occurred while creating the template.")
+
+
+@router.get("/game-systems")
+async def get_supported_game_systems():
+    """Retrieves supported game systems for template setup."""
+    return list_game_systems()
 
 
 @router.get("", response_model=List[SquadTemplate])
@@ -59,7 +67,8 @@ async def update_squad_template(
         await db.update_squad_template(
             template_id,
             template_data.template_name,
-            template_data.definitions
+            template_data.definitions,
+            template_data.game_id
         )
         updated_template = await db.get_squad_template_by_id(template_id)
         if not updated_template:
