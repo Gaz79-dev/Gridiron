@@ -36,8 +36,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const editingTemplateIdInput = document.getElementById('editing-template-id');
     let allTemplates = [];
 
-    const RSVP_POOLS = ["Commander", "Infantry", "Armour", "Recon", "Pathfinders", "Artillery", "Unassigned"];
-    const SQUAD_TYPES = ["Command", "Infantry", "Armour", "Recon", "Artillery", "Reserves"];
+    const RSVP_POOLS = ["Commander", "Infantry", "Armour", "SPA", "Recon", "Pathfinders", "Artillery", "Unassigned"];
+    const SQUAD_TYPES = ["Command", "Infantry", "Armour", "SPA", "Recon", "Artillery", "Reserves"];
     const settingsList = document.getElementById('settings-list');
 
     function validatePassword(password) {
