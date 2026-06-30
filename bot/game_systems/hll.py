@@ -147,3 +147,17 @@ EMOJI_SETTING_KEYS = {
     "Spotter": "emoji_spotter",
     "Sniper": "emoji_sniper",
 }
+
+
+DEFAULT_TEMPLATES = [
+    {
+        "template_name": "HLL Standard 50v50",
+        "definitions": [
+            {"squad_name": "Command", "default_count": 1, "squad_type": "Command", "naming_convention": "none", "source_rsvp_pool": "Commander"},
+            {"squad_name": "Infantry", "default_count": 6, "squad_type": "Infantry", "naming_convention": "numeric", "source_rsvp_pool": "Infantry"},
+            {"squad_name": "Armour", "default_count": 2, "squad_type": "Armour", "naming_convention": "alpha", "source_rsvp_pool": "Armour"},
+            {"squad_name": "SPA", "default_count": 1, "squad_type": "SPA", "naming_convention": "alpha", "source_rsvp_pool": "SPA"},
+            {"squad_name": "Recon", "default_count": 2, "squad_type": "Recon", "naming_convention": "alpha", "source_rsvp_pool": "Recon"},
+        ],
+    },
+]
