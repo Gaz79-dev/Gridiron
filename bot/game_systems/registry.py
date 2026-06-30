@@ -1,11 +1,13 @@
 """
 Game System Registry
 
-This module provides a central registry for all supported game systems.
+Central registry for all supported game systems.
 Every game module must expose a GAME_SYSTEM dictionary.
 """
 
 from bot.game_systems import hll, hllv
+
+DEFAULT_GAME_ID = "hll"
 
 GAME_SYSTEMS = {
     "hll": hll,
@@ -13,24 +15,34 @@ GAME_SYSTEMS = {
 }
 
 
-def get_game_system(game_id: str = "hll") -> dict:
+def get_game_system(game_id: str = DEFAULT_GAME_ID) -> dict:
     """
-    Returns the GAME_SYSTEM definition for the requested game.
+    Return the GAME_SYSTEM definition for the requested game.
 
     Falls back to HLL if the requested game does not exist.
     """
     module = GAME_SYSTEMS.get(game_id)
 
     if module is None:
-        module = GAME_SYSTEMS["hll"]
+        module = GAME_SYSTEMS[DEFAULT_GAME_ID]
 
     return module.GAME_SYSTEM
 
 
+def get_all_game_systems() -> dict:
+    """
+    Return all registered game systems as dictionaries.
+    """
+    return {
+        game_id: module.GAME_SYSTEM
+        for game_id, module in GAME_SYSTEMS.items()
+    }
+
+
 def list_game_systems() -> list[dict]:
     """
-    Returns a lightweight list of all registered game systems.
-    Useful for populating dropdowns and admin UI.
+    Return a lightweight list of all registered game systems.
+    Useful for admin UI dropdowns and API responses.
     """
     systems = []
 
@@ -46,6 +58,7 @@ def list_game_systems() -> list[dict]:
             "template_model": game.get("template_model", {}),
             "rsvp_pools": game.get("rsvp_pools", []),
             "squad_types": game.get("squad_types", []),
+            "default_templates": game.get("default_templates", []),
         })
 
     return systems
@@ -53,6 +66,6 @@ def list_game_systems() -> list[dict]:
 
 def game_exists(game_id: str) -> bool:
     """
-    Returns True if a game system is registered.
+    Return True if a game system is registered.
     """
     return game_id in GAME_SYSTEMS
