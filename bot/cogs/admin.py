@@ -8,7 +8,7 @@ from typing import List
 from bot.utils.database import Database
 
 # Ensure the GUILD_ID is set, as this is a guild-specific command
-GUILD_ID = os.getenv("GUILD_ID")
+guild_id = await self.db.get_system_setting_value("guild_id")
 if not GUILD_ID:
     raise ValueError("GUILD_ID not set in the environment, which is required for admin commands.")
 
