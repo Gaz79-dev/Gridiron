@@ -1,42 +1,58 @@
-"""Registry for supported game systems."""
+"""
+Game System Registry
 
-from types import ModuleType
-from typing import Dict, List
+This module provides a central registry for all supported game systems.
+Every game module must expose a GAME_SYSTEM dictionary.
+"""
 
-from . import hll, hllv
+from bot.game_systems import hll, hllv
 
-DEFAULT_GAME_ID = "hll"
-
-_GAME_SYSTEMS: Dict[str, ModuleType] = {
-    hll.GAME_ID: hll,
-    hllv.GAME_ID: hllv,
+GAME_SYSTEMS = {
+    "hll": hll,
+    "hllv": hllv,
 }
 
 
-def get_game_system(game_id: str):
+def get_game_system(game_id: str = "hll") -> dict:
+    """
+    Returns the GAME_SYSTEM definition for the requested game.
+
+    Falls back to HLL if the requested game does not exist.
+    """
     module = GAME_SYSTEMS.get(game_id)
-    if not module:
-        return GAME_SYSTEMS["hll"].GAME_SYSTEM
+
+    if module is None:
+        module = GAME_SYSTEMS["hll"]
+
     return module.GAME_SYSTEM
 
 
-def get_all_game_systems() -> List[ModuleType]:
-    """Return all registered game system modules."""
-    return list(_GAME_SYSTEMS.values())
+def list_game_systems() -> list[dict]:
+    """
+    Returns a lightweight list of all registered game systems.
+    Useful for populating dropdowns and admin UI.
+    """
+    systems = []
+
+    for module in GAME_SYSTEMS.values():
+        game = module.GAME_SYSTEM
+
+        systems.append({
+            "game_id": game["game_id"],
+            "display_name": game["display_name"],
+            "roles": game.get("roles", []),
+            "subclasses": game.get("subclasses", {}),
+            "categories": game.get("categories", {}),
+            "template_model": game.get("template_model", {}),
+            "rsvp_pools": game.get("rsvp_pools", []),
+            "squad_types": game.get("squad_types", []),
+        })
+
+    return systems
 
 
-def list_game_systems() -> List[dict]:
-    """Return the supported game systems for future UI/template selectors."""
-    return [
-        {
-            "game_id": game.GAME_ID,
-            "display_name": game.DISPLAY_NAME,
-            "roles": getattr(game, "ROLES", []),
-            "subclasses": getattr(game, "SUBCLASSES", {}),
-            "categories": getattr(game, "CATEGORIES", {}),
-            "template_model": getattr(game, "TEMPLATE_MODEL", {}),
-            "rsvp_pools": getattr(game, "RSVP_POOLS", []),
-            "squad_types": getattr(game, "SQUAD_TYPES", []),
-        }
-        for game in _GAME_SYSTEMS.values()
-    ]
+def game_exists(game_id: str) -> bool:
+    """
+    Returns True if a game system is registered.
+    """
+    return game_id in GAME_SYSTEMS
