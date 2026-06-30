@@ -3,7 +3,8 @@ from typing import Dict, Optional
 
 from bot.api import auth
 from bot.api.dependencies import get_db
-from bot.utils.database import Database, ROLES, SUBCLASSES
+from bot.utils.database import Database
+from bot.game_systems.hll import DEFAULT_EMOJI_MAPPING, EMOJI_SETTING_KEYS, ROLES, SUBCLASSES
 from bot.api.models import RoleUpdateRequest, SquadMoveRequest, StartupTaskUpdateRequest, SquadReorderRequest
 
 router = APIRouter(prefix="/api/squads", tags=["squads"], dependencies=[Depends(auth.get_current_active_user)])
@@ -14,40 +15,15 @@ async def get_all_roles(db: Database = Depends(get_db)):
 
 @router.get("/emojis", response_model=Dict[str, str])
 async def get_emojis(db: Database = Depends(get_db)):
-    defaults = {
-        "Commander": "⭐",
-        "Infantry": "⚔️",
-        "Armour": "🛡️",
-        "Recon": "🔭",
-        "Pathfinders": "🪂",
-        "Artillery": "💥",
-        "SPA": "🚚",
-        "Anti-Tank": "🎯",
-        "Assault": "⚡",
-        "Automatic Rifleman": "🔫",
-        "Engineer": "🔧",
-        "Machine Gunner": "💣",
-        "Medic": "⛑️",
-        "Officer": "🎖️",
-        "Rifleman": "🪖",
-        "Support": "📦",
-        "Tank Commander": "🚜",
-        "Crewman": "⚙️",
-        "Artillery Observer": "🎯",
-        "Artillery Support": "💥",
-        "Artillery Engineer": "🛠️",
-        "Spotter": "👀",
-        "Sniper": "🎯",
-    }
+    mapping = DEFAULT_EMOJI_MAPPING.copy()
 
-    mapping = {}
-
-    for name, default in defaults.items():
-        key = "emoji_" + name.lower().replace(" ", "_").replace("-", "_")
+    for name, key in EMOJI_SETTING_KEYS.items():
         value = await db.get_system_setting_value(key)
-        mapping[name] = value or default
+        if value:
+            mapping[name] = value
 
     return mapping
+
 
 @router.put("/members/{squad_member_id}/role", status_code=204)
 async def update_member_role(squad_member_id: int, request: RoleUpdateRequest, db: Database = Depends(get_db)):
