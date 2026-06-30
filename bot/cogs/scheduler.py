@@ -89,8 +89,8 @@ class Scheduler(commands.Cog):
         Periodically and efficiently syncs the player database with members of a specific role.
         """
         print("\n[Scheduler] Running sync_player_database loop...")
-        guild_id_str = os.getenv("GUILD_ID")
-        role_id_str = os.getenv("PLAYER_SYNC_ROLE_ID")
+        guild_id_str = await self.db.get_system_setting_value("guild_id")
+        role_id_str = await self.db.get_system_setting_value("player_sync_role_id")
 
         if not guild_id_str or not role_id_str:
             print("[Player Sync] GUILD_ID or PLAYER_SYNC_ROLE_ID not set. Skipping sync.")
