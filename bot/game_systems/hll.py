@@ -30,6 +30,62 @@ SUBCLASSES = {
     "Artillery": INFANTRY_SUBCLASSES,
 }
 
+# --- Game hierarchy -------------------------------------------------------
+# HLL now follows the same Game -> Templates -> Squads -> Classes -> Players
+# shape as HLLV. The older ROLES/SUBCLASSES exports remain for compatibility
+# with the current Discord signup and admin UI flows.
+CATEGORIES = {
+    "Commander": {
+        "display_name": "Commander",
+        "classes": [],
+        "squad_type": "Command",
+        "default_squad_size": 1,
+    },
+    "Infantry": {
+        "display_name": "Infantry",
+        "classes": INFANTRY_SUBCLASSES,
+        "squad_type": "Infantry",
+        "default_squad_size": 6,
+    },
+    "Armour": {
+        "display_name": "Armour",
+        "classes": ["Tank Commander", "Crewman"],
+        "squad_type": "Armour",
+        "default_squad_size": 3,
+    },
+    "SPA": {
+        "display_name": "SPA",
+        "classes": ["Artillery Observer", "Artillery Support", "Artillery Engineer"],
+        "squad_type": "SPA",
+        "default_squad_size": 3,
+    },
+    "Recon": {
+        "display_name": "Recon",
+        "classes": ["Spotter", "Sniper"],
+        "squad_type": "Recon",
+        "default_squad_size": 2,
+    },
+    "Pathfinders": {
+        "display_name": "Pathfinders",
+        "classes": INFANTRY_SUBCLASSES,
+        "squad_type": "Infantry",
+        "default_squad_size": 6,
+    },
+    "Artillery": {
+        "display_name": "Artillery",
+        "classes": INFANTRY_SUBCLASSES,
+        "squad_type": "Artillery",
+        "default_squad_size": 2,
+    },
+}
+
+TEMPLATE_MODEL = {
+    "game": GAME_ID,
+    "display_name": DISPLAY_NAME,
+    "hierarchy": "Game -> Templates -> Squads -> Classes -> Players",
+    "categories": CATEGORIES,
+}
+
 RESTRICTED_ROLES = [
     "Commander",
     "Recon",
