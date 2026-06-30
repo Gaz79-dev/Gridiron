@@ -960,19 +960,23 @@ class Database:
             await connection.execute(query, event_id)
             
     async def update_event(self, event_id: int, event_data: dict):
+        existing = await self.get_event_by_id(event_id, include_deleted=True) or {}
         query = """
             UPDATE events SET
                 title = $1, description = $2, event_time = $3, end_time = $4,
-                timezone = $5, is_recurring = $6, recurrence_rule = $7,
-                recreation_hours = $8, mention_role_ids = $9, restrict_to_role_ids = $10,
+                timezone = $5, game_id = $6, template_id = $7, is_recurring = $8, recurrence_rule = $9,
+                recreation_hours = $10, mention_role_ids = $11, restrict_to_role_ids = $12,
                 is_deleted = FALSE, deleted_at = NULL
-            WHERE event_id = $11;
+            WHERE event_id = $13;
         """
         async with self.pool.acquire() as connection:
             await connection.execute(
                 query,
                 event_data['title'], event_data['description'], event_data['event_time'],
-                event_data['end_time'], event_data['timezone'], event_data['is_recurring'],
+                event_data['end_time'], event_data['timezone'],
+                event_data.get('game_id') or existing.get('game_id') or 'hll',
+                event_data.get('template_id', existing.get('template_id')),
+                event_data['is_recurring'],
                 event_data.get('recurrence_rule'), event_data.get('recreation_hours'),
                 event_data.get('mention_role_ids', []), event_data.get('restrict_to_role_ids', []),
                 event_id
