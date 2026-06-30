@@ -13,6 +13,7 @@ import uuid
 
 # Use relative import to go up one level to the 'bot' package root
 from ..utils.database import Database, RsvpStatus
+from ..game_systems.registry import get_game_system, list_game_systems
 from ..game_systems.hll import DEFAULT_EMOJI_MAPPING, EMOJI_SETTING_KEYS, RESTRICTED_ROLES, ROLES, SUBCLASSES
 from ..services.crcon_client import CRCONClient
 from ..services.config_service import ConfigService
@@ -21,6 +22,9 @@ from ..services.config_service import ConfigService
 # --- Constants & Helpers ---
 # Safe fallback for older imports, such as API code that imports EMOJI_MAPPING directly.
 EMOJI_MAPPING = DEFAULT_EMOJI_MAPPING.copy()
+
+def get_game_for_event(event: dict):
+    return get_game_system(event.get('game_id') if event else None)
 
 
 async def get_emoji_mapping(db: Database) -> Dict[str, str]:
@@ -174,7 +178,7 @@ async def create_event_embed(bot: commands.Bot, event_id: int, db: Database) -> 
 
         content_lines = [f"__**{role_name}**__ ({len(signups)})"]
         
-        defined_subclasses = SUBCLASSES.get(role_name, [])
+        defined_subclasses = subclasses.get(role_name, [])
         
         if not defined_subclasses:
             if players := subclass_groups.get("Unassigned"):
@@ -204,8 +208,8 @@ async def create_event_embed(bot: commands.Bot, event_id: int, db: Database) -> 
         chunks.append(current_chunk)
         return chunks
 
-    col1_roles = ["Commander", "Infantry"]
-    col2_roles = ["Armour", "SPA", "Recon", "Pathfinders", "Artillery"]
+    col1_roles = [role for role in ["Commander", "Infantry"] if role in roles]
+    col2_roles = [role for role in roles if role not in col1_roles]
 
     col1_lines = []
     for role_name in col1_roles:
@@ -292,7 +296,12 @@ class RoleSelect(ui.Select):
         self.view.role = selected_role
         subclass_select = self.view.subclass_select
 
-        all_subclasses = SUBCLASSES.get(self.view.role, [])
+        event = await self.db.get_event_by_id(self.event_id)
+        game = get_game_for_event(event)
+        subclasses = getattr(game, 'SUBCLASSES', SUBCLASSES)
+        restricted_roles = getattr(game, 'RESTRICTED_ROLES', RESTRICTED_ROLES)
+
+        all_subclasses = subclasses.get(self.view.role, [])
         if not all_subclasses:
             await self.db.update_signup_role(self.event_id, i.user.id, self.view.role, None)
             await i.response.edit_message(content=f"Your role is confirmed as **{self.view.role}**!", view=self.view)
@@ -300,7 +309,6 @@ class RoleSelect(ui.Select):
             asyncio.create_task(self.view.update_original_embed())
             return
 
-        event = await self.db.get_event_by_id(self.event_id)
         if not event:
             return await i.response.edit_message(content="Error: The event could not be found.", view=None)
 
@@ -318,7 +326,7 @@ class RoleSelect(ui.Select):
 
         available_subclasses = []
         for subclass in all_subclasses:
-            if subclass not in RESTRICTED_ROLES:
+            if subclass not in restricted_roles:
                 available_subclasses.append(subclass)
                 continue
 
@@ -443,13 +451,16 @@ class PersistentEventView(ui.View):
                 )
                 return 
 
+        game = get_game_for_event(event)
+        roles = getattr(game, 'ROLES', ROLES)
+        restricted_roles = getattr(game, 'RESTRICTED_ROLES', RESTRICTED_ROLES)
         restricted_roles_config = await get_restricted_roles_config(self.db)
 
         user_role_ids = {r.id for r in i.user.roles}
         available_roles = []
 
-        for role in ROLES:
-            if role not in RESTRICTED_ROLES:
+        for role in roles:
+            if role not in restricted_roles:
                 available_roles.append(role)
                 continue
 
@@ -710,6 +721,7 @@ class Conversation:
             await self.user.send("Starting event creation. Type `cancel` at any time to stop.")
             steps = [
                 ("What is the title of the event?", self.process_text, 'title'),
+                (None, self.process_game_system, 'game_id'),
                 (None, self.process_timezone, 'timezone'),
                 ("What is the start date and time? Please use `DD-MM-YYYY HH:MM` format.", self.process_start_time, 'event_time'),
                 ("What is the end date and time? Format: `DD-MM-YYYY HH:MM`.", self.process_end_time, 'end_time'),
@@ -827,6 +839,27 @@ class Conversation:
         except asyncio.TimeoutError:
             await self.user.send("Conversation timed out.")
             return False
+
+    async def process_game_system(self, prompt, data_key):
+        systems = list_game_systems()
+        options = "\n".join(
+            f"`{idx}` - {system['display_name']}"
+            for idx, system in enumerate(systems, start=1)
+        )
+        await self.user.send(f"Which game is this event for?\n{options}\n\nReply with a number, or press enter for Hell Let Loose.")
+        try:
+            msg = await self._wait_for_message()
+            if msg.content.lower() == 'cancel': return False
+            choice = msg.content.strip() or "1"
+            selected_index = int(choice) - 1
+            selected = systems[selected_index]
+        except (ValueError, IndexError):
+            await self.user.send("Invalid choice. Defaulting to Hell Let Loose.")
+            selected = systems[0]
+
+        self.data[data_key] = selected['game_id']
+        await self.user.send(f"Game set to **{selected['display_name']}**.")
+        return True
 
     async def process_timezone(self, prompt, data_key):
         flat_tz_list = [tz for region in CURATED_TIMEZONES.values() for tz in region]
