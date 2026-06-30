@@ -19,6 +19,8 @@ DEFAULT_SETTINGS = [
     ("role_id_recon", os.getenv("ROLE_ID_RECON", ""), "string", "Restricted Roles", "Role required to sign up for Recon"),
     ("role_id_pathfinder", os.getenv("ROLE_ID_PATHFINDER", ""), "string", "Restricted Roles", "Role required to sign up for Pathfinders"),
     ("role_id_arty", os.getenv("ROLE_ID_ARTY", ""), "string", "Restricted Roles", "Role required to sign up for Artillery"),
+    ("role_id_spa", os.getenv("ROLE_ID_SPA", ""), "string", "Restricted Roles", "Role required to sign up for SPA"),
+    ("role_id_spa_commander", os.getenv("ROLE_ID_SPA_COMMANDER", ""), "string", "Restricted Roles", "Role required to sign up as SPA Commander"),
     ("role_id_attack", os.getenv("ROLE_ID_ATTACK", ""), "string", "Restricted Roles", "Attack role ID"),
     ("role_id_defence", os.getenv("ROLE_ID_DEFENCE", ""), "string", "Restricted Roles", "Defence role ID"),
 
@@ -30,6 +32,7 @@ DEFAULT_SETTINGS = [
     ("emoji_recon", "", "string", "Emoji", "Discord emoji for Recon role", True),
     ("emoji_pathfinders", "", "string", "Emoji", "Discord emoji for Pathfinders role", True),
     ("emoji_artillery", "", "string", "Emoji", "Discord emoji for Artillery role", True),
+    ("emoji_spa", "", "string", "Emoji", "Discord emoji for SPA role", True),
     ("emoji_anti_tank", "", "string", "Emoji", "Discord emoji for Anti-Tank subclass", True),
     ("emoji_assault", "", "string", "Emoji", "Discord emoji for Assault subclass", True),
     ("emoji_automatic_rifleman", "", "string", "Emoji", "Discord emoji for Automatic Rifleman subclass", True),
@@ -41,6 +44,8 @@ DEFAULT_SETTINGS = [
     ("emoji_support", "", "string", "Emoji", "Discord emoji for Support subclass", True),
     ("emoji_tank_commander", "", "string", "Emoji", "Discord emoji for Tank Commander subclass", True),
     ("emoji_crewman", "", "string", "Emoji", "Discord emoji for Crewman subclass", True),
+    ("emoji_spa_commander", "", "string", "Emoji", "Discord emoji for SPA Commander subclass", True),
+    ("emoji_spa_crewman", "", "string", "Emoji", "Discord emoji for SPA Crewman subclass", True),
     ("emoji_spotter", "", "string", "Emoji", "Discord emoji for Spotter subclass", True),
     ("emoji_sniper", "", "string", "Emoji", "Discord emoji for Sniper subclass", True),
 ]
@@ -50,14 +55,16 @@ async def main():
     db = Database()
     await db.connect()
 
-    for key, value, value_type, category, description in DEFAULT_SETTINGS:
+    for setting in DEFAULT_SETTINGS:
+        key, value, value_type, category, description, *rest = setting
+        editable = rest[0] if rest else True
         await db.upsert_system_setting(
             key=key,
             value=value,
             value_type=value_type,
             category=category,
             description=description,
-            editable=True,
+            editable=editable,
         )
         print(f"Seeded setting: {key}")
 
