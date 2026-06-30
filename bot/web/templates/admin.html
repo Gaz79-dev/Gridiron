@@ -47,9 +47,18 @@
                 <form id="create-template-form" class="space-y-4">
                     <input type="hidden" id="editing-template-id">
                     
-                    <div>
-                        <label for="template-name" class="block text-sm font-medium">Template Name</label>
-                        <input type="text" id="template-name" required class="mt-1 block w-full bg-gray-600 border-gray-500 rounded-md p-2">
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                            <label for="template-game-id" class="block text-sm font-medium">Game</label>
+                            <select id="template-game-id" required class="mt-1 block w-full bg-gray-600 border-gray-500 rounded-md p-2">
+                                <option value="hll">Hell Let Loose</option>
+                                <option value="hllv">Hell Let Loose: Vietnam</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label for="template-name" class="block text-sm font-medium">Template Name</label>
+                            <input type="text" id="template-name" required class="mt-1 block w-full bg-gray-600 border-gray-500 rounded-md p-2">
+                        </div>
                     </div>
                     
                     <div id="template-definitions-container" class="space-y-3"></div>
