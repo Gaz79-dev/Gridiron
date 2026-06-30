@@ -11,6 +11,7 @@ from collections import defaultdict
 # Kept as module-level exports for backward compatibility. The source of truth
 # now lives in bot.game_systems.hll and will be selected via the registry as the
 # bot becomes multi-game aware.
+from bot.game_systems.registry import get_all_game_systems
 from bot.game_systems.hll import (
     DEFAULT_EMOJI_MAPPING,
     EMOJI_SETTING_KEYS,
@@ -183,6 +184,7 @@ class Database:
                         message_id BIGINT,
                         thread_id BIGINT,
                         creator_id BIGINT NOT NULL,
+                        game_id VARCHAR(50) NOT NULL DEFAULT 'hll',
                         title VARCHAR(255) NOT NULL,
                         description TEXT,
                         event_time TIMESTAMP WITH TIME ZONE NOT NULL,
@@ -206,6 +208,7 @@ class Database:
                 await connection.execute("ALTER TABLE events ADD COLUMN IF NOT EXISTS is_deleted BOOLEAN DEFAULT FALSE;")
                 await connection.execute("ALTER TABLE events ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP WITH TIME ZONE;")
                 await connection.execute("ALTER TABLE events ADD COLUMN IF NOT EXISTS match_id TEXT;")
+                await connection.execute("ALTER TABLE events ADD COLUMN IF NOT EXISTS game_id VARCHAR(50) NOT NULL DEFAULT 'hll';")
 
                 await connection.execute("""
                     CREATE TABLE IF NOT EXISTS signups (
@@ -274,10 +277,13 @@ class Database:
                     CREATE TABLE IF NOT EXISTS squad_templates (
                         template_id SERIAL PRIMARY KEY,
                         guild_id BIGINT NOT NULL,
+                        game_id VARCHAR(50) NOT NULL DEFAULT 'hll',
                         template_name VARCHAR(255) NOT NULL
                     );
                 """)
 
+                await connection.execute("ALTER TABLE squad_templates ADD COLUMN IF NOT EXISTS game_id VARCHAR(50) NOT NULL DEFAULT 'hll';")
+                
                 await connection.execute("""
                     CREATE TABLE IF NOT EXISTS squad_template_definitions (
                         definition_id SERIAL PRIMARY KEY,
@@ -290,6 +296,8 @@ class Database:
                     );
                 """)
                 
+                await self._seed_default_squad_templates(connection)
+
                 await connection.execute("""
                     CREATE TABLE IF NOT EXISTS squads (
                         squad_id SERIAL PRIMARY KEY,
@@ -799,22 +807,22 @@ class Database:
     async def create_event(self, guild_id: int, channel_id: int, creator_id: int, event_data: dict) -> int:
         query = """
             INSERT INTO events (
-                guild_id, channel_id, creator_id, title, description, event_time, 
+                guild_id, channel_id, creator_id, game_id, title, description, event_time, 
                 end_time, timezone, is_recurring, recurrence_rule, 
                 recreation_hours, parent_event_id, mention_role_ids, restrict_to_role_ids
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
             RETURNING event_id;
         """
         async with self.pool.acquire() as connection:
             event_id = await connection.fetchval(
                 query,
                 guild_id, channel_id, creator_id,
-                event_data['title'], event_data['description'], event_data['event_time'],
+                event_data.get('game_id', 'hll'), event_data['title'], event_data['description'], event_data['event_time'],
                 event_data['end_time'], event_data['timezone'], event_data['is_recurring'],
-                event_data.get('recurrence_rule'), event_data.get('recreation_hours'),
-                event_data.get('parent_event_id'), event_data.get('mention_role_ids', []),
-                event_data.get('restrict_to_role_ids', [])
+                event_data.get('recurrence_rule'),
+                event_data.get('recreation_hours'), event_data.get('parent_event_id'),
+                event_data.get('mention_role_ids', []), event_data.get('restrict_to_role_ids', [])
             )
             return event_id
 
@@ -1455,12 +1463,55 @@ class Database:
                 )
     
     # --- Squad Template Management ---
-    async def create_squad_template(self, guild_id: int, template_name: str, definitions: List[Any]) -> int:
+    async def _seed_default_squad_templates(self, connection):
+        """Seed built-in templates once per game system. Safe to run on startup."""
+        for game in get_all_game_systems():
+            game_id = getattr(game, "GAME_ID", "hll")
+            for template in getattr(game, "DEFAULT_TEMPLATES", []):
+                template_name = template["template_name"]
+                exists = await connection.fetchval(
+                    """
+                    SELECT template_id
+                    FROM squad_templates
+                    WHERE guild_id = $1 AND game_id = $2 AND template_name = $3
+                    LIMIT 1;
+                    """,
+                    1, game_id, template_name
+                )
+                if exists:
+                    continue
+
+                template_id = await connection.fetchval(
+                    "INSERT INTO squad_templates (guild_id, game_id, template_name) VALUES ($1, $2, $3) RETURNING template_id;",
+                    1, game_id, template_name
+                )
+                def_data = [
+                    (
+                        template_id,
+                        definition["squad_name"],
+                        definition.get("default_count", 0),
+                        definition["squad_type"],
+                        definition.get("naming_convention", "numeric"),
+                        definition["source_rsvp_pool"],
+                    )
+                    for definition in template.get("definitions", [])
+                ]
+                if def_data:
+                    await connection.copy_records_to_table(
+                        'squad_template_definitions',
+                        records=def_data,
+                        columns=[
+                            'template_id', 'squad_name', 'default_count', 'squad_type',
+                            'naming_convention', 'source_rsvp_pool'
+                        ]
+                    )
+
+    async def create_squad_template(self, guild_id: int, template_name: str, definitions: List[Any], game_id: str = "hll") -> int:
         async with self.pool.acquire() as connection:
             async with connection.transaction():
                 template_id = await connection.fetchval(
-                    "INSERT INTO squad_templates (guild_id, template_name) VALUES ($1, $2) RETURNING template_id;",
-                    guild_id, template_name
+                    "INSERT INTO squad_templates (guild_id, game_id, template_name) VALUES ($1, $2, $3) RETURNING template_id;",
+                    guild_id, game_id, template_name
                 )
                 
                 def_data = [(
@@ -1480,7 +1531,7 @@ class Database:
     
     async def get_all_squad_templates(self) -> List[Dict]:
         query = """
-            SELECT t.template_id, t.template_name, json_agg(
+            SELECT t.template_id, t.game_id, t.template_name, json_agg(
                 json_build_object(
                     'definition_id', d.definition_id,
                     'squad_name', d.squad_name,
@@ -1492,8 +1543,8 @@ class Database:
             ) as definitions
             FROM squad_templates t
             LEFT JOIN squad_template_definitions d ON t.template_id = d.template_id
-            GROUP BY t.template_id
-            ORDER BY t.template_name;
+            GROUP BY t.template_id, t.game_id
+            ORDER BY t.game_id, t.template_name;
         """
         async with self.pool.acquire() as connection:
             results = []
@@ -1512,7 +1563,7 @@ class Database:
     
     async def get_squad_template_by_id(self, template_id: int) -> Optional[Dict]:
         query = """
-            SELECT t.template_id, t.template_name, json_agg(
+            SELECT t.template_id, t.game_id, t.template_name, json_agg(
                 json_build_object(
                     'definition_id', d.definition_id,
                     'squad_name', d.squad_name,
@@ -1525,7 +1576,7 @@ class Database:
             FROM squad_templates t
             LEFT JOIN squad_template_definitions d ON t.template_id = d.template_id
             WHERE t.template_id = $1
-            GROUP BY t.template_id;
+            GROUP BY t.template_id, t.game_id;
         """
         async with self.pool.acquire() as connection:
             row = await connection.fetchrow(query, template_id)
@@ -1542,13 +1593,13 @@ class Database:
                 row_dict['definitions'] = []
             return row_dict
     
-    async def update_squad_template(self, template_id: int, template_name: str, definitions: List[Any]):
+    async def update_squad_template(self, template_id: int, template_name: str, definitions: List[Any], game_id: str = "hll"):
         async with self.pool.acquire() as connection:
             async with connection.transaction():
-                # Update the template name
+                # Update the template name and game system
                 await connection.execute(
-                    "UPDATE squad_templates SET template_name = $1 WHERE template_id = $2;",
-                    template_name, template_id
+                    "UPDATE squad_templates SET template_name = $1, game_id = $2 WHERE template_id = $3;",
+                    template_name, game_id, template_id
                 )
                 # Delete old definitions
                 await connection.execute(
