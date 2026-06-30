@@ -25,6 +25,7 @@ DEFAULT_EMOJI_MAPPING = {
     "Recon": "👁️",
     "Pathfinders": "🧭",
     "Artillery": "💣",
+    "SPA": "🚚",
     "Anti-Tank": "🚀",
     "Assault": "💥",
     "Automatic Rifleman": "🔥",
@@ -36,6 +37,8 @@ DEFAULT_EMOJI_MAPPING = {
     "Support": "🔧",
     "Tank Commander": "🧑‍✈️",
     "Crewman": "👨‍🔧",
+    "SPA Commander": "🎯",
+    "SPA Crewman": "💥",
     "Spotter": "👀",
     "Sniper": "🎯",
     "Unassigned": "❔",
@@ -51,6 +54,7 @@ EMOJI_SETTING_KEYS = {
     "Recon": "emoji_recon",
     "Pathfinders": "emoji_pathfinders",
     "Artillery": "emoji_artillery",
+    "SPA": "emoji_spa",
     "Anti-Tank": "emoji_anti_tank",
     "Assault": "emoji_assault",
     "Automatic Rifleman": "emoji_automatic_rifleman",
@@ -62,6 +66,8 @@ EMOJI_SETTING_KEYS = {
     "Support": "emoji_support",
     "Tank Commander": "emoji_tank_commander",
     "Crewman": "emoji_crewman",
+    "SPA Commander": "emoji_spa_commander",
+    "SPA Crewman": "emoji_spa_crewman",
     "Spotter": "emoji_spotter",
     "Sniper": "emoji_sniper",
 }
@@ -117,6 +123,8 @@ async def get_restricted_roles_config(db: Database) -> dict:
         "Officer": "role_id_officer",
         "Recon": "role_id_recon",
         "Tank Commander": "role_id_tank_commander",
+        "SPA": "role_id_spa",
+        "SPA Commander": "role_id_spa_commander",
         "Pathfinders": "role_id_pathfinder",
         "Artillery": "role_id_arty",
     }
@@ -247,7 +255,7 @@ async def create_event_embed(bot: commands.Bot, event_id: int, db: Database) -> 
         return chunks
 
     col1_roles = ["Commander", "Infantry"]
-    col2_roles = ["Armour", "Recon", "Pathfinders", "Artillery"]
+    col2_roles = ["Armour", "SPA", "Recon", "Pathfinders", "Artillery"]
 
     col1_lines = []
     for role_name in col1_roles:
