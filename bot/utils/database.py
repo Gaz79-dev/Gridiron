@@ -8,18 +8,17 @@ import uuid
 from collections import defaultdict
 
 # Static Definitions
-INFANTRY_SUBCLASSES = ["Anti-Tank", "Assault", "Automatic Rifleman", "Engineer", "Machine Gunner", "Medic", "Officer", "Rifleman", "Support"]
-
-ROLES = ["Commander", "Infantry", "Armour", "SPA", "Recon", "Pathfinders", "Artillery"]
-SUBCLASSES = {
-    "Infantry": INFANTRY_SUBCLASSES,
-    "Armour": ["Tank Commander", "Crewman"],
-    "SPA": ["Artillery Observer", "Artillery Support", "Artillery Engineer"],
-    "Recon": ["Spotter", "Sniper"],
-    "Pathfinders": INFANTRY_SUBCLASSES,
-    "Artillery": INFANTRY_SUBCLASSES,
-}
-RESTRICTED_ROLES = ["Commander", "Recon", "Officer", "Tank Commander", "SPA", "Artillery Observer", "Pathfinders", "Artillery"]
+# Kept as module-level exports for backward compatibility. The source of truth
+# now lives in bot.game_systems.hll and will be selected via the registry as the
+# bot becomes multi-game aware.
+from bot.game_systems.hll import (
+    DEFAULT_EMOJI_MAPPING,
+    EMOJI_SETTING_KEYS,
+    INFANTRY_SUBCLASSES,
+    RESTRICTED_ROLES,
+    ROLES,
+    SUBCLASSES,
+)
 
 class RsvpStatus:
     ACCEPTED = "Accepted"
@@ -2001,64 +2000,13 @@ class Database:
     
     
     async def get_emoji_mapping(self) -> Dict[str, str]:
-        """Returns role/class emoji settings with safe defaults."""
-        defaults = {
-            "Commander": "⭐",
-            "Infantry": "💂",
-            "Armour": "🛡️",
-            "Recon": "👁️",
-            "Pathfinders": "🧭",
-            "Artillery": "💣",
-            "SPA": "🚚",
-            "Anti-Tank": "🚀",
-            "Assault": "💥",
-            "Automatic Rifleman": "🔥",
-            "Engineer": "🛠️",
-            "Machine Gunner": "💥",
-            "Medic": "➕",
-            "Officer": "🫡",
-            "Rifleman": "👤",
-            "Support": "🔧",
-            "Tank Commander": "🧑‍✈️",
-            "Crewman": "👨‍🔧",
-            "Artillery Observer": "🎯",
-            "Artillery Support": "💥",
-            "Artillery Engineer": "🛠️",
-            "Spotter": "👀",
-            "Sniper": "🎯",
-            "Unassigned": "❔",
-        }
-
-        setting_keys = {
-            "Commander": "emoji_commander",
-            "Infantry": "emoji_infantry",
-            "Armour": "emoji_armour",
-            "Recon": "emoji_recon",
-            "Pathfinders": "emoji_pathfinders",
-            "Artillery": "emoji_artillery",
-            "SPA": "emoji_spa",
-            "Anti-Tank": "emoji_anti_tank",
-            "Assault": "emoji_assault",
-            "Automatic Rifleman": "emoji_automatic_rifleman",
-            "Engineer": "emoji_engineer",
-            "Machine Gunner": "emoji_machine_gunner",
-            "Medic": "emoji_medic",
-            "Officer": "emoji_officer",
-            "Rifleman": "emoji_rifleman",
-            "Support": "emoji_support",
-            "Tank Commander": "emoji_tank_commander",
-            "Crewman": "emoji_crewman",
-            "Artillery Observer": "emoji_artillery_observer",
-            "Artillery Support": "emoji_artillery_support",
-            "Artillery Engineer": "emoji_artillery_engineer",
-            "Spotter": "emoji_spotter",
-            "Sniper": "emoji_sniper",
-        }
+        """Returns role/class emoji settings with safe defaults from the game definition."""
+        defaults = DEFAULT_EMOJI_MAPPING.copy()
 
         rows = await self.get_system_settings()
         values_by_key = {row["setting_key"]: row["setting_value"] for row in rows}
 
-        for role_name, setting_key in setting_keys.items():
+        for role_name, setting_key in EMOJI_SETTING_KEYS.items():
             value = values_by_key.get(setting_key)
             if value:
                 defaults[role_name] = str(value).strip()
