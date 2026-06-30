@@ -91,12 +91,34 @@
 
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
-                        <label for="create-mention-role-ids" class="block text-sm font-medium">Mention Role IDs</label>
-                        <input type="text" id="create-mention-role-ids" placeholder="Comma-separated Discord role IDs" class="mt-1 block w-full bg-gray-700 border-gray-600 rounded-md p-2">
+                        <label for="create-mention-role-ids" class="block text-sm font-medium">Mention Roles</label>
+                        <select id="create-mention-role-ids" multiple size="6" class="mt-1 block w-full bg-gray-700 border-gray-600 rounded-md p-2"></select>
+                        <p class="text-xs text-gray-500 mt-1">Hold Ctrl/Cmd to select multiple roles. These roles will be mentioned in the Discord signup post.</p>
                     </div>
                     <div>
-                        <label for="create-restrict-role-ids" class="block text-sm font-medium">Restrict To Role IDs</label>
-                        <input type="text" id="create-restrict-role-ids" placeholder="Comma-separated Discord role IDs" class="mt-1 block w-full bg-gray-700 border-gray-600 rounded-md p-2">
+                        <label for="create-restrict-role-ids" class="block text-sm font-medium">Restrict Signup To Roles</label>
+                        <select id="create-restrict-role-ids" multiple size="6" class="mt-1 block w-full bg-gray-700 border-gray-600 rounded-md p-2"></select>
+                        <p class="text-xs text-gray-500 mt-1">Optional. Only members with one of these roles can sign up.</p>
+                    </div>
+                </div>
+
+                <div class="border border-gray-700 rounded-lg p-4 bg-gray-900/40">
+                    <h3 class="text-lg font-semibold text-white mb-3">Recurring Event Options</h3>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                            <label for="create-recurrence-rule" class="block text-sm font-medium">Recurrence</label>
+                            <select id="create-recurrence-rule" class="mt-1 block w-full bg-gray-700 border-gray-600 rounded-md p-2">
+                                <option value="none">None</option>
+                                <option value="daily">Daily</option>
+                                <option value="weekly">Weekly</option>
+                                <option value="monthly">Monthly</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label for="create-recreation-hours" class="block text-sm font-medium">Re-create Hours Before Event</label>
+                            <input type="number" id="create-recreation-hours" min="1" value="168" class="mt-1 block w-full bg-gray-700 border-gray-600 rounded-md p-2" disabled>
+                            <p class="text-xs text-gray-500 mt-1">Only used when recurrence is not None.</p>
+                        </div>
                     </div>
                 </div>
 
@@ -167,7 +189,7 @@
     </main>
 
     <div id="edit-event-modal" class="hidden fixed inset-0 bg-gray-900 bg-opacity-75 flex items-center justify-center z-50">
-        <div class="bg-gray-800 p-8 rounded-lg shadow-xl w-full max-w-lg">
+        <div class="bg-gray-800 p-8 rounded-lg shadow-xl w-full max-w-3xl max-h-[90vh] overflow-y-auto">
             <h2 class="text-xl font-semibold mb-4 text-white">Edit Event</h2>
             <form id="edit-event-form" class="space-y-4">
                 <input type="hidden" id="edit-event-id">
@@ -211,16 +233,33 @@
 
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
-                        <label for="edit-recurrence-rule" class="block text-sm font-medium">Recurrence Rule</label>
-                        <select id="edit-recurrence-rule" class="mt-1 block w-full bg-gray-700 border-gray-600 rounded-md p-2">
-                            <option value="daily">Daily</option>
-                            <option value="weekly">Weekly</option>
-                            <option value="monthly">Monthly</option>
-                        </select>
+                        <label for="edit-mention-role-ids" class="block text-sm font-medium">Mention Roles</label>
+                        <select id="edit-mention-role-ids" multiple size="6" class="mt-1 block w-full bg-gray-700 border-gray-600 rounded-md p-2"></select>
+                        <p class="text-xs text-gray-500 mt-1">Hold Ctrl/Cmd to select multiple roles.</p>
                     </div>
                     <div>
-                        <label for="edit-recreation-hours" class="block text-sm font-medium">Re-creation Hours Before Event</label>
-                        <input type="number" id="edit-recreation-hours" class="mt-1 block w-full bg-gray-700 border-gray-600 rounded-md p-2">
+                        <label for="edit-restrict-role-ids" class="block text-sm font-medium">Restrict Signup To Roles</label>
+                        <select id="edit-restrict-role-ids" multiple size="6" class="mt-1 block w-full bg-gray-700 border-gray-600 rounded-md p-2"></select>
+                    </div>
+                </div>
+
+                <div class="border border-gray-700 rounded-lg p-4 bg-gray-900/40">
+                    <h3 class="text-lg font-semibold text-white mb-3">Recurring Event Options</h3>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                            <label for="edit-recurrence-rule" class="block text-sm font-medium">Recurrence</label>
+                            <select id="edit-recurrence-rule" class="mt-1 block w-full bg-gray-700 border-gray-600 rounded-md p-2">
+                                <option value="none">None</option>
+                                <option value="daily">Daily</option>
+                                <option value="weekly">Weekly</option>
+                                <option value="monthly">Monthly</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label for="edit-recreation-hours" class="block text-sm font-medium">Re-creation Hours Before Event</label>
+                            <input type="number" id="edit-recreation-hours" min="1" class="mt-1 block w-full bg-gray-700 border-gray-600 rounded-md p-2">
+                            <p class="text-xs text-gray-500 mt-1">Only used when recurrence is not None.</p>
+                        </div>
                     </div>
                 </div>
 
