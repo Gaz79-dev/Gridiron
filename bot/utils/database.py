@@ -14,12 +14,12 @@ ROLES = ["Commander", "Infantry", "Armour", "SPA", "Recon", "Pathfinders", "Arti
 SUBCLASSES = {
     "Infantry": INFANTRY_SUBCLASSES,
     "Armour": ["Tank Commander", "Crewman"],
-    "SPA": ["SPA Commander", "SPA Crewman"],
+    "SPA": ["Artillery Observer", "Artillery Support", "Artillery Engineer"],
     "Recon": ["Spotter", "Sniper"],
     "Pathfinders": INFANTRY_SUBCLASSES,
     "Artillery": INFANTRY_SUBCLASSES,
 }
-RESTRICTED_ROLES = ["Commander", "Recon", "Officer", "Tank Commander", "SPA", "SPA Commander", "Pathfinders", "Artillery"]
+RESTRICTED_ROLES = ["Commander", "Recon", "Officer", "Tank Commander", "SPA", "Artillery Observer", "Pathfinders", "Artillery"]
 
 class RsvpStatus:
     ACCEPTED = "Accepted"
@@ -168,8 +168,9 @@ class Database:
                         ('emoji_support', '🔧', 'string', 'Emoji', 'Emoji used for Support.', TRUE),
                         ('emoji_tank_commander', '🧑‍✈️', 'string', 'Emoji', 'Emoji used for Tank Commander.', TRUE),
                         ('emoji_crewman', '👨‍🔧', 'string', 'Emoji', 'Emoji used for Crewman.', TRUE),
-                        ('emoji_spa_commander', '🎯', 'string', 'Emoji', 'Emoji used for SPA Commander.', TRUE),
-                        ('emoji_spa_crewman', '💥', 'string', 'Emoji', 'Emoji used for SPA Crewman.', TRUE),
+                        ('emoji_artillery_observer', '🎯', 'string', 'Emoji', 'Emoji used for Artillery Observer.', TRUE),
+                        ('emoji_artillery_support', '💥', 'string', 'Emoji', 'Emoji used for Artillery Support.', TRUE),
+                        ('emoji_artillery_engineer', '🛠️', 'string', 'Emoji', 'Emoji used for Artillery Engineer.', TRUE),
                         ('emoji_spotter', '👀', 'string', 'Emoji', 'Emoji used for Spotter.', TRUE),
                         ('emoji_sniper', '🎯', 'string', 'Emoji', 'Emoji used for Sniper.', TRUE)
                     ON CONFLICT (setting_key) DO NOTHING;
@@ -2020,8 +2021,9 @@ class Database:
             "Support": "🔧",
             "Tank Commander": "🧑‍✈️",
             "Crewman": "👨‍🔧",
-            "SPA Commander": "🎯",
-            "SPA Crewman": "💥",
+            "Artillery Observer": "🎯",
+            "Artillery Support": "💥",
+            "Artillery Engineer": "🛠️",
             "Spotter": "👀",
             "Sniper": "🎯",
             "Unassigned": "❔",
@@ -2046,8 +2048,9 @@ class Database:
             "Support": "emoji_support",
             "Tank Commander": "emoji_tank_commander",
             "Crewman": "emoji_crewman",
-            "SPA Commander": "emoji_spa_commander",
-            "SPA Crewman": "emoji_spa_crewman",
+            "Artillery Observer": "emoji_artillery_observer",
+            "Artillery Support": "emoji_artillery_support",
+            "Artillery Engineer": "emoji_artillery_engineer",
             "Spotter": "emoji_spotter",
             "Sniper": "emoji_sniper",
         }
