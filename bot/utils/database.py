@@ -8,15 +8,18 @@ import uuid
 from collections import defaultdict
 
 # Static Definitions
-ROLES = ["Commander", "Infantry", "Armour", "Recon", "Pathfinders", "Artillery"]
+INFANTRY_SUBCLASSES = ["Anti-Tank", "Assault", "Automatic Rifleman", "Engineer", "Machine Gunner", "Medic", "Officer", "Rifleman", "Support"]
+
+ROLES = ["Commander", "Infantry", "Armour", "SPA", "Recon", "Pathfinders", "Artillery"]
 SUBCLASSES = {
-    "Infantry": ["Anti-Tank", "Assault", "Automatic Rifleman", "Engineer", "Machine Gunner", "Medic", "Officer", "Rifleman", "Support"],
+    "Infantry": INFANTRY_SUBCLASSES,
     "Armour": ["Tank Commander", "Crewman"],
+    "SPA": ["SPA Commander", "SPA Crewman"],
     "Recon": ["Spotter", "Sniper"],
-    "Pathfinders": ["Anti-Tank", "Assault", "Automatic Rifleman", "Engineer", "Machine Gunner", "Medic", "Officer", "Rifleman", "Support"],
-    "Artillery": ["Anti-Tank", "Assault", "Automatic Rifleman", "Engineer", "Machine Gunner", "Medic", "Officer", "Rifleman", "Support"]
+    "Pathfinders": INFANTRY_SUBCLASSES,
+    "Artillery": INFANTRY_SUBCLASSES,
 }
-RESTRICTED_ROLES = ["Commander", "Recon", "Officer", "Tank Commander", "Pathfinders", "Artillery"]
+RESTRICTED_ROLES = ["Commander", "Recon", "Officer", "Tank Commander", "SPA", "SPA Commander", "Pathfinders", "Artillery"]
 
 class RsvpStatus:
     ACCEPTED = "Accepted"
@@ -153,6 +156,7 @@ class Database:
                         ('emoji_recon', '👁️', 'string', 'Emoji', 'Emoji used for Recon.', TRUE),
                         ('emoji_pathfinders', '🧭', 'string', 'Emoji', 'Emoji used for Pathfinders.', TRUE),
                         ('emoji_artillery', '💣', 'string', 'Emoji', 'Emoji used for Artillery.', TRUE),
+                        ('emoji_spa', '🚚', 'string', 'Emoji', 'Emoji used for SPA.', TRUE),
                         ('emoji_anti_tank', '🚀', 'string', 'Emoji', 'Emoji used for Anti-Tank.', TRUE),
                         ('emoji_assault', '💥', 'string', 'Emoji', 'Emoji used for Assault.', TRUE),
                         ('emoji_automatic_rifleman', '🔥', 'string', 'Emoji', 'Emoji used for Automatic Rifleman.', TRUE),
@@ -164,6 +168,8 @@ class Database:
                         ('emoji_support', '🔧', 'string', 'Emoji', 'Emoji used for Support.', TRUE),
                         ('emoji_tank_commander', '🧑‍✈️', 'string', 'Emoji', 'Emoji used for Tank Commander.', TRUE),
                         ('emoji_crewman', '👨‍🔧', 'string', 'Emoji', 'Emoji used for Crewman.', TRUE),
+                        ('emoji_spa_commander', '🎯', 'string', 'Emoji', 'Emoji used for SPA Commander.', TRUE),
+                        ('emoji_spa_crewman', '💥', 'string', 'Emoji', 'Emoji used for SPA Crewman.', TRUE),
                         ('emoji_spotter', '👀', 'string', 'Emoji', 'Emoji used for Spotter.', TRUE),
                         ('emoji_sniper', '🎯', 'string', 'Emoji', 'Emoji used for Sniper.', TRUE)
                     ON CONFLICT (setting_key) DO NOTHING;
@@ -2002,6 +2008,7 @@ class Database:
             "Recon": "👁️",
             "Pathfinders": "🧭",
             "Artillery": "💣",
+            "SPA": "🚚",
             "Anti-Tank": "🚀",
             "Assault": "💥",
             "Automatic Rifleman": "🔥",
@@ -2013,6 +2020,8 @@ class Database:
             "Support": "🔧",
             "Tank Commander": "🧑‍✈️",
             "Crewman": "👨‍🔧",
+            "SPA Commander": "🎯",
+            "SPA Crewman": "💥",
             "Spotter": "👀",
             "Sniper": "🎯",
             "Unassigned": "❔",
@@ -2025,6 +2034,7 @@ class Database:
             "Recon": "emoji_recon",
             "Pathfinders": "emoji_pathfinders",
             "Artillery": "emoji_artillery",
+            "SPA": "emoji_spa",
             "Anti-Tank": "emoji_anti_tank",
             "Assault": "emoji_assault",
             "Automatic Rifleman": "emoji_automatic_rifleman",
@@ -2036,6 +2046,8 @@ class Database:
             "Support": "emoji_support",
             "Tank Commander": "emoji_tank_commander",
             "Crewman": "emoji_crewman",
+            "SPA Commander": "emoji_spa_commander",
+            "SPA Crewman": "emoji_spa_crewman",
             "Spotter": "emoji_spotter",
             "Sniper": "emoji_sniper",
         }
