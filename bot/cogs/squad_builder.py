@@ -64,7 +64,7 @@ async def _fill_squad(squad: Dict, player_pool: List[Dict], squad_size: int, cla
     """
     unplaced_players = []
     # Sort the pool to prioritize essential roles
-    player_pool.sort(key=lambda p: SUBCLASS_PRIORITY.index(p['subclass_name']) if p.get('subclass_name') in SUBCLASS_PRIORITY else 99)
+    player_pool.sort(key=lambda p: ROLE_PRIORITY.index(p['subclass_name']) if p.get('subclass_name') in ROLE_PRIORITY else 99)
 
     while len(squad['members']) < squad_size and player_pool:
         player_to_add = player_pool.pop(0)
