@@ -35,6 +35,8 @@ def list_game_systems() -> List[dict]:
             "display_name": game.DISPLAY_NAME,
             "roles": getattr(game, "ROLES", []),
             "subclasses": getattr(game, "SUBCLASSES", {}),
+            "categories": getattr(game, "CATEGORIES", {}),
+            "template_model": getattr(game, "TEMPLATE_MODEL", {}),
             "rsvp_pools": getattr(game, "RSVP_POOLS", []),
             "squad_types": getattr(game, "SQUAD_TYPES", []),
         }
