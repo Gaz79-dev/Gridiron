@@ -198,9 +198,9 @@ document.addEventListener('DOMContentLoaded', () => {
                             ${statusText}
                         </span>
                     </td>
-                    <td class="px-6 py-4">
-                        <button class="edit-btn gx-action-link gx-action-edit" data-event-id="${event.event_id}">Edit</button>
-                        <button class="delete-btn gx-action-link gx-action-delete" data-event-id="${event.event_id}">Delete</button>
+                    <td class="px-6 py-4 whitespace-nowrap">
+                        <button type="button" class="edit-btn inline-flex items-center rounded-md bg-blue-600 px-3 py-1 text-xs font-semibold text-white hover:bg-blue-700 mr-2" data-event-id="${event.event_id}">Edit</button>
+                        <button type="button" class="delete-btn inline-flex items-center rounded-md bg-red-600 px-3 py-1 text-xs font-semibold text-white hover:bg-red-700" data-event-id="${event.event_id}">Delete</button>
                     </td>
                 `;
                 upcomingEventsBody.appendChild(tr);
@@ -229,11 +229,9 @@ document.addEventListener('DOMContentLoaded', () => {
                     <td class="px-6 py-4">${nextEventTime}</td>
                     <td class="px-6 py-4">${recurrence}</td>
                     <td class="px-6 py-4">${lastCreated}</td>
-                    <td class="px-6 py-4">
-                        <button class="edit-btn text-blue-400 hover:text-blue-600 mr-2" 
-                                data-event-id="${event.event_id}">Edit</button>
-                        <button class="delete-btn text-red-500 hover:text-red-700" 
-                                data-event-id="${event.event_id}">Delete</button>
+                    <td class="px-6 py-4 whitespace-nowrap">
+                        <button type="button" class="edit-btn inline-flex items-center rounded-md bg-blue-600 px-3 py-1 text-xs font-semibold text-white hover:bg-blue-700 mr-2" data-event-id="${event.event_id}">Edit</button>
+                        <button type="button" class="delete-btn inline-flex items-center rounded-md bg-red-600 px-3 py-1 text-xs font-semibold text-white hover:bg-red-700" data-event-id="${event.event_id}">Delete</button>
                     </td>
                 `;
                 recurringEventsBody.appendChild(tr);
@@ -261,7 +259,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     <td class="px-6 py-4">${eventTime}</td>
                     <td class="px-6 py-4">${deletedAt}</td>
                     <td class="px-6 py-4">
-                        <button class="restore-btn text-green-400 hover:text-green-600" data-event-id="${event.event_id}">Restore</button>
+                        <button type="button" class="restore-btn inline-flex items-center rounded-md bg-green-600 px-3 py-1 text-xs font-semibold text-white hover:bg-green-700" data-event-id="${event.event_id}">Restore + Repost Embed</button>
                     </td>
                 `;
                 deletedEventsBody.appendChild(tr);
@@ -319,15 +317,17 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     upcomingEventsBody.addEventListener('click', async (e) => {
-        if (e.target.classList.contains('edit-btn')) {
+        const editButton = e.target.closest('.edit-btn');
+        const deleteButton = e.target.closest('.delete-btn');
+        if (editButton) {
             try {
-                await openEditEventModal(e.target.dataset.eventId);
+                await openEditEventModal(editButton.dataset.eventId);
             } catch (error) {
                 alert(`Error: ${error.message}`);
             }
         }
-        else if (e.target.classList.contains('delete-btn')) {
-            const eventId = e.target.dataset.eventId;
+        else if (deleteButton) {
+            const eventId = deleteButton.dataset.eventId;
             if (confirm('Are you sure you want to delete this event? It will move to Deleted Events and can be restored.')) {
                 try {
                     const response = await fetch(`/api/events/${eventId}`, { method: 'DELETE', headers });
@@ -342,15 +342,17 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     recurringEventsBody.addEventListener('click', async (e) => {
-        if (e.target.classList.contains('edit-btn')) {
+        const editButton = e.target.closest('.edit-btn');
+        const deleteButton = e.target.closest('.delete-btn');
+        if (editButton) {
             try {
-                await openEditEventModal(e.target.dataset.eventId);
+                await openEditEventModal(editButton.dataset.eventId);
             } catch (error) {
                 alert(`Error: ${error.message}`);
             }
         } 
-        else if (e.target.classList.contains('delete-btn')) {
-            const eventId = e.target.dataset.eventId;
+        else if (deleteButton) {
+            const eventId = deleteButton.dataset.eventId;
             if (confirm('Are you sure you want to delete this recurring event template? This will stop it from creating new events.')) {
                 try {
                     const response = await fetch(`/api/events/${eventId}`, { method: 'DELETE', headers });
@@ -365,9 +367,10 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     deletedEventsBody.addEventListener('click', async (e) => {
-        if (e.target.classList.contains('restore-btn')) {
-            const eventId = e.target.dataset.eventId;
-            if (confirm('Are you sure you want to restore this event? It will become active again in the web UI.')) {
+        const restoreButton = e.target.closest('.restore-btn');
+        if (restoreButton) {
+            const eventId = restoreButton.dataset.eventId;
+            if (confirm('Restore this event and post a fresh signup embed back into Discord?')) {
                 try {
                     const response = await fetch(`/api/events/${eventId}/restore`, { method: 'POST', headers });
                     if (!response.ok) throw new Error('Failed to restore event');
