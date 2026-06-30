@@ -3,7 +3,7 @@ from discord.ext import commands
 from discord import app_commands
 import os
 
-GUILD_ID = os.getenv("GUILD_ID")
+guild_id = await self.db.get_system_setting_value("guild_id")
 if not GUILD_ID: raise ValueError("GUILD_ID not set in the environment, which is required for setup commands.")
 
 # Define the Group and tie it to your specific guild
