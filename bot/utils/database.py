@@ -185,6 +185,7 @@ class Database:
                         thread_id BIGINT,
                         creator_id BIGINT NOT NULL,
                         game_id VARCHAR(50) NOT NULL DEFAULT 'hll',
+                        template_id INT,
                         title VARCHAR(255) NOT NULL,
                         description TEXT,
                         event_time TIMESTAMP WITH TIME ZONE NOT NULL,
@@ -209,6 +210,7 @@ class Database:
                 await connection.execute("ALTER TABLE events ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP WITH TIME ZONE;")
                 await connection.execute("ALTER TABLE events ADD COLUMN IF NOT EXISTS match_id TEXT;")
                 await connection.execute("ALTER TABLE events ADD COLUMN IF NOT EXISTS game_id VARCHAR(50) NOT NULL DEFAULT 'hll';")
+                await connection.execute("ALTER TABLE events ADD COLUMN IF NOT EXISTS template_id INT;")
 
                 await connection.execute("""
                     CREATE TABLE IF NOT EXISTS signups (
@@ -807,18 +809,18 @@ class Database:
     async def create_event(self, guild_id: int, channel_id: int, creator_id: int, event_data: dict) -> int:
         query = """
             INSERT INTO events (
-                guild_id, channel_id, creator_id, game_id, title, description, event_time, 
+                guild_id, channel_id, creator_id, game_id, template_id, title, description, event_time, 
                 end_time, timezone, is_recurring, recurrence_rule, 
                 recreation_hours, parent_event_id, mention_role_ids, restrict_to_role_ids
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
             RETURNING event_id;
         """
         async with self.pool.acquire() as connection:
             event_id = await connection.fetchval(
                 query,
                 guild_id, channel_id, creator_id,
-                event_data.get('game_id', 'hll'), event_data['title'], event_data['description'], event_data['event_time'],
+                event_data.get('game_id', 'hll'), event_data.get('template_id'), event_data['title'], event_data['description'], event_data['event_time'],
                 event_data['end_time'], event_data['timezone'], event_data['is_recurring'],
                 event_data.get('recurrence_rule'),
                 event_data.get('recreation_hours'), event_data.get('parent_event_id'),
