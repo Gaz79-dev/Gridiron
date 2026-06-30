@@ -448,6 +448,15 @@ async def delete_event(event_id: int, db: Database = Depends(get_db)):
     await db.delete_event(event_id)
     return
 
+@router.post("/{event_id}/restore", response_model=Event, dependencies=[Depends(auth.get_current_admin_user)])
+async def restore_event(event_id: int, db: Database = Depends(get_db)):
+    event_to_restore = await db.get_event_by_id(event_id, include_deleted=True)
+    if not event_to_restore:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found")
+    await db.restore_event(event_id)
+    restored = await db.get_event_by_id(event_id, include_deleted=True)
+    return restored
+
 @router.get("/{event_id}/lock-status", response_model=EventLockStatus)
 async def get_lock_status(event_id: int, db: Database = Depends(get_db)):
     lock_info = await db.get_event_lock_status(event_id)
