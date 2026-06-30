@@ -144,6 +144,30 @@ class Database:
                         updated_at TIMESTAMP WITH TIME ZONE DEFAULT (NOW() AT TIME ZONE 'utc')
                     );
                 """)
+                await connection.execute("""
+                    INSERT INTO system_settings (setting_key, setting_value, value_type, category, description, editable)
+                    VALUES
+                        ('emoji_commander', '⭐', 'string', 'Emoji', 'Emoji used for Commander.', TRUE),
+                        ('emoji_infantry', '💂', 'string', 'Emoji', 'Emoji used for Infantry.', TRUE),
+                        ('emoji_armour', '🛡️', 'string', 'Emoji', 'Emoji used for Armour.', TRUE),
+                        ('emoji_recon', '👁️', 'string', 'Emoji', 'Emoji used for Recon.', TRUE),
+                        ('emoji_pathfinders', '🧭', 'string', 'Emoji', 'Emoji used for Pathfinders.', TRUE),
+                        ('emoji_artillery', '💣', 'string', 'Emoji', 'Emoji used for Artillery.', TRUE),
+                        ('emoji_anti_tank', '🚀', 'string', 'Emoji', 'Emoji used for Anti-Tank.', TRUE),
+                        ('emoji_assault', '💥', 'string', 'Emoji', 'Emoji used for Assault.', TRUE),
+                        ('emoji_automatic_rifleman', '🔥', 'string', 'Emoji', 'Emoji used for Automatic Rifleman.', TRUE),
+                        ('emoji_engineer', '🛠️', 'string', 'Emoji', 'Emoji used for Engineer.', TRUE),
+                        ('emoji_machine_gunner', '💥', 'string', 'Emoji', 'Emoji used for Machine Gunner.', TRUE),
+                        ('emoji_medic', '➕', 'string', 'Emoji', 'Emoji used for Medic.', TRUE),
+                        ('emoji_officer', '🫡', 'string', 'Emoji', 'Emoji used for Officer.', TRUE),
+                        ('emoji_rifleman', '👤', 'string', 'Emoji', 'Emoji used for Rifleman.', TRUE),
+                        ('emoji_support', '🔧', 'string', 'Emoji', 'Emoji used for Support.', TRUE),
+                        ('emoji_tank_commander', '🧑‍✈️', 'string', 'Emoji', 'Emoji used for Tank Commander.', TRUE),
+                        ('emoji_crewman', '👨‍🔧', 'string', 'Emoji', 'Emoji used for Crewman.', TRUE),
+                        ('emoji_spotter', '👀', 'string', 'Emoji', 'Emoji used for Spotter.', TRUE),
+                        ('emoji_sniper', '🎯', 'string', 'Emoji', 'Emoji used for Sniper.', TRUE)
+                    ON CONFLICT (setting_key) DO NOTHING;
+                """)
                 
                 await connection.execute("""
                     CREATE TABLE IF NOT EXISTS events (
@@ -1969,6 +1993,64 @@ class Database:
             return await connection.fetchval(query, key)
     
     
+    async def get_emoji_mapping(self) -> Dict[str, str]:
+        """Returns role/class emoji settings with safe defaults."""
+        defaults = {
+            "Commander": "⭐",
+            "Infantry": "💂",
+            "Armour": "🛡️",
+            "Recon": "👁️",
+            "Pathfinders": "🧭",
+            "Artillery": "💣",
+            "Anti-Tank": "🚀",
+            "Assault": "💥",
+            "Automatic Rifleman": "🔥",
+            "Engineer": "🛠️",
+            "Machine Gunner": "💥",
+            "Medic": "➕",
+            "Officer": "🫡",
+            "Rifleman": "👤",
+            "Support": "🔧",
+            "Tank Commander": "🧑‍✈️",
+            "Crewman": "👨‍🔧",
+            "Spotter": "👀",
+            "Sniper": "🎯",
+            "Unassigned": "❔",
+        }
+
+        setting_keys = {
+            "Commander": "emoji_commander",
+            "Infantry": "emoji_infantry",
+            "Armour": "emoji_armour",
+            "Recon": "emoji_recon",
+            "Pathfinders": "emoji_pathfinders",
+            "Artillery": "emoji_artillery",
+            "Anti-Tank": "emoji_anti_tank",
+            "Assault": "emoji_assault",
+            "Automatic Rifleman": "emoji_automatic_rifleman",
+            "Engineer": "emoji_engineer",
+            "Machine Gunner": "emoji_machine_gunner",
+            "Medic": "emoji_medic",
+            "Officer": "emoji_officer",
+            "Rifleman": "emoji_rifleman",
+            "Support": "emoji_support",
+            "Tank Commander": "emoji_tank_commander",
+            "Crewman": "emoji_crewman",
+            "Spotter": "emoji_spotter",
+            "Sniper": "emoji_sniper",
+        }
+
+        rows = await self.get_system_settings()
+        values_by_key = {row["setting_key"]: row["setting_value"] for row in rows}
+
+        for role_name, setting_key in setting_keys.items():
+            value = values_by_key.get(setting_key)
+            if value:
+                defaults[role_name] = str(value).strip()
+
+        return defaults
+
+
     async def upsert_system_setting(
         self,
         key: str,
