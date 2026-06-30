@@ -1,7 +1,7 @@
 from collections import defaultdict
 from typing import List, Dict
 from bot.utils.database import Database, RsvpStatus
-from bot.game_systems.hll import CLASS_LIMITS, ROLE_PRIORITY, SQUAD_SIZE_BY_TYPE
+from bot.game_systems.registry import get_game_system
 
 def get_squad_iteration(squad_name: str, counts: Dict, convention: str, group_index: int) -> str:
     """Gets the next iteration for a squad name based on the convention."""
@@ -30,6 +30,11 @@ async def run_web_draft(db: Database, event_id: int, request_data) -> List[Dict]
     template = await db.get_squad_template_by_id(request_data.template_id)
     if not template:
         raise ValueError("Squad template not found.")
+
+    game = get_game_system(template.get('game_id'))
+    class_limits = getattr(game, 'CLASS_LIMITS', {})
+    role_priority = getattr(game, 'ROLE_PRIORITY', [])
+    squad_size_by_type = getattr(game, 'SQUAD_SIZE_BY_TYPE', {})
     
     squad_counts, squads_to_fill = {}, []
     
@@ -60,9 +65,9 @@ async def run_web_draft(db: Database, event_id: int, request_data) -> List[Dict]
     for squad in squads_to_fill:
         player_pool = player_pools.get(squad['source_rsvp_pool'], [])
         
-        squad_size = SQUAD_SIZE_BY_TYPE.get(squad['squad_type'], 6)
+        squad_size = squad_size_by_type.get(squad['squad_type'], 6)
 
-        player_pool.sort(key=lambda p: ROLE_PRIORITY.index(p['subclass_name']) if p.get('subclass_name') in ROLE_PRIORITY else 99)
+        player_pool.sort(key=lambda p: role_priority.index(p['subclass_name']) if p.get('subclass_name') in role_priority else 99)
 
         temp_unplaced_pool = []
         member_count = 0
@@ -75,7 +80,7 @@ async def run_web_draft(db: Database, event_id: int, request_data) -> List[Dict]
                 temp_unplaced_pool.append(player)
                 continue
 
-            limit = CLASS_LIMITS.get(player_class, 99)
+            limit = class_limits.get(player_class, 99)
 
             if squad['class_counts'][player_class] < limit:
                 await db.add_squad_member(squad['id'], player['user_id'], player_class)
