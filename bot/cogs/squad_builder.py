@@ -11,15 +11,15 @@ from bot.api.models import SquadBuildRequest
 CLASS_LIMITS = {
     "Officer": 1, "Medic": 1, "Support": 1, "Anti-Tank": 1,
     "Machine Gunner": 1, "Automatic Rifleman": 1, "Assault": 1, "Engineer": 1,
-    "Spotter": 1, "Sniper": 1, "Tank Commander": 1,
-    # Rifleman and Crewman have no hard limit beyond squad size
-    "Rifleman": 99, "Crewman": 99,
+    "Spotter": 1, "Sniper": 1, "Tank Commander": 1, "SPA Commander": 1,
+    # Rifleman, Crewman and SPA Crewman have no hard limit beyond squad size
+    "Rifleman": 99, "Crewman": 99, "SPA Crewman": 99,
 }
 
 # The order in which players should be picked to fill squads
 SUBCLASS_PRIORITY = [
     "Officer", "Support", "Medic", "Anti-Tank", "Machine Gunner", "Automatic Rifleman",
-    "Engineer", "Assault", "Rifleman", "Tank Commander", "Crewman", "Spotter", "Sniper"
+    "Engineer", "Assault", "Rifleman", "Tank Commander", "Crewman", "SPA Commander", "SPA Crewman", "Spotter", "Sniper"
 ]
 
 
@@ -129,6 +129,8 @@ async def run_web_draft(db: Database, event_id: int, request: SquadBuildRequest)
             player_pools["pathfinder"].append(player)
         elif primary_role == "Recon":
             player_pools["recon"].append(player)
+        elif primary_role == "SPA":
+            player_pools["spa"].append(player)
         elif primary_role == "Armour":
             player_pools["armour"].append(player)
         else: # General infantry or unassigned
@@ -162,6 +164,16 @@ async def run_web_draft(db: Database, event_id: int, request: SquadBuildRequest)
         player_pools["recon"] = [p for p in player_pools["recon"] if p['user_id'] not in placed_ids]
         squads.append(recon_squad)
     unplaced_players.extend(player_pools.pop("recon", []))
+
+    # SPA Squads
+    if hasattr(request, "spa_squads"):
+        for _ in range(request.spa_squads):
+            squad_name = f"SPA {get_squad_letter('SPA', squad_name_counts)}"
+            spa_squad = {'name': squad_name, 'squad_type': "SPA", 'members': [], 'class_counts': defaultdict(int)}
+            spa_squad, remaining_spa = await _fill_squad(spa_squad, player_pools["spa"], 3, CLASS_LIMITS)
+            player_pools["spa"] = remaining_spa
+            squads.append(spa_squad)
+    unplaced_players.extend(player_pools.pop("spa", []))
 
     # Armour Squads
     for _ in range(request.armour_squads):
