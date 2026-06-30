@@ -14,6 +14,8 @@ document.addEventListener('DOMContentLoaded', () => {
     let currentUser = null;
     let isPageInitialized = false;
     let fullRoster = [];
+    let AVAILABLE_EVENTS = [];
+    let CURRENT_EVENT = null;
 
     // --- ELEMENT SELECTORS ---
     const eventDropdown = document.getElementById('event-dropdown');
@@ -135,16 +137,19 @@ document.addEventListener('DOMContentLoaded', () => {
 
     window.addEventListener('beforeunload', () => releaseLock(eventDropdown.value));
 
-    const populateTemplateDropdown = () => {
+    const populateTemplateDropdown = (gameId = null) => {
+        const selectedGameId = gameId || CURRENT_EVENT?.game_id || 'hll';
         templateDropdown.innerHTML = '<option value="">-- Manual Build --</option>';
-        SQUAD_TEMPLATES.forEach(template => {
-            templateDropdown.add(new Option(template.template_name, template.template_id));
-        });
+        SQUAD_TEMPLATES
+            .filter(template => (template.game_id || 'hll') === selectedGameId)
+            .forEach(template => {
+                templateDropdown.add(new Option(template.template_name, template.template_id));
+            });
     };
 
     const generateBuildForm = (templateId) => {
         buildForm.innerHTML = '';
-        const template = SQUAD_TEMPLATES.find(t => t.template_id == templateId);
+        const template = SQUAD_TEMPLATES.find(t => t.template_id == templateId && (t.game_id || 'hll') === (CURRENT_EVENT?.game_id || 'hll'));
         if (!template) {
             buildForm.innerHTML = `
                 <div>
@@ -296,6 +301,13 @@ document.addEventListener('DOMContentLoaded', () => {
         setLockedState(true, 'Squads finalized. This event is now read-only.');
     });
 
+
+    const getCurrentRoleOptions = () => {
+        const roles = ALL_ROLES.roles || [];
+        const subclasses = ALL_ROLES.subclasses || {};
+        return [...new Set([...roles, ...Object.values(subclasses).flat()])].sort();
+    };
+
     document.body.addEventListener('click', (e) => {
         const editBtn = e.target.closest('.edit-member-btn');
         const taskBtn = e.target.closest('.assign-task-btn');
@@ -307,7 +319,7 @@ document.addEventListener('DOMContentLoaded', () => {
             modalMemberIdInput.value = memberItem.dataset.memberId;
             const currentRole = memberItem.querySelector('.assigned-role-text').textContent;
             modalRoleSelect.innerHTML = '';
-            const allRoles = [...new Set([...ALL_ROLES.roles, ...Object.values(ALL_ROLES.subclasses).flat()])].sort();
+            const allRoles = getCurrentRoleOptions();
             allRoles.forEach(role => {
                 const option = new Option(role, role);
                 if (role === currentRole) option.selected = true;
@@ -327,7 +339,7 @@ document.addEventListener('DOMContentLoaded', () => {
             promoteModalMemberName.textContent = memberItem.dataset.displayName;
             promoteModalMemberId.value = memberItem.dataset.userId;
             promoteModalRoleSelect.innerHTML = '';
-            const allRoles = [...new Set([...ALL_ROLES.roles, ...Object.values(ALL_ROLES.subclasses).flat()])].sort();
+            const allRoles = getCurrentRoleOptions();
             allRoles.forEach(role => promoteModalRoleSelect.add(new Option(role, role)));
             promoteModal.classList.remove('hidden');
         }
@@ -427,7 +439,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     Promise.all([
         fetch('/api/users/me', { headers }),
-        fetch('/api/squads/roles', { headers }),
+        fetch('/api/squads/roles?game_id=hll', { headers }),
         fetch('/api/events', { headers }),
         fetch('/api/squads/emojis', { headers }),
         fetch('/api/templates', { headers: { 'Authorization': `Bearer ${token}` } })
@@ -440,12 +452,12 @@ document.addEventListener('DOMContentLoaded', () => {
         ALL_ROLES = await rolesRes.json();
         EMOJI_MAP = await emojiRes.json();
         SQUAD_TEMPLATES = await templatesRes.json();
-        const events = await eventsRes.json();
+        AVAILABLE_EVENTS = await eventsRes.json();
 
         eventDropdown.innerHTML = '<option value="">-- Select an Event --</option>';
-        events.forEach(event => eventDropdown.add(new Option(`${event.title} (${new Date(event.event_time).toLocaleString()})`, event.event_id)));
+        AVAILABLE_EVENTS.forEach(event => eventDropdown.add(new Option(`${event.title} [${event.game_id || 'hll'}] (${new Date(event.event_time).toLocaleString()})`, event.event_id)));
 
-        populateTemplateDropdown();
+        populateTemplateDropdown('hll');
         generateBuildForm(null);
 
         eventDropdown.addEventListener('change', handleEventSelection);
@@ -464,6 +476,17 @@ document.addEventListener('DOMContentLoaded', () => {
         const eventId = eventDropdown.value;
         eventDropdown.dataset.previousEventId = eventId;
         if (!eventId) return;
+        CURRENT_EVENT = AVAILABLE_EVENTS.find(event => String(event.event_id) === String(eventId)) || { game_id: 'hll' };
+        populateTemplateDropdown(CURRENT_EVENT.game_id || 'hll');
+        generateBuildForm(templateDropdown.value || null);
+        try {
+            const rolesResponse = await fetch(`/api/squads/roles?event_id=${eventId}`, { headers });
+            if (!await handleApiError(rolesResponse)) {
+                ALL_ROLES = await rolesResponse.json();
+            }
+        } catch (error) {
+            console.error('Could not load event-specific roles:', error);
+        }
         await acquireLock(eventId);
         try {
             await fetchAndDisplayRoster(eventId);
