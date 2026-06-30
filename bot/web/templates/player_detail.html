@@ -5,21 +5,37 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Gridiron - Player Details</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="/static/ui.css">
 </head>
 <body class="bg-gray-900 text-gray-300 font-sans">
 
-    <header class="bg-gray-800 shadow-lg">
-        <nav class="container mx-auto px-6 py-4 flex justify-between items-center">
-            <div class="flex items-center">
-                <img src="/static/logo.jpg" alt="Gridiron Logo" class="h-8 w-8 mr-3">
-                <h1 id="page-title" class="text-2xl font-bold text-white">Player Details</h1>
-            </div>
-            <div>
-                <a href="/engagement" class="text-gray-300 hover:text-white px-3 py-2 rounded-md text-sm font-medium">Back to Stats</a>
-                <button id="logout-btn" class="text-gray-300 hover:text-white px-3 py-2 rounded-md text-sm font-medium">Logout</button>
+    <header class="gx-shell-header">
+        <nav class="gx-shell-nav">
+            <a href="/" class="gx-brand">
+                <img src="/static/logo.jpg" alt="Gridiron Logo">
+                <span>
+                    <span class="gx-brand-title">Gridiron</span>
+                    <span class="gx-brand-subtitle">Event Command</span>
+                </span>
+            </a>
+            <div class="gx-nav-links">
+                <a href="/">Squad Builder</a>
+                <a href="/events">Events</a>
+                <a href="/engagement">Engagement</a>
+                <a href="/archive">Archive</a>
+                <a href="/players">Players</a>
+                <a href="/stats">Stats</a>
+                <a href="/admin" id="admin-link">Admin</a>
+                <button id="logout-btn" type="button">Logout</button>
             </div>
         </nav>
     </header>
+
+    <section class="gx-page-hero">
+        <div class="gx-page-eyebrow">Gridiron</div>
+        <h1 class="gx-page-title">Player Detail</h1>
+        <p class="gx-page-copy">Review individual engagement history.</p>
+    </section>
 
     <main class="container mx-auto px-6 py-8">
         <section class="bg-gray-800 p-6 rounded-lg shadow-md">
@@ -46,5 +62,6 @@
 
     <script src="/static/auth.js"></script>
     <script src="/static/player_detail.js"></script>
+    <script src="/static/ui.js"></script>
 </body>
 </html>
