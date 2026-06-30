@@ -36,8 +36,26 @@ document.addEventListener('DOMContentLoaded', () => {
     const editingTemplateIdInput = document.getElementById('editing-template-id');
     let allTemplates = [];
 
-    const RSVP_POOLS = ["Commander", "Infantry", "Armour", "SPA", "Recon", "Pathfinders", "Artillery", "Unassigned"];
-    const SQUAD_TYPES = ["Command", "Infantry", "Armour", "SPA", "Recon", "Artillery", "Reserves"];
+    // Frontend mirror of the current default game system.
+    // Backend source of truth now lives in bot/game_systems/hll.py; this keeps
+    // the existing static admin page working until the UI is rebuilt to load
+    // game systems from the API.
+    const GAME_SYSTEMS = {
+        hll: {
+            displayName: "Hell Let Loose",
+            rsvpPools: ["Commander", "Infantry", "Armour", "SPA", "Recon", "Pathfinders", "Artillery", "Unassigned"],
+            squadTypes: ["Command", "Infantry", "Armour", "SPA", "Recon", "Artillery", "Reserves"]
+        },
+        hllv: {
+            displayName: "Hell Let Loose Vietnam",
+            rsvpPools: ["Commander", "Infantry", "Armour", "SPA", "Recon", "Pathfinders", "Artillery", "Unassigned"],
+            squadTypes: ["Command", "Infantry", "Armour", "SPA", "Recon", "Artillery", "Reserves"]
+        }
+    };
+
+    const ACTIVE_GAME_SYSTEM = GAME_SYSTEMS.hll;
+    const RSVP_POOLS = ACTIVE_GAME_SYSTEM.rsvpPools;
+    const SQUAD_TYPES = ACTIVE_GAME_SYSTEM.squadTypes;
     const settingsList = document.getElementById('settings-list');
 
     function validatePassword(password) {
