@@ -35,28 +35,40 @@ document.addEventListener('DOMContentLoaded', () => {
     const cancelEditBtn = document.getElementById('cancel-edit-btn');
     const editingTemplateIdInput = document.getElementById('editing-template-id');
     let allTemplates = [];
-
-    // Frontend mirror of the current default game system.
-    // Backend source of truth now lives in bot/game_systems/hll.py; this keeps
-    // the existing static admin page working until the UI is rebuilt to load
-    // game systems from the API.
-    const GAME_SYSTEMS = {
+    let gameSystems = {
         hll: {
-            displayName: "Hell Let Loose",
-            rsvpPools: ["Commander", "Infantry", "Armour", "SPA", "Recon", "Pathfinders", "Artillery", "Unassigned"],
-            squadTypes: ["Command", "Infantry", "Armour", "SPA", "Recon", "Artillery", "Reserves"]
+            display_name: "Hell Let Loose",
+            rsvp_pools: ["Commander", "Infantry", "Armour", "SPA", "Recon", "Pathfinders", "Artillery", "Unassigned"],
+            squad_types: ["Command", "Infantry", "Armour", "SPA", "Recon", "Artillery", "Reserves"]
         },
         hllv: {
-            displayName: "Hell Let Loose Vietnam",
-            rsvpPools: ["Commander", "Infantry", "Armour", "SPA", "Recon", "Pathfinders", "Artillery", "Unassigned"],
-            squadTypes: ["Command", "Infantry", "Armour", "SPA", "Recon", "Artillery", "Reserves"]
+            display_name: "Hell Let Loose: Vietnam",
+            rsvp_pools: ["Commander", "Infantry", "Armour", "Helicopter", "Mortar", "Recon", "Unassigned"],
+            squad_types: ["Command", "Infantry", "Armour", "Helicopter", "Mortar", "Recon", "Reserves"]
         }
     };
-
-    const ACTIVE_GAME_SYSTEM = GAME_SYSTEMS.hll;
-    const RSVP_POOLS = ACTIVE_GAME_SYSTEM.rsvpPools;
-    const SQUAD_TYPES = ACTIVE_GAME_SYSTEM.squadTypes;
+    const templateGameSelect = document.getElementById('template-game-id');
     const settingsList = document.getElementById('settings-list');
+
+    const getSelectedGameSystem = () => gameSystems[templateGameSelect?.value || 'hll'] || gameSystems.hll;
+
+    async function loadGameSystems() {
+        if (!templateGameSelect) return;
+        try {
+            const response = await fetch('/api/templates/game-systems', { headers });
+            if (!response.ok) throw new Error('Failed to load game systems');
+            const systems = await response.json();
+            gameSystems = systems.reduce((acc, system) => {
+                acc[system.game_id] = system;
+                return acc;
+            }, {});
+            templateGameSelect.innerHTML = systems.map(system =>
+                `<option value="${system.game_id}">${system.display_name}</option>`
+            ).join('');
+        } catch (error) {
+            console.warn(error.message);
+        }
+    }
 
     function validatePassword(password) {
         const validations = {
@@ -75,11 +87,15 @@ document.addEventListener('DOMContentLoaded', () => {
         div.className = 'grid grid-cols-1 md:grid-cols-7 gap-2 items-center border-t border-gray-600 pt-3';
         div.id = rowId;
 
+        const selectedGame = getSelectedGameSystem();
+        const rsvpPools = selectedGame.rsvp_pools || [];
+        const squadTypes = selectedGame.squad_types || [];
+
         div.innerHTML = `
             <input type="text" placeholder="Squad Name (e.g., Attack)" class="md:col-span-2 bg-gray-600 border-gray-500 rounded-md p-2" data-field="squad_name" value="${definition?.squad_name || ''}" required>
             <input type="number" value="${definition?.default_count || 1}" min="0" class="bg-gray-600 border-gray-500 rounded-md p-2" data-field="default_count" required>
-            <select class="bg-gray-600 border-gray-500 rounded-md p-2" data-field="source_rsvp_pool">${RSVP_POOLS.map(p => `<option value="${p}" ${definition?.source_rsvp_pool === p ? 'selected' : ''}>${p}</option>`).join('')}</select>
-            <select class="bg-gray-600 border-gray-500 rounded-md p-2" data-field="squad_type">${SQUAD_TYPES.map(t => `<option value="${t}" ${definition?.squad_type === t ? 'selected' : ''}>${t}</option>`).join('')}</select>
+            <select class="bg-gray-600 border-gray-500 rounded-md p-2" data-field="source_rsvp_pool">${rsvpPools.map(p => `<option value="${p}" ${definition?.source_rsvp_pool === p ? 'selected' : ''}>${p}</option>`).join('')}</select>
+            <select class="bg-gray-600 border-gray-500 rounded-md p-2" data-field="squad_type">${squadTypes.map(t => `<option value="${t}" ${definition?.squad_type === t ? 'selected' : ''}>${t}</option>`).join('')}</select>
             <select class="md:col-span-1 bg-gray-600 border-gray-500 rounded-md p-2" data-field="naming_convention">
                 <option value="none" ${definition?.naming_convention === 'none' ? 'selected' : ''}>None</option>
                 <option value="alpha" ${definition?.naming_convention === 'alpha' ? 'selected' : ''}>Alpha (A, B)</option>
@@ -113,7 +129,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 const div = document.createElement('div');
                 div.className = 'bg-gray-700 p-3 rounded-md flex justify-between items-center';
                 div.innerHTML = `
-                    <span class="font-semibold">${template.template_name}</span>
+                    <span class="font-semibold">${template.template_name} <span class="text-xs text-gray-400 uppercase">${template.game_id || 'hll'}</span></span>
                     <div>
                         <button data-template-id="${template.template_id}" class="edit-template-btn text-blue-400 hover:text-blue-600 mr-4">Edit</button>
                         <button data-template-id="${template.template_id}" class="delete-template-btn text-red-500 hover:text-red-700">Delete</button>
@@ -127,11 +143,20 @@ document.addEventListener('DOMContentLoaded', () => {
     };
     
     addDefinitionBtn.addEventListener('click', () => addDefinitionRow());
+    if (templateGameSelect) {
+        templateGameSelect.addEventListener('change', () => {
+            definitionsContainer.querySelectorAll('.grid').forEach(row => {
+                if (row.querySelector('input')) row.remove();
+            });
+            addDefinitionRow();
+        });
+    }
     cancelEditBtn.addEventListener('click', resetTemplateForm);
 
     createTemplateForm.addEventListener('submit', async (e) => {
         e.preventDefault();
         const templateName = document.getElementById('template-name').value;
+        const gameId = templateGameSelect?.value || 'hll';
         const definitions = [];
         definitionsContainer.querySelectorAll('.grid').forEach(row => {
             if (row.querySelector('input')) {
@@ -158,7 +183,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const response = await fetch(url, {
                 method: method,
                 headers: headers,
-                body: JSON.stringify({ template_name: templateName, definitions: definitions })
+                body: JSON.stringify({ game_id: gameId, template_name: templateName, definitions: definitions })
             });
             if (!response.ok) throw new Error((await response.json()).detail || 'Failed to save template');
             
@@ -194,6 +219,7 @@ document.addEventListener('DOMContentLoaded', () => {
             cancelEditBtn.classList.remove('hidden');
             editingTemplateIdInput.value = template.template_id;
             document.getElementById('template-name').value = template.template_name;
+            if (templateGameSelect) templateGameSelect.value = template.game_id || 'hll';
             
             definitionsContainer.querySelectorAll('.grid').forEach(row => {
                 if (row.querySelector('input')) row.remove();
@@ -476,7 +502,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // --- Initial loads ---
     loadUsers();
-    loadTemplates();
+    loadGameSystems().then(() => {
+        resetTemplateForm();
+        loadTemplates();
+    });
     loadSettings();
 
     const headerRow = document.createElement('div');
