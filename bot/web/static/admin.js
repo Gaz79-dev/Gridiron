@@ -43,8 +43,8 @@ document.addEventListener('DOMContentLoaded', () => {
         },
         hllv: {
             display_name: "Hell Let Loose: Vietnam",
-            rsvp_pools: ["Commander", "Infantry", "Armour", "Helicopter", "Mortar", "Recon", "Unassigned"],
-            squad_types: ["Command", "Infantry", "Armour", "Helicopter", "Mortar", "Recon", "Reserves"]
+            rsvp_pools: ["Commander", "Infantry", "Armour", "Recon", "Helicopter Unit", "Mortar Squads", "Unassigned"],
+            squad_types: ["Command", "Infantry", "Armour", "Recon", "Helicopter Unit", "Mortar Squads", "Reserves"]
         }
     };
     const templateGameSelect = document.getElementById('template-game-id');
