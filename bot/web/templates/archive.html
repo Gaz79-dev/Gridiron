@@ -16,25 +16,37 @@
         .discord-msg:hover { background-color: rgba(4, 4, 5, 0.07); }
         .discord-avatar { flex-shrink: 0; width: 40px; height: 40px; border-radius: 50%; }
     </style>
+    <link rel="stylesheet" href="/static/ui.css">
 </head>
 <body class="bg-gray-900 text-gray-300 font-sans h-screen flex flex-col">
 
-    <header class="bg-gray-800 shadow-lg flex-shrink-0">
-        <nav class="container mx-auto px-6 py-4 flex justify-between items-center">
-            <div class="flex items-center">
-                <img src="/static/logo.jpg" alt="Gridiron Logo" class="h-8 w-8 mr-3">
-                <h1 class="text-2xl font-bold text-white">Deep Archive</h1>
-            </div>
-            <div>
-                <a href="/" class="text-gray-300 hover:text-white px-3 py-2 rounded-md text-sm font-medium">Squad Builder</a>
-                <a href="/players" class="text-gray-300 hover:text-white px-3 py-2 rounded-md text-sm font-medium">Players</a>
-                <a href="/stats" class="text-gray-300 hover:text-white px-3 py-2 rounded-md text-sm font-medium">Match Stats</a>
-                <a href="/engagement" class="text-gray-300 hover:text-white px-3 py-2 rounded-md text-sm font-medium">Engagement</a>
-                <a href="/events" class="text-gray-300 hover:text-white px-3 py-2 rounded-md text-sm font-medium">Events</a>
-                <a href="/archive" class="bg-gray-900 text-white px-3 py-2 rounded-md text-sm font-medium">Archive</a>
+    <header class="gx-shell-header">
+        <nav class="gx-shell-nav">
+            <a href="/" class="gx-brand">
+                <img src="/static/logo.jpg" alt="Gridiron Logo">
+                <span>
+                    <span class="gx-brand-title">Gridiron</span>
+                    <span class="gx-brand-subtitle">Event Command</span>
+                </span>
+            </a>
+            <div class="gx-nav-links">
+                <a href="/">Squad Builder</a>
+                <a href="/events">Events</a>
+                <a href="/engagement">Engagement</a>
+                <a href="/archive">Archive</a>
+                <a href="/players">Players</a>
+                <a href="/stats">Stats</a>
+                <a href="/admin" id="admin-link">Admin</a>
+                <button id="logout-btn" type="button">Logout</button>
             </div>
         </nav>
     </header>
+
+    <section class="gx-page-hero">
+        <div class="gx-page-eyebrow">Gridiron</div>
+        <h1 class="gx-page-title">Archive</h1>
+        <p class="gx-page-copy">Review final embeds and event history.</p>
+    </section>
 
     <main class="flex-grow flex overflow-hidden">
         
@@ -161,5 +173,6 @@
 
     <script src="/static/auth.js"></script>
     <script src="/static/archive.js"></script>
+    <script src="/static/ui.js"></script>
 </body>
 </html>
