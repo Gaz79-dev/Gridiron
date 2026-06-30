@@ -13,13 +13,11 @@ _GAME_SYSTEMS: Dict[str, ModuleType] = {
 }
 
 
-def get_game_system(game_id: str | None = None) -> ModuleType:
-    """Return a game system definition module.
-
-    Unknown or blank game ids safely fall back to Hell Let Loose for backward
-    compatibility with existing events and templates.
-    """
-    return _GAME_SYSTEMS.get(game_id or DEFAULT_GAME_ID, hll)
+def get_game_system(game_id: str):
+    module = GAME_SYSTEMS.get(game_id)
+    if not module:
+        return GAME_SYSTEMS["hll"].GAME_SYSTEM
+    return module.GAME_SYSTEM
 
 
 def get_all_game_systems() -> List[ModuleType]:
