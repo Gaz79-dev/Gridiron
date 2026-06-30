@@ -8,7 +8,8 @@ from typing import List, Optional, Dict
 
 # Use absolute imports from the 'bot' package root
 from bot.ai import squad_optimizer
-from bot.utils.database import Database, RsvpStatus, ROLES, SUBCLASSES
+from bot.utils.database import Database, RsvpStatus
+from bot.game_systems.hll import ROLES, SUBCLASSES
 from bot.api import auth
 from bot.api.dependencies import get_db
 from bot.api.models import (
