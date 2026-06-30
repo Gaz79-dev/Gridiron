@@ -160,6 +160,78 @@ async def _update_event_message_on_discord(event_id: int, event_data: Dict, db: 
         print(f"Discord event message update failed: {res.status_code} {res.text}")
 
 
+
+
+def _parse_discord_timestamp(value: str):
+    if not value:
+        return datetime.datetime.now(datetime.timezone.utc)
+    try:
+        if value.endswith("Z"):
+            value = value[:-1] + "+00:00"
+        return datetime.datetime.fromisoformat(value)
+    except Exception:
+        return datetime.datetime.now(datetime.timezone.utc)
+
+
+async def _archive_and_delete_event_thread_from_discord(event_data: Dict, db: Database) -> None:
+    """
+    Best-effort cleanup for an event thread when an event is deleted from the web UI.
+
+    If the thread still exists, archive its message history first so the archive page keeps
+    the useful context, then delete the Discord thread and clear the DB thread reference so
+    a restored event can create a fresh thread later.
+    """
+    thread_id = event_data.get("thread_id")
+    event_id = event_data.get("event_id")
+    if not BOT_TOKEN or not thread_id or not event_id:
+        return
+
+    headers = {"Authorization": f"Bot {BOT_TOKEN}"}
+    messages_url = f"https://discord.com/api/v10/channels/{thread_id}/messages?limit=100"
+    delete_url = f"https://discord.com/api/v10/channels/{thread_id}"
+
+    async with httpx.AsyncClient() as client:
+        # Archive the most recent thread messages before deleting the thread.
+        # Discord's simple messages endpoint returns up to 100 messages. That is enough for
+        # normal event planning chatter and avoids making web delete slow or fragile.
+        try:
+            res = await client.get(messages_url, headers=headers)
+            if res.status_code == 200:
+                raw_messages = res.json()
+                history_data = []
+                for msg in raw_messages:
+                    author = msg.get("author") or {}
+                    attachments = msg.get("attachments") or []
+                    history_data.append({
+                        "id": int(msg.get("id")),
+                        "author_id": int(author.get("id", 0)),
+                        "user_name": author.get("global_name") or author.get("username") or "Unknown",
+                        "avatar_url": f"https://cdn.discordapp.com/avatars/{author.get('id')}/{author.get('avatar')}.png" if author.get("id") and author.get("avatar") else "",
+                        "content": msg.get("content") or "",
+                        "timestamp": _parse_discord_timestamp(msg.get("timestamp")),
+                        "attachment_urls": [a.get("url") for a in attachments if a.get("url")],
+                    })
+
+                history_data.sort(key=lambda m: m["timestamp"])
+                if history_data:
+                    await db.archive_thread_history(int(event_id), history_data)
+            elif res.status_code != 404:
+                print(f"Discord thread archive fetch failed: {res.status_code} {res.text}")
+        except Exception as exc:
+            print(f"Could not archive Discord thread {thread_id} for event {event_id}: {exc}")
+
+        # Delete the thread itself. Treat 404 as already cleaned up.
+        try:
+            res = await client.delete(delete_url, headers=headers)
+            if res.status_code not in (200, 204, 404):
+                print(f"Discord thread delete failed: {res.status_code} {res.text}")
+        except Exception as exc:
+            print(f"Could not delete Discord thread {thread_id} for event {event_id}: {exc}")
+
+    if hasattr(db, "clear_event_thread_id"):
+        await db.clear_event_thread_id(int(event_id))
+
+
 async def _delete_event_message_from_discord(event_data: Dict, db: Database) -> None:
     """Best-effort Discord message delete when an event is deleted from the web UI."""
     if not BOT_TOKEN or not event_data.get("message_id") or not event_data.get("channel_id"):
@@ -572,6 +644,7 @@ async def delete_event(event_id: int, db: Database = Depends(get_db)):
     event_to_delete = await db.get_event_by_id(event_id, include_deleted=True)
     if not event_to_delete:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found")
+    await _archive_and_delete_event_thread_from_discord(event_to_delete, db)
     await _delete_event_message_from_discord(event_to_delete, db)
     await db.delete_event(event_id)
     return
