@@ -500,6 +500,43 @@ async def get_guild_channels(db: Database = Depends(get_db)):
             print(f"Error fetching channels from Discord API: {e}")
             raise HTTPException(status_code=502, detail="Failed to fetch channels from Discord.")
 
+
+@router.get("/roles")
+async def get_guild_roles(db: Database = Depends(get_db)):
+    """Return Discord server roles for event mention/restriction multi-selects.
+
+    Discord snowflake IDs are returned as strings so the browser does not lose
+    precision by treating them as JavaScript numbers.
+    """
+    guild_id = await db.get_system_setting_value("guild_id")
+
+    if not BOT_TOKEN or not guild_id:
+        raise HTTPException(status_code=500, detail="Bot token or Guild ID not configured on server.")
+
+    url_roles = f"https://discord.com/api/v10/guilds/{guild_id}/roles"
+    headers = {"Authorization": f"Bot {BOT_TOKEN}"}
+
+    async with httpx.AsyncClient() as client:
+        try:
+            res_roles = await client.get(url_roles, headers=headers)
+            res_roles.raise_for_status()
+            roles = []
+            for role in res_roles.json():
+                # Hide @everyone and bot/integration-managed roles from event admin controls.
+                if role.get("id") == str(guild_id) or role.get("managed"):
+                    continue
+                roles.append({
+                    "id": str(role["id"]),
+                    "name": role.get("name", "Unnamed role"),
+                    "position": int(role.get("position", 0)),
+                    "color": int(role.get("color", 0)),
+                    "mentionable": bool(role.get("mentionable", False)),
+                })
+            return sorted(roles, key=lambda r: (-r["position"], r["name"].lower()))
+        except Exception as e:
+            print(f"Error fetching roles from Discord API: {e}")
+            raise HTTPException(status_code=502, detail="Failed to fetch roles from Discord.")
+
 @router.get("/{event_id}", response_model=Event, dependencies=[Depends(auth.get_current_admin_user)])
 async def get_event_details(event_id: int, db: Database = Depends(get_db)):
     event = await db.get_event_by_id(event_id, include_deleted=True)
