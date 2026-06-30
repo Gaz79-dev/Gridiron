@@ -944,6 +944,11 @@ class Database:
         async with self.pool.acquire() as connection:
             await connection.execute(query, message_id, event_id)
 
+    async def clear_event_message_id(self, event_id: int):
+        query = "UPDATE events SET message_id = NULL WHERE event_id = $1;"
+        async with self.pool.acquire() as connection:
+            await connection.execute(query, event_id)
+
     async def mark_thread_created(self, event_id: int, thread_id: int):
         query = "UPDATE events SET thread_created = TRUE, thread_id = $1 WHERE event_id = $2;"
         async with self.pool.acquire() as connection:
