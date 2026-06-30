@@ -953,11 +953,15 @@ class Database:
         query = "UPDATE events SET is_deleted = TRUE, deleted_at = (NOW() AT TIME ZONE 'utc') WHERE event_id = $1;"
         async with self.pool.acquire() as connection:
             await connection.execute(query, event_id)
-            
-    async def delete_event(self, event_id: int):
-        query = "DELETE FROM events WHERE event_id = $1;"
+
+    async def restore_event(self, event_id: int):
+        query = "UPDATE events SET is_deleted = FALSE, deleted_at = NULL WHERE event_id = $1;"
         async with self.pool.acquire() as connection:
             await connection.execute(query, event_id)
+            
+    async def delete_event(self, event_id: int):
+        # Keep web/API deletes recoverable. Permanent purging is handled separately.
+        await self.soft_delete_event(event_id)
             
     async def update_event(self, event_id: int, event_data: dict):
         existing = await self.get_event_by_id(event_id, include_deleted=True) or {}
