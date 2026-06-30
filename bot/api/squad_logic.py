@@ -1,11 +1,7 @@
 from collections import defaultdict
 from typing import List, Dict
 from bot.utils.database import Database, RsvpStatus
-
-CLASS_LIMITS = {
-    "Officer": 1, "Anti-Tank": 1, "Machine Gunner": 1, "Automatic Rifleman": 1,
-    "Spotter": 1, "Sniper": 1, "Tank Commander": 1, "Artillery Observer": 1, "Artillery Support": 1, "Artillery Engineer": 1, "Medic": 1, "Support": 1, "Engineer": 1
-}
+from bot.game_systems.hll import CLASS_LIMITS, ROLE_PRIORITY, SQUAD_SIZE_BY_TYPE
 
 def get_squad_iteration(squad_name: str, counts: Dict, convention: str, group_index: int) -> str:
     """Gets the next iteration for a squad name based on the convention."""
@@ -64,12 +60,9 @@ async def run_web_draft(db: Database, event_id: int, request_data) -> List[Dict]
     for squad in squads_to_fill:
         player_pool = player_pools.get(squad['source_rsvp_pool'], [])
         
-        squad_size = 1 if squad['squad_type'] == "Command" else \
-                     3 if squad['squad_type'] in ["Armour", "SPA"] else \
-                     2 if squad['squad_type'] in ["Recon", "Artillery"] else 6
+        squad_size = SQUAD_SIZE_BY_TYPE.get(squad['squad_type'], 6)
 
-        subclass_priority = ["Officer", "Medic", "Support", "Anti-Tank", "Machine Gunner", "Spotter", "Tank Commander", "Automatic Rifleman", "Engineer", "Assault", "Rifleman", "Crewman", "Artillery Observer", "Artillery Support", "Artillery Engineer", "Sniper"]
-        player_pool.sort(key=lambda p: subclass_priority.index(p['subclass_name']) if p.get('subclass_name') in subclass_priority else 99)
+        player_pool.sort(key=lambda p: ROLE_PRIORITY.index(p['subclass_name']) if p.get('subclass_name') in ROLE_PRIORITY else 99)
 
         temp_unplaced_pool = []
         member_count = 0
