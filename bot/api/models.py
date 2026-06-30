@@ -53,6 +53,8 @@ class Event(BaseModel):
     is_recurring: Optional[bool] = False
     recurrence_rule: Optional[str] = None
     recreation_hours: Optional[int] = None
+    mention_role_ids: List[int] = []
+    restrict_to_role_ids: List[int] = []
 
 class EventCreate(BaseModel):
     title: str
