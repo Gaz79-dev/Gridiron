@@ -87,6 +87,71 @@ def _build_initial_event_embed(event_id: int, event_data: Dict, creator_name: st
         ],
         "footer": {"text": f"Event ID: {event_id} | Created by: {creator_name}"},
     }
+
+
+async def _post_event_message_to_discord(event_id: int, event_data: Dict, db: Database, creator_name: str = "Web UI") -> int:
+    """Post a fresh Discord signup embed for an event and store the new message ID."""
+    if not BOT_TOKEN:
+        raise HTTPException(status_code=500, detail="Discord token is not configured.")
+
+    channel_id = event_data.get("channel_id")
+    if not channel_id:
+        raise HTTPException(status_code=400, detail="Event has no Discord channel_id, so it cannot be posted.")
+
+    content = " ".join([f"<@&{rid}>" for rid in event_data.get("mention_role_ids", []) or []])
+    discord_payload = {
+        "content": content,
+        "embeds": [_build_initial_event_embed(event_id, event_data, creator_name)],
+        "components": _discord_event_components(),
+        "allowed_mentions": {"parse": ["roles"]},
+    }
+    url = f"https://discord.com/api/v10/channels/{channel_id}/messages"
+    async with httpx.AsyncClient() as client:
+        res = await client.post(url, headers={"Authorization": f"Bot {BOT_TOKEN}"}, json=discord_payload)
+
+    if res.status_code >= 400:
+        print(f"Discord event post failed: {res.status_code} {res.text}")
+        raise HTTPException(status_code=502, detail="Discord rejected the event message post.")
+
+    message = res.json()
+    message_id = int(message["id"])
+    await db.update_event_message_id(event_id, message_id)
+    return message_id
+
+
+async def _update_event_message_on_discord(event_id: int, event_data: Dict, db: Database, editor_name: str = "Web UI") -> None:
+    """Patch the existing Discord event message after a web edit. Missing/deleted messages are ignored."""
+    if not BOT_TOKEN or not event_data.get("message_id") or not event_data.get("channel_id"):
+        return
+
+    payload = {
+        "embeds": [_build_initial_event_embed(event_id, event_data, editor_name)],
+        "components": _discord_event_components(),
+        "allowed_mentions": {"parse": ["roles"]},
+    }
+    url = f"https://discord.com/api/v10/channels/{event_data['channel_id']}/messages/{event_data['message_id']}"
+    async with httpx.AsyncClient() as client:
+        res = await client.patch(url, headers={"Authorization": f"Bot {BOT_TOKEN}"}, json=payload)
+
+    if res.status_code == 404:
+        await db.clear_event_message_id(event_id)
+        return
+    if res.status_code >= 400:
+        print(f"Discord event message update failed: {res.status_code} {res.text}")
+
+
+async def _delete_event_message_from_discord(event_data: Dict, db: Database) -> None:
+    """Best-effort Discord message delete when an event is deleted from the web UI."""
+    if not BOT_TOKEN or not event_data.get("message_id") or not event_data.get("channel_id"):
+        return
+
+    url = f"https://discord.com/api/v10/channels/{event_data['channel_id']}/messages/{event_data['message_id']}"
+    async with httpx.AsyncClient() as client:
+        res = await client.delete(url, headers={"Authorization": f"Bot {BOT_TOKEN}"})
+
+    if res.status_code not in (204, 404):
+        print(f"Discord event message delete failed: {res.status_code} {res.text}")
+    await db.clear_event_message_id(event_data["event_id"])
 def _create_team_sheet_embeds(request: SendEmbedRequest, event_details: Optional[Dict], is_draft: bool) -> List[Dict]:
     """
     Builds the main team embed and a separate reserves embed, using an efficient layout.
@@ -362,24 +427,10 @@ async def create_event_from_web(
     event_id = await db.create_event(guild_id, int(payload["channel_id"]), current_user.id, payload)
 
     if payload.get("post_to_discord", True):
-        if not BOT_TOKEN:
-            raise HTTPException(status_code=500, detail="Discord token is not configured. Event was created but not posted.")
-
-        content = " ".join([f"<@&{rid}>" for rid in payload.get("mention_role_ids", [])])
-        discord_payload = {
-            "content": content,
-            "embeds": [_build_initial_event_embed(event_id, payload, current_user.username)],
-            "components": _discord_event_components(),
-            "allowed_mentions": {"parse": ["roles"]},
-        }
-        url = f"https://discord.com/api/v10/channels/{payload['channel_id']}/messages"
-        async with httpx.AsyncClient() as client:
-            res = await client.post(url, headers={"Authorization": f"Bot {BOT_TOKEN}"}, json=discord_payload)
-        if res.status_code >= 400:
-            print(f"Discord event post failed: {res.status_code} {res.text}")
-            raise HTTPException(status_code=502, detail="Event was created, but Discord rejected the message post.")
-        message = res.json()
-        await db.update_event_message_id(event_id, int(message["id"]))
+        try:
+            await _post_event_message_to_discord(event_id, payload, db, current_user.username)
+        except HTTPException as exc:
+            raise HTTPException(status_code=exc.status_code, detail=f"Event was created, but {exc.detail}")
 
     created = await db.get_event_by_id(event_id, include_deleted=True)
     return created
@@ -436,26 +487,58 @@ async def get_event_details(event_id: int, db: Database = Depends(get_db)):
     return event
 
 @router.put("/{event_id}", response_model=Event, dependencies=[Depends(auth.get_current_admin_user)])
-async def update_event_details(event_id: int, event_data: EventUpdate, db: Database = Depends(get_db)):
-    await db.update_event(event_id, event_data.model_dump())
-    return await get_event_details(event_id, db)
+async def update_event_details(
+    event_id: int,
+    event_data: EventUpdate,
+    current_user: User = Depends(auth.get_current_admin_user),
+    db: Database = Depends(get_db),
+):
+    existing = await db.get_event_by_id(event_id, include_deleted=True)
+    if not existing:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found")
+
+    payload = event_data.model_dump()
+    if payload.get("template_id") is not None:
+        template = await db.get_squad_template_by_id(payload["template_id"])
+        if not template:
+            raise HTTPException(status_code=400, detail="Selected template does not exist.")
+        if template.get("game_id") != payload.get("game_id", existing.get("game_id", "hll")):
+            raise HTTPException(status_code=400, detail="Selected template does not belong to the selected game.")
+
+    await db.update_event(event_id, payload)
+    updated = await db.get_event_by_id(event_id, include_deleted=True)
+    await _update_event_message_on_discord(event_id, updated, db, current_user.username)
+    return updated
 
 @router.delete("/{event_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(auth.get_current_admin_user)])
 async def delete_event(event_id: int, db: Database = Depends(get_db)):
     event_to_delete = await db.get_event_by_id(event_id, include_deleted=True)
     if not event_to_delete:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found")
+    await _delete_event_message_from_discord(event_to_delete, db)
     await db.delete_event(event_id)
     return
 
 @router.post("/{event_id}/restore", response_model=Event, dependencies=[Depends(auth.get_current_admin_user)])
-async def restore_event(event_id: int, db: Database = Depends(get_db)):
+async def restore_event(
+    event_id: int,
+    current_user: User = Depends(auth.get_current_admin_user),
+    db: Database = Depends(get_db),
+):
     event_to_restore = await db.get_event_by_id(event_id, include_deleted=True)
     if not event_to_restore:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found")
+
     await db.restore_event(event_id)
     restored = await db.get_event_by_id(event_id, include_deleted=True)
-    return restored
+
+    try:
+        await _post_event_message_to_discord(event_id, restored, db, current_user.username)
+    except HTTPException as exc:
+        # Keep the DB restore even if Discord refuses the repost, but tell the UI clearly.
+        raise HTTPException(status_code=exc.status_code, detail=f"Event was restored in the database, but {exc.detail}")
+
+    return await db.get_event_by_id(event_id, include_deleted=True)
 
 @router.get("/{event_id}/lock-status", response_model=EventLockStatus)
 async def get_lock_status(event_id: int, db: Database = Depends(get_db)):
