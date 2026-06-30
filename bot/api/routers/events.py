@@ -293,10 +293,12 @@ async def get_deleted_events_for_restore(db: Database = Depends(get_db)):
 
 @router.get("/channels")
 async def get_guild_channels():
-    if not BOT_TOKEN or not GUILD_ID:
+    guild_id = await db.get_system_setting_value("guild_id")
+
+    if not BOT_TOKEN or not guild_id:
         raise HTTPException(status_code=500, detail="Bot token or Guild ID not configured on server.")
-    url_channels = f"https://discord.com/api/v10/guilds/{GUILD_ID}/channels"
-    url_threads = f"https://discord.com/api/v10/guilds/{GUILD_ID}/threads/active"
+    url_channels = f"https://discord.com/api/v10/guilds/{guild_id}/channels"
+    url_threads = f"https://discord.com/api/v10/guilds/{guild_id}/threads/active"
     headers = {"Authorization": f"Bot {BOT_TOKEN}"}
     async with httpx.AsyncClient() as client:
         try:
